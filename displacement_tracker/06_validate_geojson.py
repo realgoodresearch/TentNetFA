@@ -10,6 +10,7 @@ import numpy as np
 import rasterio
 from rasterio import features, mask
 from shapely.geometry import box
+import pandas as pd
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,9 @@ def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str):
     """
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
+
+    # List to store stats for each tile
+    results_summary = []
 
     # validation files and dates
     val_paths = [
@@ -141,6 +145,63 @@ def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str):
                 invert=True,
             )
 
+            # --- summary statistics ---
+            # extract only the values inside the mask for summary stats
+            d_valid = diff[mask_array]
+            p_valid = pred_raster[mask_array]
+            v_valid = val_raster[mask_array]
+
+            # pre-calculate positive cell indices
+            valpos_idx = (val_raster > 0) & mask_array
+            predpos_idx = (pred_raster > 0) & mask_array
+
+            # diff for positive cells
+            diff_valpos = diff[valpos_idx]
+            diff_predpos = diff[predpos_idx]
+
+            # proportional difference
+            pdiff = np.zeros_like(diff)
+            if diff_valpos.size > 0:
+                pdiff[valpos_idx] = diff_valpos / val_raster[valpos_idx]
+
+            # extract specific pdiff segment for stats
+            pdiff_valpos = pdiff[valpos_idx]
+            stats = {
+                "file": pred_file,
+                "pred_date": pred_date.strftime("%Y-%m-%d"),
+                "val_date": closest_date.strftime("%Y-%m-%d"),
+                "total_pred": np.sum(p_valid),
+                "total_val": np.sum(v_valid),
+                "total_diff": np.sum(v_valid) - np.sum(p_valid),
+                "total_pdiff": (np.sum(v_valid) - np.sum(p_valid)) / np.sum(v_valid)
+                if np.sum(v_valid) > 0
+                else 0,
+                "bias": np.mean(d_valid),
+                "impr": np.std(d_valid),
+                "inac": np.abs(np.mean(d_valid)),
+                # Validation-positive stats (Omission/Sensitivity focus)
+                "bias_valpos": np.mean(diff_valpos) if diff_valpos.size > 0 else 0,
+                "impr_valpos": np.std(diff_valpos) if diff_valpos.size > 0 else 0,
+                "inac_valpos": np.abs(np.mean(diff_valpos))
+                if diff_valpos.size > 0
+                else 0,
+                # Percent Validation-positive stats
+                "pbias_valpos": np.mean(pdiff_valpos) if pdiff_valpos.size > 0 else 0,
+                "pimpr_valpos": np.std(pdiff_valpos) if pdiff_valpos.size > 0 else 0,
+                "pinac_valpos": np.abs(np.mean(pdiff_valpos))
+                if pdiff_valpos.size > 0
+                else 0,
+                # Prediction-positive stats (Commission/Precision focus)
+                "bias_predpos": np.mean(diff_predpos) if diff_predpos.size > 0 else 0,
+                "impr_predpos": np.std(diff_predpos) if diff_predpos.size > 0 else 0,
+                "inac_predpos": np.abs(np.mean(diff_predpos))
+                if diff_predpos.size > 0
+                else 0,
+            }
+            results_summary.append(stats)
+
+            # --- save rasters ---#
+
             # no data value to apply outside the mask
             nodata_val = -9999.0
 
@@ -161,7 +222,7 @@ def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str):
                 }
             )
 
-            base_name = pred_file.replace(".geojson", "")
+            base_name = os.path.splitext(pred_file)[0]
             outputs = {"diff": diff, "pred_count": pred_raster, "val_count": val_raster}
 
             for suffix, data in outputs.items():
@@ -170,6 +231,25 @@ def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str):
                     dest.write(data, 1)
 
             click.echo(f"Exported set for: {base_name}")
+
+    # --- save summary ---
+    if results_summary:
+        import pandas as pd
+
+        # convert summarty to dataframe
+        df_results = pd.DataFrame(results_summary)
+
+        # save to disk
+        summary_path = os.path.join(out_dir, "validation_summary.csv")
+        df_results.to_csv(summary_path, index=False)
+
+        click.echo(f"\nSummary report saved to: {summary_path}")
+
+        # print overal bias
+        overall_pdiff = df_results["total_pdiff"].mean()
+        click.echo(f"Global Percent Error: {overall_pdiff:.4f}")
+    else:
+        click.echo("No results to summarize.")
 
 
 if __name__ == "__main__":
