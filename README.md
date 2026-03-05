@@ -1,6 +1,8 @@
 # Gaza Strip Tent Detection (TentNetFA)
 
-This project processes high-resolution Planet satellite images of the Gaza Strip in combination with historic tent locations identified by **Forensic Architecture** — a multidisciplinary research group based at Goldsmiths, University of London, which uses architectural techniques and technologies to investigate cases of state violence and human rights violations worldwide.
+> A fork from https://github.com/algorithmicgovernance/TentNetFA
+
+This project processes high-resolution Planet satellite images of the Gaza Strip in combination with historic tent locations identified by **Forensic Architecture** — a multidisciplinary research group based at Goldsmiths, University of London.
 
 ---
 
@@ -8,7 +10,7 @@ This project processes high-resolution Planet satellite images of the Gaza Strip
 
 The goal of this work is to develop a convolutional neural network (CNN) that can predict, at the pixel level, the locations of tents in the Gaza Strip from satellite imagery. These predictions use Gaussian densities to create highly granular maps of displacement patterns over time.
 
-This automated detection supports **Forensic Architecture's Cartography of Genocide platform**, which documents the extensive and detailed impacts of Israel’s assault on Gaza since October 2023. The platform compiles thousands of documented acts of violence and destruction affecting civilian infrastructure, homes, and critical services, as well as the use of humanitarian measures as tools of population displacement.
+This automated detection supports population nowcasting in the Gaza strip in collaboration with the United Nations, Acted, IMPACT, and other partners integrating privacy-preserving telecommunications data and other geospatial data sources related to real-time population movements (see [Gaza NowPop](https://github.com/realgoodresearch/GazaNowPop)). 
 
 ---
 
@@ -118,28 +120,18 @@ training:
 
 ---
 
-## Context & Impact
-
-This work aids Forensic Architecture’s critical investigation into the ongoing humanitarian crisis in Gaza by enabling scalable, automated detection of displacement patterns from satellite imagery. The fine-grained data helps expose the scale and methods of violence, supporting accountability and historical record-keeping.
-
----
-
 ## Acknowledgments
 
 * Developed in collaboration with Forensic Architecture, Goldsmiths, University of London.
 * Satellite data provided by Planet Labs.
-* Inspired by Forensic Architecture’s Cartography of Genocide platform.
 
 ---
 
 ## License
 
-The MIT License (MIT)
+[The MIT License (MIT)](./LICENSE)
 
 ---
 
 If you have any questions or want to contribute, please open an issue or submit a pull request.
 
----
-
-*This project is part of a broader effort to document human rights violations with technological rigor and integrity.*
