@@ -20,6 +20,7 @@ from rasterio.warp import transform, transform_geom
 from rasterio.transform import xy
 from rasterio import mask
 from rasterio.io import MemoryFile
+from pyproj import Transformer
 
 from displacement_tracker.util.logging_config import setup_logging
 
@@ -101,20 +102,14 @@ def _extract_date_from_filename(path: str) -> str | None:
     return None
 
 
-def _world_window(
-    src: rasterio.io.DatasetReader,
-    lon: float,
-    lat: float,
-    step: float,
-    src_crs: Any,
-    wgs84_crs: Any = "EPSG:4326",
-):
+def _world_window(src, lon, lat, step, transformer):
     global WIDTH, HEIGHT
     try:
         # get 4 corner coordinates (paired properly)
         lons = [lon - step, lon - step, lon + 2 * step, lon + 2 * step]
         lats = [lat - step, lat + 2 * step, lat - step, lat + 2 * step]
-        xs, ys = transform(wgs84_crs, src_crs, lons, lats)
+
+        xs, ys = transformer.transform(lons, lats)
 
         rows = []
         cols = []
@@ -176,19 +171,15 @@ def _world_window(
         return None
 
 
-def _read_rgb_and_grey(src: rasterio.io.DatasetReader, window):
+def _read_rgb(src: rasterio.io.DatasetReader, window):
     """
-    Read RGB bands from src for the given window and return greyscale (float32) or None
-    if the window contains no valid data.
+    Read RGB bands from src for the given window and return a float32 array
+    with shape (3, H, W) or None if the window contains no valid data.
     """
     data = src.read([1, 2, 3], window=((window[0], window[1]), (window[2], window[3])))
     if data.size == 0 or np.all(np.isnan(data)) or np.all(data == 0):
         return None
-    r = data[0].astype(float)
-    g = data[1].astype(float)
-    b = data[2].astype(float)
-    grey = (0.2989 * r + 0.5870 * g + 0.1140 * b).astype(np.float32)
-    return grey
+    return data.astype(np.float32)
 
 
 def _create_label_from_feats(
@@ -230,50 +221,44 @@ def process_group(
     step: float,
     origin_image: str,
     origin_date: str,
-    src_crs: Any,
-    wgs84_crs: Any,
+    transformer,
     prewar_src: rasterio.io.DatasetReader | None = None,
-    min_valid_fraction: float = 0.0,  # << added param
+    min_valid_fraction: float = 0.0,
 ) -> tuple[
     np.ndarray | None, np.ndarray | None, dict[str, Any] | None, np.ndarray | None
 ]:
     try:
-        window = _world_window(src, lon, lat, step, src_crs, wgs84_crs)
+        window = _world_window(src, lon, lat, step, transformer)
         if not window:
             return None, None, None, None
 
-        grey = _read_rgb_and_grey(src, window)
-        if grey is None:
+        rgb = _read_rgb(src, window)
+        if rgb is None:
             return None, None, None, None
 
-        # ----- new: drop tiles with too much missing data -----
+        # ----- drop tiles with too much missing data (use RAW values) -----
         try:
             nodata = src.nodata
-            # grey is single-band float32; use nodata if present, otherwise treat NaN and zero as missing
             if nodata is not None:
-                valid_mask = (~np.isnan(grey)) & (grey != nodata)
+                valid_mask = (~np.isnan(rgb)) & (rgb != nodata)
             else:
-                valid_mask = (~np.isnan(grey)) & (grey != 0)
-            valid_fraction = np.count_nonzero(valid_mask) / grey.size
+                valid_mask = (~np.isnan(rgb)) & (rgb != 0)
+            valid_fraction = np.count_nonzero(valid_mask) / rgb.size
         except Exception:
             valid_fraction = 0.0
 
         if valid_fraction < float(min_valid_fraction):
-            LOGGER.debug(
-                "Skipping tile %s at lon=%s lat=%s due to low valid_fraction %.3f (< %.3f)",
-                origin_image,
-                lon,
-                lat,
-                valid_fraction,
-                min_valid_fraction,
-            )
             return None, None, None, None
 
-        # window is (r0,r1,c0,c1) with r1/c1 exclusive-like indices from _world_window
+        # --- per-tile, per-channel standardisation ---
+        mean = rgb.mean(axis=(1, 2), keepdims=True)
+        std = rgb.std(axis=(1, 2), keepdims=True)
+        rgb = (rgb - mean) / (std + 1e-6)
+
+        # window is (r0,r1,c0,c1)
         r0, r1, c0, c1 = window
 
         # compute geographic corners of the pixel window in source CRS, then transform to WGS84
-        # use upper-left and lower-right pixel corners consistently
         x_ul, y_ul = xy(src.transform, r0, c0, offset="ul")
         x_lr, y_lr = xy(src.transform, r1 - 1, c1 - 1, offset="lr")
 
@@ -281,15 +266,15 @@ def process_group(
         lon_min, lon_max = min(lons), max(lons)
         lat_min, lat_max = min(lats), max(lats)
 
-        # create label using the exact window bounds (function expects lon_min, lat_min, lon_max, lat_max)
+        # create label using the exact window bounds
         label = _create_label_from_feats(
-            lon_min, lat_min, lon_max, lat_max, feats, grey.shape
+            lon_min, lat_min, lon_max, lat_max, feats, (rgb.shape[1], rgb.shape[2])
         )
-        if grey.shape != label.shape:
+        if (rgb.shape[1], rgb.shape[2]) != label.shape:
             LOGGER.warning(
-                "shape mismatch for %s: grey %s vs label %s; skipping tile",
+                "shape mismatch for %s: rgb %s vs label %s; skipping tile",
                 origin_image,
-                grey.shape,
+                (rgb.shape[1], rgb.shape[2]),
                 label.shape,
             )
             return None, None, None, None
@@ -303,17 +288,15 @@ def process_group(
             "lat_max": lat_max,
         }
 
-        prewar_tile = None
+        prewar_tile_rgb = None
         if prewar_src:
             try:
-                # ensure canonical defaults if _world_window hasn't set module globals
                 global WIDTH, HEIGHT
                 if WIDTH is None:
                     WIDTH = 191
                 if HEIGHT is None:
                     HEIGHT = 224
 
-                # map the same WGS84 bbox into prewar CRS and index there
                 pxs, pys = transform(
                     "EPSG:4326", prewar_src.crs, [lon_min, lon_max], [lat_min, lat_max]
                 )
@@ -333,7 +316,6 @@ def process_group(
                     tile_w = min(WIDTH, prewar_src.width)
                     tile_h = min(HEIGHT, prewar_src.height)
 
-                    # align/expand horizontally
                     if w != tile_w:
                         desired_c1 = cpre0 + tile_w
                         if desired_c1 <= prewar_src.width:
@@ -343,7 +325,6 @@ def process_group(
                             cpre1 = cpre0 + tile_w
                         w = cpre1 - cpre0
 
-                    # align/expand vertically
                     if h != tile_h:
                         desired_r1 = rpre0 + tile_h
                         if desired_r1 <= prewar_src.height:
@@ -354,14 +335,68 @@ def process_group(
                         h = rpre1 - rpre0
 
                     if rpre0 < rpre1 and cpre0 < cpre1:
-                        pre_data = prewar_src.read(
-                            1, window=((rpre0, rpre1), (cpre0, cpre1))
-                        )
-                        prewar_tile = pre_data.astype(np.float32)
+                        # read prewar as RGB if available
+                        try:
+                            pre_data = prewar_src.read(
+                                [1, 2, 3], window=((rpre0, rpre1), (cpre0, cpre1))
+                            )
+
+                            if pre_data.size == 0:
+                                prewar_tile_rgb = None
+                            else:
+                                prewar_tile_rgb = pre_data.astype(np.float32)
+
+                                # ----- valid fraction check on RAW values -----
+                                try:
+                                    nodata_pre = prewar_src.nodata
+                                    if nodata_pre is not None:
+                                        valid_mask = (~np.isnan(prewar_tile_rgb)) & (
+                                                prewar_tile_rgb != nodata_pre
+                                        )
+                                    else:
+                                        valid_mask = (~np.isnan(prewar_tile_rgb)) & (
+                                                prewar_tile_rgb != 0
+                                        )
+
+                                    valid_fraction_pre = (
+                                            np.count_nonzero(valid_mask) / prewar_tile_rgb.size
+                                    )
+                                except Exception:
+                                    valid_fraction_pre = 0.0
+
+                                if valid_fraction_pre < float(min_valid_fraction):
+                                    prewar_tile_rgb = None
+                                else:
+                                    # --- per-tile, per-channel standardisation ---
+                                    mean = prewar_tile_rgb.mean(axis=(1, 2), keepdims=True)
+                                    std = prewar_tile_rgb.std(axis=(1, 2), keepdims=True)
+                                    prewar_tile_rgb = (
+                                                              prewar_tile_rgb - mean
+                                                      ) / (std + 1e-6)
+
+                        except Exception:
+                            prewar_tile_rgb = None
+
             except Exception:
                 LOGGER.exception("Failed to build prewar tile for %s", origin_image)
 
-        return grey, label, meta, prewar_tile
+        h = rgb.shape[1]
+        w = rgb.shape[2]
+        if prewar_tile_rgb is None:
+            return None, None, None, None # Previously this allowed for training tiles without prewar data
+        else:
+            ph, pw = prewar_tile_rgb.shape[1], prewar_tile_rgb.shape[2]
+            if (ph, pw) != (h, w):
+                adjusted = np.zeros((3, h, w), dtype=np.float16)
+                copy_h = min(ph, h)
+                copy_w = min(pw, w)
+                adjusted[:, :copy_h, :copy_w] = prewar_tile_rgb[:, :copy_h, :copy_w]
+                prewar_rgb = adjusted
+            else:
+                prewar_rgb = prewar_tile_rgb.astype(np.float16, copy=False)
+
+        # return: feature (9,H,W), label (H,W), meta, prewar single-band tile (for legacy dataset)
+        return rgb, label, meta, prewar_rgb
     except Exception:
         LOGGER.exception("Failed to process group")
         return None, None, None, None
@@ -377,6 +412,7 @@ def is_high_quality_tile(
     start_threshold: float,
     max_missing_end: float,
     min_valid_fraction: float,
+    transformer
 ) -> bool:
     """
     Checks date distributions and raster valid-pixel fraction for the tile.
@@ -402,7 +438,7 @@ def is_high_quality_tile(
     if (start_matches / n) < start_threshold or (missing_end / n) > max_missing_end:
         return False
 
-    window = _world_window(src, lon, lat, step, src.crs, "EPSG:4326")
+    window = _world_window(src, lon, lat, step, transformer)
     if not window:
         return False
     try:
@@ -426,7 +462,7 @@ def is_high_quality_tile(
 class HDF5Writer:
     """
     Writes tiles by appending into extensible chunked datasets:
-      - feature : (N, H, W) dtype=float32 (or grey.dtype)
+      - feature : (N, H, W) dtype=float16 (or feature.dtype)
       - label   : (N, H, W) dtype=uint8
       - prewar  : (N, Hp, Wp) optional
       - meta    : (N,) variable-length JSON strings
@@ -447,35 +483,43 @@ class HDF5Writer:
         self._d_prewar = None
         self._d_meta = None
 
+
     def _create_datasets(
-        self, grey: np.ndarray, label: np.ndarray, prewar: np.ndarray | None
+            self, feature: np.ndarray, label: np.ndarray, prewar: np.ndarray | None
     ):
-        h, w = grey.shape
+        # feature shape is (C, H, W)
+        channels, h, w = feature.shape
         # chunk 1 tile per chunk so appends are efficient
-        chunks = (1, h, w)
-        maxshape = (None, h, w)
-        # dtype preservation
-        feat_dtype = grey.dtype
+        chunks = (1, channels, h, w)
+        maxshape = (None, channels, h, w)
+
+        feat_dtype = feature.dtype
         label_dtype = label.dtype
 
         self._d_feature = self._file.create_dataset(
             "feature",
-            shape=(0, h, w),
+            shape=(0, channels, h, w),
             maxshape=maxshape,
             chunks=chunks,
             dtype=feat_dtype,
             compression="gzip",
+            compression_opts=4,
+            shuffle=True,
         )
+
+        # label remains (N, H, W)
         self._d_label = self._file.create_dataset(
             "label",
             shape=(0, h, w),
-            maxshape=maxshape,
-            chunks=chunks,
+            maxshape=(None, h, w),
+            chunks=(1, h, w),
             dtype=label_dtype,
             compression="gzip",
+            compression_opts=4,
+            shuffle=True,
         )
 
-        # Always create prewar dataset using canonical tile size
+        # Always create prewar dataset using canonical tile size - keep single-band legacy store
         global WIDTH, HEIGHT
         if WIDTH is None:
             WIDTH = 191
@@ -484,11 +528,13 @@ class HDF5Writer:
 
         self._d_prewar = self._file.create_dataset(
             "prewar",
-            shape=(0, HEIGHT, WIDTH),
-            maxshape=(None, HEIGHT, WIDTH),
-            chunks=(1, HEIGHT, WIDTH),
-            dtype=np.float32,
+            shape=(0, 3, HEIGHT, WIDTH),
+            maxshape=(None, 3, HEIGHT, WIDTH),
+            chunks=(1, 3, HEIGHT, WIDTH),
+            dtype=np.float16,
             compression="gzip",
+            compression_opts=4,
+            shuffle=True,
         )
 
         # metadata: store as variable-length JSON strings
@@ -499,57 +545,39 @@ class HDF5Writer:
         self._created = True
 
     def add_entry(
-        self,
-        grey: np.ndarray,
-        label: np.ndarray,
-        meta: dict[str, Any],
-        prewar: np.ndarray | None = None,
+            self,
+            feature: np.ndarray,
+            label: np.ndarray,
+            meta: dict[str, Any],
+            prewar: np.ndarray | None = None,
     ):
         # lazy create on first tile
         if not self._created:
-            self._create_datasets(grey, label, prewar)
+            self._create_datasets(feature, label, prewar)
 
         # append index
         idx = self._d_feature.shape[0]
 
         # resize then write each dataset
         self._d_feature.resize(idx + 1, axis=0)
-        self._d_feature[idx, :, :] = grey
+        # ensure dtype matches dataset
+        self._d_feature[idx, :, :, :] = feature.astype(self._d_feature.dtype, copy=False)
 
         self._d_label.resize(idx + 1, axis=0)
         self._d_label[idx, :, :] = label
 
-        # handle prewar dataset (may exist or not)
+        # handle prewar dataset (single-band legacy store)
         if self._d_prewar is not None:
-            # always resize first so dataset length matches other datasets
             self._d_prewar.resize(idx + 1, axis=0)
 
             if prewar is None:
-                # write an all-zero tile
                 zero_tile = np.zeros(
                     self._d_prewar.shape[1:], dtype=self._d_prewar.dtype
                 )
-                self._d_prewar[idx, :, :] = zero_tile
+                self._d_prewar[idx] = zero_tile
             else:
-                ph, pw = prewar.shape
-                target_h, target_w = self._d_prewar.shape[1], self._d_prewar.shape[2]
-                if (ph, pw) != (target_h, target_w):
-                    # pad/crop to target shape (top-left aligned). Change alignment if desired.
-                    adjusted = np.zeros(
-                        (target_h, target_w), dtype=self._d_prewar.dtype
-                    )
-                    copy_h = min(ph, target_h)
-                    copy_w = min(pw, target_w)
-                    # cast source to dataset dtype before copy to avoid unexpected dtype promotion
-                    adjusted[:copy_h, :copy_w] = prewar[:copy_h, :copy_w].astype(
-                        self._d_prewar.dtype, copy=False
-                    )
-                    prewar_to_write = adjusted
-                else:
-                    # shapes match — ensure dtype matches dataset
-                    prewar_to_write = prewar.astype(self._d_prewar.dtype, copy=False)
-
-                self._d_prewar[idx, :, :] = prewar_to_write
+                # prewar expected shape (3, H, W)
+                self._d_prewar[idx] = prewar.astype(self._d_prewar.dtype, copy=False)
 
         # store metadata as a compact JSON string
         meta_json = json.dumps(meta, ensure_ascii=False)
@@ -559,7 +587,8 @@ class HDF5Writer:
         self.tile_idx += 1
         # flush to push buffers to disk and reduce memory usage
         try:
-            self._file.flush()
+            if self.tile_idx % 1000 == 0:
+                self._file.flush()
         except Exception:
             # non-fatal: continue running; flush best-effort
             pass
@@ -657,10 +686,14 @@ def scan_grouped_coordinates(
     prewar_path: str | None = None,
     boundaries_path: str | None = None,
     complete_list: list[str] | None = None,
+    prediction_only: bool = False,
 ) -> None:
     src = _open_raster(geotiff_path)
+
     if src is None:
         return
+
+    transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
 
     if boundaries_path:
         cropped = _crop_src_to_boundaries(src, boundaries_path)
@@ -709,7 +742,6 @@ def scan_grouped_coordinates(
     grouped = _group_coords(features, step)
 
     # Ensure tiffs intended for prediction only are always fully processed
-    prediction_only = params.get("processing", {}).get("prediction_only", False)
     if prediction_only:
         is_complete = True
 
@@ -742,7 +774,7 @@ def scan_grouped_coordinates(
                 key = (base_lon, base_lat)
                 feats_for_tile = grouped.get(key, [])
 
-                grey, label, meta, prewar_tile = process_group(
+                feature, label, meta, prewar_tile = process_group(
                     src,
                     feats_for_tile,
                     lon,
@@ -750,19 +782,18 @@ def scan_grouped_coordinates(
                     step,
                     base_name,
                     date_target or "",
-                    src.crs,
-                    "EPSG:4326",
+                    transformer,
                     prewar_src,
                     min_valid_fraction=min_valid,
                 )
 
                 if (
-                        grey is not None
+                        feature is not None
                         and label is not None
                         and meta is not None
                         and prewar_tile is not None
                 ):
-                    hdf5_writer.add_entry(grey, label, meta, prewar_tile)
+                    hdf5_writer.add_entry(feature, label, meta, prewar_tile)
                     processed_count += 1
                     high_quality_found = True
 
@@ -795,10 +826,17 @@ def scan_grouped_coordinates(
     ):
         # incomplete TIFF: apply quality filter
         if not is_high_quality_tile(
-            feats, date_target, src, lon, lat, step, **quality_thresholds
+                feats,
+                date_target,
+                src,
+                lon,
+                lat,
+                step,
+                **quality_thresholds,
+                transformer=transformer,
         ):
             continue
-        grey, label, meta, prewar_tile = process_group(
+        feature, label, meta, prewar_tile = process_group(
             src,
             feats,
             lon,
@@ -806,18 +844,17 @@ def scan_grouped_coordinates(
             step,
             base_name,
             date_target or "",
-            src.crs,
-            "EPSG:4326",
+            transformer,
             prewar_src,
             min_valid_fraction=min_valid,
         )
         if (
-                grey is not None
+                feature is not None
                 and label is not None
                 and meta is not None
                 and prewar_tile is not None
         ):
-            hdf5_writer.add_entry(grey, label, meta, prewar_tile)
+            hdf5_writer.add_entry(feature, label, meta, prewar_tile)
             high_quality_found = True
             processed_count += 1
 
@@ -842,6 +879,8 @@ def scan_all_coordinates(
     if src is None:
         return
 
+    transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
+
     bounds = src.bounds
     lon_bounds, lat_bounds = transform(
         src.crs, "EPSG:4326", [bounds.left, bounds.right], [bounds.bottom, bounds.top]
@@ -856,7 +895,7 @@ def scan_all_coordinates(
     lat_iter = np.arange(lat_bounds[0], lat_bounds[1], step)
     for lon in lon_iter:
         for lat in lat_iter:
-            grey, label, meta, prewar_img = process_group(
+            feature, label, meta, prewar_img = process_group(
                 src,
                 [],
                 lon,
@@ -864,13 +903,12 @@ def scan_all_coordinates(
                 step,
                 os.path.basename(geotiff_path),
                 date_target or "",
-                src.crs,
-                "EPSG:4326",
+                transformer,
                 prewar_src,
                 min_valid_fraction=min_valid_fraction,
             )
-            if grey is not None and label is not None and meta is not None:
-                hdf5_writer.add_entry(grey, label, meta, prewar_img)
+            if feature is not None and label is not None and meta is not None:
+                hdf5_writer.add_entry(feature, label, meta, prewar_img)
 
     src.close()
     if prewar_src:
@@ -915,10 +953,13 @@ def coordinate_scanner(
     complete_list: list[str] | None = None,
     config: str | None = None,
 ) -> None:
+
+    prediction_only = False
     if config:
         with open(config, "r") as f:
             cfg = yaml.safe_load(f)
         search_files = cfg.get("loading", {}).get("files", [])
+        prediction_only = cfg.get("processing", {}).get("prediction_only", False)
         tif_files = [
             os.path.join(geotiff_dir, f)
             for f in search_files
@@ -956,6 +997,7 @@ def coordinate_scanner(
                     prewar_path,
                     boundaries_path,
                     complete_list or [],
+                    prediction_only=prediction_only,  # Treats prediction tiffs as complete, will process all
                 )
             else:
                 scan_all_coordinates(tif_path, writer, date_target, step, prewar_path)

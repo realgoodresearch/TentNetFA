@@ -59,6 +59,10 @@ class SimpleCNN(nn.Module):
         self.conv_ctx = nn.Conv2d(8, 8, kernel_size=9, padding=4, bias=False)
         self.bn_ctx = nn.BatchNorm2d(8)
 
+        self.global_pool = nn.AdaptiveAvgPool2d(1)
+        self.global_fc = nn.Conv2d(8, 8, kernel_size=1)
+        self.global_relu = nn.ReLU(inplace=True)
+
         self.convend = nn.Conv2d(8, n_classes, kernel_size=1)
 
     def forward(self, x):
@@ -88,6 +92,11 @@ class SimpleCNN(nn.Module):
 
         x = self.conv_ctx(x)
         x = self.bn_ctx(x)
+
+        g = self.global_pool(x)  # (B, 8, 1, 1)
+        g = self.global_fc(g)  # (B, 8, 1, 1)
+        g = self.global_relu(g)
+        x = x + g  # broadcast add
 
         x = self.convend(x)
         return x

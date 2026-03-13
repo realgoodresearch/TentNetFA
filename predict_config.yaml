@@ -1,9 +1,28 @@
-geotiff_dir: tif_files/historic
+geotiff_dir: tif_files/historic/
 boundaries: gaza_boundaries/GazaStrip_MunicipalBoundaries.shp
 prewar_gaza: tif_files/prewar_gaza.tif
 hdf5: tif_files/historic/processed/dataset.h5
 loading:
   files:
+### Jan 2026
+#    - al_maghazi_bureij_20260101_051741_ssc4_u0002_visual_clip.tif
+#    - kerem_shalom_crossing_abasan_al_kabira_20260130_055039_ssc1_u0003_visual.tif
+#    - al_mawasi_khan_yunis_deir_el_balah_20251201_060730_ssc1_u0003_visual_clip.tif
+#    - khan_yunis_20260130_064104_ssc13_u0003_visual.tif
+#    - bani_suheila_al_qarara_20260117_061103_ssc1_u0002_visual_clip.tif
+#    - khan_yunis_al_maghazi_bureij_20251230_063003_ssc13_u0003_visual_clip.tif
+#    - deir_el_balah_nuseirat_20251222_122204_ssc8_u0002_visual_clip.tif
+#    - khan_yunis_deir_el_balah_nuseirat_20251214_122908_ssc10_u0003_visual_clip.tif
+#    - deir_el_balah_nuseirat_gaza_city_20251231_123031_ssc8_u0002_visual_clip.tif
+#    - rafah_abasan_al_kabira_20260117_061143_ssc1_u0001_visual_clip.tif
+#    - gaza_city_jabalia_beit_lahiya_20251231_123031_ssc8_u0001_visual_clip.tif
+#    - rafah_crossing_20260130_064104_ssc13_u0004_visual.tif
+#    - jabalia_beit_hanoun_20260101_051741_ssc4_u0001_visual_clip.tif
+#    - rafah_khan_yunis_20260101_051741_ssc4_u0003_visual_clip.tif
+#    - jabalia_beit_lahiya_20260117_063237_ssc13_u0001_visual_clip.tif
+#    - rafah_khan_yunis_20260117_061103_ssc1_u0001_visual_clip.tif
+#    - juhor_a_dik_al_qubbah_20260117_063237_ssc13_u0002_visual_clip.tif
+### HISTORIC
 #    - gaza_city_jabalia_20241014_120703_ssc10_u0001_visual_clip.tif
 #    - al_mawasi_khan_yunis_20241014_120709_ssc10_u0001_visual_clip.tif
 #    - rafah_al_mawasi_20241014_120506_ssc8_u0001_visual.tif
@@ -57,6 +76,27 @@ loading:
 #    - khan_yunis_al_maghazi_bureij_20251202_052652_ssc2_u0002_visual_clip.tif
 #    - rafah_al_mawasi_khan_yunis_20251202_053316_ssc12_u0003_visual_clip.tif
 #    - rafah_rafah_crossing_20251202_052652_ssc2_u0003_visual_clip.tif
+
+#    - al_mawasi_deir_el_balah_20250918_122433_ssc9_u0002_visual_clip.tif
+#    - deir_el_balah_nuseirat_20250106_121035_ssc8_u0001_visual_clip.tif
+#    - deir_el_balah_nuseirat_20250405_054759_ssc2_u0002_visual.tif
+#    - gaza_city_20250809_122108_ssc7_u0002_visual_clip.tif
+#    - gaza_city_and_jabalia_20250318_065321_ssc1_u0001_visual_clip_file_format.tif
+#    - gaza_city_beit_lahiya_20250406_054944_ssc4_u0001_visual.tif
+#    - gaza_city_jabalia_beit_lahiya_20250130_121149_ssc8_u0001_visual_clip.tif
+#    - gaza_city_jabalia_beit_lahiya_20250809_122108_ssc7_u0001_visual_clip.tif
+#    - kerem_shalom_crossing_20250918_121408_ssc7_u0002_visual_clip.tif
+#    - khan_yunis_20250318_065316_ssc1_u0001_visual_clip_file_format.tif
+#    - khan_yunis_20250508_063444_ssc13_u0002_visual.tif
+#    - khan_yunis_20250508_121753_ssc8_u0001_visual.tif
+#    - khan_yunis_20250918_122620_ssc10_u0001_visual_clip.tif
+#    - northern_gaza_city_20250918_121735_ssc8_u0001_visual_clip.tif
+#    - nuseirat_gaza_city_beit_lahiya_20250405_054759_ssc2_u0001_visual.tif
+#    - nuseirat_gaza_city_jabalia_beit_lahiya_20250918_122433_ssc9_u0001_visual_clip.tif
+#    - rafah_al_mawasi_20250329_115510_ssc9_u0001_visual.tif
+#    - rafah_al_mawasi_20250918_121408_ssc7_u0001_visual_clip.tif
+#    - rafah_kerem_shalom_crossing_20250329_115510_ssc9_u0002_visual.tif
+
 processing:
   prediction_only: true
   step: 0.0005

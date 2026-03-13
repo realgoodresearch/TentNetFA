@@ -87,7 +87,7 @@ def train(
 
         save_loc = checkpoint.parent
     else:
-        model = SimpleCNN(3, 1, **model_kwargs).to(device)
+        model = SimpleCNN(9, 1, **model_kwargs).to(device)
         save_loc = None
 
     # Load and shuffle dataset
@@ -117,7 +117,16 @@ def train(
     )
 
     def criterion(x, y):
-        return torch.nn.functional.mse_loss(x, y)
+        # pixelwise loss
+        mse = torch.nn.functional.mse_loss(x, y)
+
+        # count loss (mass difference)
+        pred_count = x.sum(dim=(1, 2, 3))
+        true_count = y.sum(dim=(1, 2, 3))
+        count_loss = torch.nn.functional.mse_loss(pred_count, true_count)
+
+        # small weight keeps spatial quality dominant
+        return mse + 0.1 * count_loss
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 

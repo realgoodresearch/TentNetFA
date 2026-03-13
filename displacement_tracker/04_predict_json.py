@@ -241,7 +241,7 @@ def cli(config) -> None:
 
     ds = PairedImageDataset(pred_cfg["input"])
     model = SimpleCNN.from_pth(
-        pred_cfg["model"], model_args={"n_channels": 3, "n_classes": 1}
+        pred_cfg["model"], model_args={"n_channels": 9, "n_classes": 1}
     )
     validation_tifs = pred_cfg.get("validation_tifs", False)
 
