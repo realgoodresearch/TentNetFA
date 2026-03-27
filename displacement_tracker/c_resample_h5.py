@@ -1,8 +1,9 @@
 import h5py
 import numpy as np
 import click
-import yaml
 import sys
+
+from displacement_tracker.util.env_loader import load_yaml_with_env
 
 
 def resample_dataset(inp, out, rng_seed):
@@ -54,8 +55,7 @@ def resample_dataset(inp, out, rng_seed):
     "--seed", "cli_seed", type=int, help="Random seed for sampling.", default=None
 )
 def cli(config_path, cli_inp, cli_out, cli_seed):
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
+    config = load_yaml_with_env(config_path)
 
     if "rebalancing" not in config:
         print(

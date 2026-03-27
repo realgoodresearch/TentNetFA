@@ -216,3 +216,7 @@ labels/*
 feats/*
 data/
 output/
+
+
+*.code-workspace
+wd/

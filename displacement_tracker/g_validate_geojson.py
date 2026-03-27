@@ -71,7 +71,7 @@ def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str):
 
     # validation files and dates
     val_paths = [
-        os.path.join(val_dir, f) for f in os.listdir(val_dir) if f.endswith(".gpkg")
+        os.path.join(val_dir, f) for f in os.listdir(val_dir) if f.endswith(".gpkg") or f.endswith(".geojson") or f.endswith(".json")
     ]
     val_map = {
         extract_date_from_path(p): p for p in val_paths if extract_date_from_path(p)
@@ -85,7 +85,12 @@ def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str):
 
         raster_crs = src_grid.crs
 
-        pred_files = [f for f in os.listdir(pred_dir) if f.endswith(".geojson")]
+        pred_files = [
+            f
+            for f in os.listdir(pred_dir)
+            if (f.endswith(".geojson") or (f.endswith(".gpkg")))
+        ]
+
         for pred_file in pred_files:
             # pred_file = pred_files[0]
 
@@ -231,10 +236,10 @@ def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str):
 
             base_name = os.path.splitext(pred_file)[0]
             outputs = {
-                # "diff": diff,
+                "diff": diff,
                 "error": error_raster,
-                # "pred_count": pred_raster,
-                # "val_count": val_raster
+                "pred_count": pred_raster,
+                "val_count": val_raster,
             }
 
             for suffix, data in outputs.items():

@@ -4,11 +4,7 @@ import torch
 import click
 from pathlib import Path
 
-import importlib
-
-module = importlib.import_module("displacement_tracker.04_predict_json")
-predict = module.predict
-save_geojson = module.save_geojson
+from displacement_tracker.e_predict_json import predict, save_geojson
 
 from displacement_tracker.paired_image_dataset import PairedImageDataset
 from displacement_tracker.simple_cnn import SimpleCNN
@@ -31,7 +27,7 @@ def main(config_path):
         raise FileNotFoundError(f"GeoTIFF directory not found: {tif_dir}")
 
     pred_cfg = base_params["prediction"]
-    processing_cfg = pred_cfg.get("processing", {})
+    selection_cfg = pred_cfg.get("selection", {})
     sample_cfg = pred_cfg.get("sample", {})
     device_name = pred_cfg.get("device", None)
 
@@ -93,7 +89,7 @@ def main(config_path):
             ds,
             model,
             device,
-            processing_cfg,
+            selection_cfg,
             sample_cfg,
             validation_tifs=params["prediction"].get("validation_tifs", False),
         )

@@ -6,10 +6,10 @@ import torch
 from torch.utils.data import DataLoader
 import torch.optim as optim
 import os
-import yaml
 import datetime
 from displacement_tracker.paired_image_dataset import PairedImageDataset
 from displacement_tracker.simple_cnn import SimpleCNN
+from displacement_tracker.util.env_loader import load_yaml_with_env
 from displacement_tracker.util.logging_config import setup_logging
 
 LOGGER = setup_logging("train-cnn")
@@ -45,8 +45,7 @@ def custom_collate(batch):
 @click.command()
 @click.argument("config", type=click.Path(exists=True))
 def cli(config: str) -> None:
-    with open(config, "r") as f:
-        params = yaml.safe_load(f)
+    params = load_yaml_with_env(config)
     required = ["hdf5", "training"]
     for k in required:
         if k not in params:
