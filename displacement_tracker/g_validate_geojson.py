@@ -71,7 +71,7 @@ def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str):
 
     # validation files and dates
     val_paths = [
-        os.path.join(val_dir, f) for f in os.listdir(val_dir) if f.endswith(".gpkg")
+        os.path.join(val_dir, f) for f in os.listdir(val_dir) if f.endswith(".gpkg") or f.endswith(".geojson") or f.endswith(".json")
     ]
     val_map = {
         extract_date_from_path(p): p for p in val_paths if extract_date_from_path(p)

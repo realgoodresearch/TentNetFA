@@ -1,7 +1,7 @@
-geotiff_dir: /data/projects/gazatents/results_karim/2026-02/tiffs
+geotiff_dir: ${DATA_DIR}/results/TentNetFA/2026-02/tiffs
 boundaries: gaza_boundaries/GazaStrip_MunicipalBoundaries.shp
-prewar_gaza: /data/project/gazatents/data/prewar_gaza.tif
-geojson: /data/projects/gazatents/results_karim/2026-02
+prewar_gaza: ${DATA_DIR}/results/TentNetFA/2026-02/prewar_gaza.tif
+geojson: ${DATA_DIR}/results/TentNetFA/2026-02
 hdf5: train_data_labelling_balanced.h5
 artifact_dir: runs
 loading:

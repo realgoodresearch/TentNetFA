@@ -1,6 +1,8 @@
 import os
 from functools import wraps
 from dotenv import load_dotenv
+import yaml
+import re
 
 
 class EnvFileNotFoundError(FileNotFoundError):
@@ -56,3 +58,38 @@ def require_env_file(required_keys=None):
     if callable(required_keys):
         return decorator(required_keys)
     return decorator
+
+
+def load_yaml_with_env(yaml_path):
+    """
+    Load a YAML file and substitute environment variables marked as ${VAR_NAME}.
+
+    Args:
+        yaml_path: Path to the YAML file
+
+    Returns:
+        Parsed YAML content as a dictionary
+
+    Raises:
+        FileNotFoundError: If the YAML file doesn't exist
+        KeyError: If an environment variable is referenced but not defined
+    """
+    load_dotenv()
+
+    if not os.path.isfile(yaml_path):
+        raise FileNotFoundError(f"YAML file not found: {yaml_path}")
+
+    with open(yaml_path, "r") as f:
+        content = f.read()
+
+    # Replace ${VAR_NAME} with environment variable values
+    def replace_env_var(match):
+        var_name = match.group(1)
+        value = os.getenv(var_name)
+        if value is None:
+            raise KeyError(f"Environment variable '{var_name}' not found")
+        return value
+
+    content = re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", replace_env_var, content)
+
+    return yaml.safe_load(content)

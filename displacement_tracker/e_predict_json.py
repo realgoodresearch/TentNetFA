@@ -1,4 +1,3 @@
-import yaml
 import click
 import torch
 import json
@@ -15,6 +14,7 @@ from tqdm.auto import tqdm
 
 from displacement_tracker.paired_image_dataset import PairedImageDataset
 from displacement_tracker.simple_cnn import SimpleCNN
+from displacement_tracker.util.env_loader import load_yaml_with_env
 from displacement_tracker.util.logging_config import setup_logging
 from displacement_tracker.util.distance import interpolate_centroid
 from displacement_tracker.util.deduplication import merge_close_points_global
@@ -404,8 +404,7 @@ def run_prediction_job(
 @click.command()
 @click.argument("config", type=click.Path(exists=True))
 def cli(config) -> None:
-    with open(config, "r") as f:
-        params = yaml.safe_load(f)
+    params = load_yaml_with_env(config)
 
     if "prediction" not in params:
         raise click.ClickException("Missing required config key: prediction")

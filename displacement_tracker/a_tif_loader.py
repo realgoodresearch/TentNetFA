@@ -3,9 +3,8 @@ import os
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 import click
-import yaml
 
-from displacement_tracker.util.env_loader import require_env_file
+from displacement_tracker.util.env_loader import load_yaml_with_env, require_env_file
 
 
 def download_tif_files_from_public_folder(search_string: str, download_dir="."):
@@ -112,8 +111,7 @@ def tif_loader(config: str, download_dir: str | None) -> None:
         - search_string_2
     Optionally, you can specify download_dir in the config or via --download-dir.
     """
-    with open(config, "r") as f:
-        cfg = yaml.safe_load(f)
+    cfg = load_yaml_with_env(config)
     search_strings = cfg.get("loading", {}).get("files", [])
     if not search_strings:
         print("No search strings found in config under loading/files.")

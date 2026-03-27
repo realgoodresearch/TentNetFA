@@ -1,8 +1,8 @@
-geotiff_dir: /data/projects/gazatents/results_karim/2026-02/tiffs
+geotiff_dir: ${DATA_DIR}/results/TentNetFA/model_v1.1/2026-02/tiffs
 boundaries: gaza_boundaries/GazaStrip_MunicipalBoundaries.shp
-prewar_gaza:  /data/projects/gazatents/results_karim/2026-02/prewar_gaza.tif
-hdf5_folder: /data/projects/gazatents/results_karim/2026-02/hdf5_files_normalized
-json_folder: /data/projects/gazatents/results_karim/2026-02/json_files
+prewar_gaza:  ${DATA_DIR}/results/TentNetFA/model_v1.1/2026-02/prewar_gaza.tif
+hdf5_folder: ${DATA_DIR}/results/TentNetFA/model_v1.1/2026-02/hdf5_files_normalized
+json_folder: ${DATA_DIR}/results/TentNetFA/model_v1.1/2026-02/json_files
 loading:
   files:
     - deir_el_balah_nuseirat_gaza_city_20260220_122923_ssc10_u0002_visual_clip.tif
@@ -27,9 +27,9 @@ processing:
     min_valid_fraction: 0.9
 prediction:
   save_bounds: true
-  input_folder: /data/projects/gazatents/results_karim/2026-02/hdf5_files_normalized
-  output_folder: /data/projects/gazatents/results_karim/2026-02/json_files_normalized
-  model: /data/projects/gazatents/models/v1.0.pth
+  input_folder: ${DATA_DIR}/results/TentNetFA/model_v1.1/2026-02/hdf5_files_final
+  output_folder: ${DATA_DIR}/results/TentNetFA/model_v1.1/2026-02/json_files_final
+  model: ${DATA_DIR}/models/v1.0.pth
   batch_size: 8
   num_workers: 4  # Optional sampling configuration
   sample:

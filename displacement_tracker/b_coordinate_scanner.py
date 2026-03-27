@@ -12,7 +12,6 @@ from tqdm import tqdm
 import h5py
 import numpy as np
 import rasterio
-import yaml
 import fiona
 import click
 from rasterio.errors import RasterioIOError
@@ -21,6 +20,7 @@ from rasterio.transform import xy
 from rasterio import mask
 from rasterio.io import MemoryFile
 
+from displacement_tracker.util.env_loader import load_yaml_with_env
 from displacement_tracker.util.logging_config import setup_logging
 
 LOGGER = setup_logging("coordinate_scanner")
@@ -1063,8 +1063,7 @@ def scan_all_coordinates(
 
 def _collect_tif_files(geotiff_dir: str, config: str | None = None) -> list[str]:
     if config:
-        with open(config, "r") as f:
-            cfg = yaml.safe_load(f)
+        cfg = load_yaml_with_env(config)
         search_files = cfg.get("loading", {}).get("files", [])
         return [
             os.path.join(geotiff_dir, file_name)
@@ -1139,8 +1138,7 @@ def _scan_tif_to_writer(
 @click.command()
 @click.argument("config", type=click.Path(exists=True, dir_okay=False))
 def cli(config):
-    with open(config, "r") as f:
-        params = yaml.safe_load(f)
+    params = load_yaml_with_env(config)
     for key in ("geotiff_dir", "processing"):
         if key not in params:
             raise click.ClickException(f"Missing required config key: {key}")
