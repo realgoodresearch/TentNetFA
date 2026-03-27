@@ -50,7 +50,7 @@ rebalance-dataset = "displacement_tracker.c_rebalance_dataset:cli"
 train-cnn = "displacement_tracker.d_train_cnn:cli"
 predict-json = "displacement_tracker.e_predict_json:cli"
 evaluate-geojson = "displacement_tracker.f_evaluate_geojson:cli"
-merge-geojsons = "displacement_tracker.merge_geojsons:cli"
+merge-geojsons = "displacement_tracker.h_merge_geojsons:cli"
 
 [build-system]
 requires = ["poetry-core"]

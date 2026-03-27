@@ -29,8 +29,8 @@ class UnionFind:
 
 def merge_close_points_global(flat, min_distance_m=2.0, agreement: int = 1):
     """
-    Merge points across all flat (lat, lon, peak) centroids ...
-    Returns a flat list of merged (lat, lon, peak) centroids.
+    Merge points across all flat (lat, lon, peak, adjusted_peak) centroids.
+    Returns a flat list of merged (lat, lon, peak, adjusted_peak) centroids.
     Peak is the max peak within each cluster.
     """
     n = len(flat)

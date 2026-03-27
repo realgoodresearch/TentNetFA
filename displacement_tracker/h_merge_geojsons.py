@@ -78,7 +78,8 @@ def load_points_from_geojson(path: Path) -> list[tuple]:
         lon, lat = float(coords[0]), float(coords[1])
         props = feat.get("properties") or {}
         peak = float(props.get("peak_value", 0.0))
-        adj_peak = float(props.get("adjusted_peak", 0.0))
+        adj_raw = props.get("adjusted_peak", 0.0)
+        adj_peak = float(adj_raw) if adj_raw is not None else 0.0
         points.append((lat, lon, peak, adj_peak))
 
     return points

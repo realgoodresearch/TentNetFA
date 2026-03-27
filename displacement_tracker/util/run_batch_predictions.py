@@ -4,11 +4,7 @@ import torch
 import click
 from pathlib import Path
 
-import importlib
-
-module = importlib.import_module("displacement_tracker.04_predict_json")
-predict = module.predict
-save_geojson = module.save_geojson
+from displacement_tracker.e_predict_json import predict, save_geojson
 
 from displacement_tracker.paired_image_dataset import PairedImageDataset
 from displacement_tracker.simple_cnn import SimpleCNN
