@@ -284,8 +284,7 @@ def _resolve_normalize_params(
     if not isinstance(normalize_cfg, dict):
         return None
 
-    if "enable" in normalize_cfg:
-        enabled = bool(normalize_cfg.get("enable", False))
+    enabled = bool(normalize_cfg.get("enable", False))
 
     if not enabled:
         return None

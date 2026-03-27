@@ -40,7 +40,8 @@ def extract_tile_centroids(probs_np, bounds, threshold, min_area):
         if area > min_area:
             centroid = center_of_mass(region_mask)
             peak_value = float(probs_np[region_mask].max())
-            adjusted_peak = None
+            # For centroid mode, emit a numeric adjusted_peak to avoid downstream float(None) errors.
+            adjusted_peak = peak_value
             try:
                 lat, lon = interpolate_centroid(centroid, bounds, shape)
                 coords.append((lat, lon, peak_value, adjusted_peak))
