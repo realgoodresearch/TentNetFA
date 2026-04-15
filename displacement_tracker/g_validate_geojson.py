@@ -8,11 +8,12 @@ from pathlib import Path
 import click
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import rasterio
 from rasterio import features, mask
-from shapely.geometry import box
-import pandas as pd
-
+from rasterio.transform import rowcol
+import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 @dataclass(frozen=True)
 class RasterMetadata:
@@ -53,18 +54,161 @@ def get_point_counts(
     )
 
 
+def process_prediction_validation(
+    pred_gdf: gpd.GeoDataFrame,
+    val_gdf: gpd.GeoDataFrame,
+    src_grid: rasterio.io.DatasetReader,
+    nodata_val: float = -9999.0,
+) -> Dict[str, object]:
+    """Rasterize, compare, and mask prediction/validation points for one tile."""
+    # analysis mask (convex hull around predicted tents)
+    prediction_extent_geom = pred_gdf.union_all().convex_hull
+
+    # apply mask to master grid
+    out_image, out_transform = mask.mask(
+        src_grid,
+        [prediction_extent_geom],
+        crop=True,
+        nodata=np.nan,
+    )
+
+    # out_image shape is (bands, rows, cols)
+    grid_shape = (out_image.shape[1], out_image.shape[2])
+
+    # rasterize predictions
+    pred_raster = get_point_counts(pred_gdf, grid_shape, out_transform)
+
+    # clip validation points to the analysis mask and rasterize
+    val_in_hull = val_gdf.clip(prediction_extent_geom)
+    val_raster = get_point_counts(val_in_hull, grid_shape, out_transform)
+
+    # prediction-minus-validation and log-space error rasters
+    diff = pred_raster - val_raster
+    error_raster = np.log1p(pred_raster) - np.log1p(val_raster)
+
+    # outside the mask is False
+    mask_array = features.geometry_mask(
+        [prediction_extent_geom],
+        out_shape=grid_shape,
+        transform=out_transform,
+        invert=True,
+    )
+
+    # mask all arrays outside the analysis area
+    for r in [pred_raster, val_raster, diff, error_raster]:
+        r = r[mask_array]
+
+    return {
+        "pred_raster": pred_raster,
+        "val_raster": val_raster,
+        "diff": diff,
+        "error_raster": error_raster,
+        "mask_array": mask_array,
+        "out_transform": out_transform,
+        "grid_shape": grid_shape,
+        "nodata_val": nodata_val,
+    }
+
+
+def prepare_grouped_cell_inputs(
+    pred_gdf: gpd.GeoDataFrame,
+    val_gdf: gpd.GeoDataFrame,
+    src_grid: rasterio.io.DatasetReader,
+    nodata_val: float = -9999.0,
+) -> Dict[str, object]:
+    """Prepare one-time geometry/grid products and per-point cell assignments."""
+    prediction_extent_geom = pred_gdf.union_all().convex_hull
+
+    out_image, out_transform = mask.mask(
+        src_grid,
+        [prediction_extent_geom],
+        crop=True,
+        nodata=np.nan,
+    )
+    grid_shape = (out_image.shape[1], out_image.shape[2])
+
+    mask_array = features.geometry_mask(
+        [prediction_extent_geom],
+        out_shape=grid_shape,
+        transform=out_transform,
+        invert=True,
+    )
+
+    val_in_hull = val_gdf.clip(prediction_extent_geom)
+    val_raster = get_point_counts(val_in_hull, grid_shape, out_transform)
+
+    xs = pred_gdf.geometry.x.to_numpy()
+    ys = pred_gdf.geometry.y.to_numpy()
+    rows, cols = rowcol(out_transform, xs, ys)
+    rows = np.asarray(rows, dtype=np.int32)
+    cols = np.asarray(cols, dtype=np.int32)
+
+    in_bounds = (
+        (rows >= 0)
+        & (rows < grid_shape[0])
+        & (cols >= 0)
+        & (cols < grid_shape[1])
+    )
+
+    pred_prepped = pred_gdf.loc[in_bounds, ["peak_value", "adjusted_peak"]].copy()
+    pred_prepped["row"] = rows[in_bounds]
+    pred_prepped["col"] = cols[in_bounds]
+
+    return {
+        "pred_prepped": pred_prepped,
+        "val_raster": val_raster,
+        "mask_array": mask_array,
+        "out_transform": out_transform,
+        "grid_shape": grid_shape,
+        "nodata_val": nodata_val,
+    }
+
+
+def process_grouped_cells(
+    pred_rows: np.ndarray,
+    pred_cols: np.ndarray,
+    val_raster: np.ndarray,
+    mask_array: np.ndarray,
+    grid_shape: Tuple[int, int],
+    nodata_val: float,
+) -> Dict[str, np.ndarray]:
+    """Build prediction raster from pre-grouped cells and derive diff/error rasters."""
+    pred_raster = np.zeros(grid_shape, dtype=np.float32)
+    if pred_rows.size > 0:
+        np.add.at(pred_raster, (pred_rows, pred_cols), 1.0)
+
+    diff = pred_raster - val_raster
+    error_raster = np.log1p(pred_raster) - np.log1p(val_raster)
+
+    for arr in [pred_raster, val_raster, diff, error_raster]:
+        arr[~mask_array] = nodata_val
+
+    return {
+        "pred_raster": pred_raster,
+        "val_raster": val_raster,
+        "diff": diff,
+        "error_raster": error_raster,
+        "mask_array": mask_array,
+    }
+
+
 @click.command()
 @click.option("--pred-dir", type=click.Path(exists=True), required=True)
 @click.option("--val-dir", type=click.Path(exists=True), required=True)
 @click.option("--master-grid", type=click.Path(exists=True), required=True)
 @click.option("--out-dir", type=click.Path(), default="diff_results")
-def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str):
+@click.option("--exclusion-zones", type=click.Path(exists=True), default=None, help="Optional path to gpkg file containing exclusion zones.")
+def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str, exclusion_zones: str):
     """
     Validates point predictions against ground truth by differencing
     rasterized counts within a master grid framework.
     """
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
+
+    if exclusion_zones:
+        zones_gdf = gpd.read_file(exclusion_zones)
+        exclusion_geom = zones_gdf.geometry.union_all()
 
     # List to store stats for each tile
     results_summary = []
@@ -88,7 +232,7 @@ def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str):
         pred_files = [
             f
             for f in os.listdir(pred_dir)
-            if (f.endswith(".geojson") or (f.endswith(".gpkg")))
+            if (f.endswith(".geojson") or (f.endswith(".gpkg")) or f.endswith(".json"))
         ]
 
         for pred_file in pred_files:
@@ -112,67 +256,134 @@ def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str):
             if pred_gdf.empty:
                 continue
 
-            # analysis mask (convex hull around predicted tents)
-            prediction_extent_geom = pred_gdf.union_all().convex_hull
+            best_td = float("inf")
+            td_cutoff = None
+            td_factor = None
+            best_rms = float("inf")
+            rms_cutoff = None
+            rms_factor = None
 
-            # apply mask to mastergrid
+            pred_gdf = pred_gdf.clip(exclusion_geom) if exclusion_zones else pred_gdf
+
+            if pred_gdf.empty:
+                continue
+
             try:
-                out_image, out_transform = mask.mask(
-                    src_grid,
-                    [prediction_extent_geom],
-                    crop=True,
-                    nodata=np.nan,
+                grouped = prepare_grouped_cell_inputs(
+                    pred_gdf=pred_gdf,
+                    val_gdf=val_gdf,
+                    src_grid=src_grid,
                 )
-            except ValueError:
+            except Exception:
                 click.echo(f"Skipping {pred_file}: No overlap.")
                 continue
 
-            # extract dimensions from the masked array
-            # out_image shape is (bands, rows, cols)
-            grid_shape = (out_image.shape[1], out_image.shape[2])
+            pred_prepped = grouped["pred_prepped"]
+            val_raster_base = grouped["val_raster"]
+            mask_array = grouped["mask_array"]
+            out_transform = grouped["out_transform"]
+            grid_shape = grouped["grid_shape"]
+            nodata_val = grouped["nodata_val"]
 
-            # rasterize predictions
-            pred_raster = get_point_counts(pred_gdf, grid_shape, out_transform)
+            """parameter_map_rms = []
+            parameter_map_td = []
 
-            # clip validation points to the analysis mask
-            val_in_hull = val_gdf.clip(prediction_extent_geom)
+            factor_scale = 0.27
+            factor_steps = 1
+            factor_start_steps = 0
+            factor_min = factor_scale * factor_start_steps
+            factor_max = factor_scale * (factor_steps + factor_start_steps)
 
-            # rasterise validation points
-            val_raster = get_point_counts(val_in_hull, grid_shape, out_transform)
 
-            # --- calculate prediction "error" ---#
-            diff = pred_raster - val_raster
+            for c in tqdm(range(13, 14)):
+                row_rms = []
+                row_td = []
+                for f in range(factor_start_steps, factor_steps + 1 + factor_start_steps):
+                    delta = pred_prepped["adjusted_peak"] - pred_prepped["peak_value"]
+                    factor = f * factor_scale
+                    rescaled_peak = pred_prepped["peak_value"] + factor * delta
+                    cut_off = c * 0.001
+                    keep = (rescaled_peak >= cut_off).to_numpy()
 
-            # root mean squared logarithmic error (rmsle)
-            error_raster = np.log1p(pred_raster) - np.log1p(val_raster)
+                    try:
+                        processed = process_grouped_cells(
+                            pred_rows=pred_prepped["row"].to_numpy(dtype=np.int32)[keep],
+                            pred_cols=pred_prepped["col"].to_numpy(dtype=np.int32)[keep],
+                            val_raster=val_raster_base.copy(),
+                            mask_array=mask_array,
+                            grid_shape=grid_shape,
+                            nodata_val=nodata_val,
+                        )
+                        diff_in_mask = processed["diff"][mask_array]
+                        # rms = np.sqrt(np.mean(np.square(diff_in_mask))) if diff_in_mask.size > 0 else np.inf
+                        rms = np.mean(np.abs(diff_in_mask)) if diff_in_mask.size > 0 else np.inf
+                        if rms < best_rms:
+                            best_rms = rms
+                            rms_cutoff = cut_off
+                            rms_factor = factor
+                        td = np.sum(diff_in_mask) if diff_in_mask.size > 0 else np.inf
+                        if abs(td) < abs(best_td):
+                            best_td = td
+                            td_cutoff = cut_off
+                            td_factor = factor
+                        
+                        row_rms.append(rms)
+                        row_td.append(td)
+                    except Exception:
+                        continue
+                parameter_map_rms.append(row_rms)
+                parameter_map_td.append(row_td)
+            click.echo(f"{pred_file.split('20260220')[0].strip('_')} | Best RMS: {best_rms:.3f} at cutoff {rms_cutoff:.3f} & factor {rms_factor:.2f} | Best TD: {best_td:.2f} at cutoff {td_cutoff:.3f} & factor {td_factor:.2f}")
+            fig = plt.figure(figsize=(12, 5))
+            plt.subplot(1, 2, 1)
+            im = plt.imshow(parameter_map_rms, aspect='auto', origin='lower', extent=[factor_min, factor_max, 0.001, 0.07])
+            plt.scatter(rms_factor, rms_cutoff, color='white', label='Best RMS', edgecolor='black', marker="*", s=100)
+            plt.colorbar(im, label='RMS')
+            plt.xlabel('Factor')
+            plt.ylabel('Cutoff')
+            plt.title(f'RMS across parameters for {pred_file.split("20260220")[0].strip("_")}')
+            plt.subplot(1, 2, 2)
+            im = plt.imshow(parameter_map_td, aspect='auto', origin='lower', extent=[factor_min, factor_max, 0.001, 0.07], cmap="seismic", vmin=-max(map(abs, np.array(parameter_map_td).flatten())), vmax=max(map(abs, np.array(parameter_map_td).flatten())))
+            plt.scatter(td_factor, td_cutoff, color='white', label='Best TD', edgecolor='black', marker="*", s=100)
+            plt.colorbar(im, label='Total Difference')
+            plt.xlabel('Factor')
+            plt.ylabel('Cutoff')
+            plt.title(f'Total Difference across parameters for {pred_file.split("20260220")[0].strip("_")}')
+            plt.tight_layout()
+            plt.savefig(f"{out_dir}/{pred_file.split('20260220')[0].strip('_')}_parameter_map.png")"""
 
-            # mask as an array for rasters (outside the mask is False (0))
-            mask_array = features.geometry_mask(
-                [prediction_extent_geom],
-                out_shape=grid_shape,
-                transform=out_transform,
-                invert=True,
+
+            processed = process_grouped_cells(
+                pred_rows=pred_prepped["row"].to_numpy(dtype=np.int32),
+                pred_cols=pred_prepped["col"].to_numpy(dtype=np.int32),
+                val_raster=val_raster_base.copy(),
+                mask_array=mask_array,
+                grid_shape=grid_shape,
+                nodata_val=nodata_val,
             )
 
-            # --- summary statistics ---
-            # extract only the values inside the mask for summary stats
-            d_valid = diff[mask_array]
-            p_valid = pred_raster[mask_array]
-            v_valid = val_raster[mask_array]
-            e_valid = error_raster[mask_array]
+            p_valid = processed["pred_raster"]
+            v_valid = processed["val_raster"]
+            d_valid = processed["diff"]
+            diff = processed["diff"] * mask_array.astype(np.int32)
+            e_valid = processed["error_raster"]
+            out_transform = grouped["out_transform"]
+            grid_shape = grouped["grid_shape"]
+            nodata_val = grouped["nodata_val"]
+
 
             # pre-calculate positive cell indices
-            valpos_idx = (val_raster > 0) & mask_array
-            predpos_idx = (pred_raster > 0) & mask_array
+            valpos_idx = (v_valid > 0) & mask_array
+            predpos_idx = (p_valid > 0) & mask_array
 
             # diff for positive cells
-            diff_valpos = diff[valpos_idx]
-            diff_predpos = diff[predpos_idx]
+            diff_valpos = d_valid[valpos_idx]
+            diff_predpos = d_valid[predpos_idx]
 
             # proportional difference
-            pdiff = np.zeros_like(diff)
+            pdiff = np.zeros_like(d_valid)
             if diff_valpos.size > 0:
-                pdiff[valpos_idx] = diff_valpos / val_raster[valpos_idx]
+                pdiff[valpos_idx] = diff_valpos / v_valid[valpos_idx]
 
             # extract specific pdiff segment for stats
             pdiff_valpos = pdiff[valpos_idx]
@@ -214,13 +425,6 @@ def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str):
 
             # --- save rasters ---#
 
-            # no data value to apply outside the mask
-            nodata_val = -9999.0
-
-            # mask all three arrays
-            for r in [pred_raster, val_raster, diff, error_raster]:
-                r[~mask_array] = nodata_val
-
             # save three rasters (predicted count, validation count, and difference)
             meta = src_grid.meta.copy()
             meta.update(
@@ -237,9 +441,9 @@ def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str):
             base_name = os.path.splitext(pred_file)[0]
             outputs = {
                 "diff": diff,
-                "error": error_raster,
-                "pred_count": pred_raster,
-                "val_count": val_raster,
+                # "error": error_raster,
+                # "pred_count": pred_raster,
+                # "val_count": val_raster,
             }
 
             for suffix, data in outputs.items():

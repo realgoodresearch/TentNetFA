@@ -80,7 +80,7 @@ def load_points_from_geojson(path: Path) -> list[tuple]:
         peak = float(props.get("peak_value", 0.0))
         adj_raw = props.get("adjusted_peak", 0.0)
         adj_peak = float(adj_raw) if adj_raw is not None else 0.0
-        points.append((lat, lon, peak, adj_peak))
+        points.append([lat, lon, peak, adj_peak])
 
     return points
 
@@ -174,6 +174,12 @@ def save_merged_gpkg(points: list[tuple], out_path: Path) -> None:
     help="Global minimum adjusted_peak threshold; points below this are dropped before merging.",
 )
 @click.option(
+    "--adjustment-factor",
+    default=1.0,
+    show_default=True,
+    help="Global factor to apply to (adjusted_peak - peak_value) when filtering points."
+)
+@click.option(
     "--thresholds-config",
     default=None,
     type=click.Path(dir_okay=False),
@@ -194,6 +200,7 @@ def cli(
     min_distance_m: float,
     agreement: int,
     min_adj_peak: float,
+    adjustment_factor: float,
     thresholds_config: str | None,
     exclusion_zones_gpkg: str | None,
 ) -> None:
@@ -213,7 +220,11 @@ def cli(
         pts = load_points_from_geojson(path)
         threshold = resolve_threshold(path.name, thresholds_data, min_adj_peak)
         if threshold > 0.0:
-            filtered = [p for p in pts if p[3] >= threshold]
+            filtered = []
+            for p in pts:
+                p[3] = (p[3] - p[2]) * adjustment_factor + p[2]  # Adjusted peak after scaling
+                if p[3] >= threshold:
+                    filtered.append(p)
             LOGGER.info(
                 "  %s: %d points loaded, %d kept (adj_peak >= %.4f)",
                 path.name, len(pts), len(filtered), threshold,

@@ -54,7 +54,7 @@ def extract_tile_centroids(probs_np, bounds, threshold, min_area):
 def extract_tile_nms(probs_np, bounds, threshold):
     """Return interpolated local maxima (lat, lon, peak_value) above threshold."""
     probs_t = torch.as_tensor(probs_np, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
-    blurred_np = gaussian_filter(probs_np, sigma=50) * 3
+    blurred_np = gaussian_filter(probs_np, sigma=50)
     blurred_t = torch.as_tensor(blurred_np, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
     score_t = probs_t + blurred_t
 
