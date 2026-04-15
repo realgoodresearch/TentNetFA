@@ -29,9 +29,18 @@ class DatasetViewer:
                 else np.array(t)
             )
 
-        arr_feat = to_numpy(sample["feature"])
-        arr_prewar = to_numpy(sample["prewar"])
+        arr_feat = to_numpy(sample["feature"]).astype(np.float32)
+        arr_prewar = to_numpy(sample["prewar"]).astype(np.float32)
         arr_label = to_numpy(sample["label"])
+
+        if arr_feat.ndim == 3 and arr_feat.shape[0] == 3:
+            arr_feat = np.transpose(arr_feat, (1, 2, 0))
+
+        if arr_prewar.ndim == 3 and arr_prewar.shape[0] == 3:
+            arr_prewar = np.transpose(arr_prewar, (1, 2, 0))
+
+        if arr_label.ndim == 3 and arr_label.shape[0] == 1:
+            arr_label = arr_label[0]
 
         meta = sample["meta"]
         if isinstance(meta, bytes):
@@ -59,7 +68,8 @@ class DatasetViewer:
         )
 
     def _plot_overlay_on_axis(self, ax, base, mask):
-        ax.imshow(base, cmap="gray", interpolation="none")
+        ax.imshow(base, interpolation="none")
+
         ax.imshow(
             np.ones_like(mask),
             cmap="spring",
@@ -78,13 +88,14 @@ class DatasetViewer:
         arr_feat, arr_prewar, arr_label, meta_text = self._prepare_display_data(idx)
 
         fig, axes = plt.subplots(
-            1, 3, figsize=(14, 6),
-            gridspec_kw={"width_ratios": [1, 3, 3]}
+            1, 5,
+            figsize=(30, 8),  # bigger figure
+            dpi=150  # higher resolution
         )
 
         self._plot_meta(axes[0], meta_text)
 
-        axes[1].imshow(arr_prewar, cmap="gray", interpolation="none")
+        axes[1].imshow(arr_prewar, interpolation="none")
         axes[1].set_title("Prewar")
         axes[1].axis("off")
 
@@ -97,24 +108,46 @@ class DatasetViewer:
     def show_split(self, idx: int) -> None:
         arr_feat, arr_prewar, arr_label, meta_text = self._prepare_display_data(idx)
 
+        diff = arr_feat - arr_prewar
+
+        # normalize diff for visualization only
+        diff_vis = diff.copy()
+        diff_vis -= diff_vis.min()
+        if diff_vis.max() > 0:
+            diff_vis /= diff_vis.max()
+
         fig, axes = plt.subplots(
-            1, 4, figsize=(16, 6),
-            gridspec_kw={"width_ratios": [1, 3, 3, 3]}
+            1, 5,
+            figsize=(30, 8),  # bigger figure
+            dpi=150  # higher resolution
         )
 
         self._plot_meta(axes[0], meta_text)
 
-        axes[1].imshow(arr_prewar, cmap="gray", interpolation="none")
+        def enhance(img):
+            img = img - img.min()
+            if img.max() > 0:
+                img = img / img.max()
+            return img
+
+        arr_feat = enhance(arr_feat)
+        arr_prewar = enhance(arr_prewar)
+
+        axes[1].imshow(arr_prewar, interpolation="none")
         axes[1].set_title("Prewar")
         axes[1].axis("off")
 
-        axes[2].imshow(arr_feat, cmap="gray", interpolation="none")
+        axes[2].imshow(arr_feat, interpolation="none")
         axes[2].set_title("Current")
         axes[2].axis("off")
 
-        axes[3].imshow(arr_label, cmap="gray")
-        axes[3].set_title("Label")
+        axes[3].imshow(diff_vis, interpolation="none")
+        axes[3].set_title("Diff")
         axes[3].axis("off")
+
+        axes[4].imshow(arr_label)
+        axes[4].set_title("Label")
+        axes[4].axis("off")
 
         plt.tight_layout()
         plt.show()
@@ -153,7 +186,26 @@ class DatasetViewer:
             arr_feat, arr_prewar, arr_label, _ = self._prepare_display_data(idx)
 
             combined = np.concatenate([arr_prewar, arr_feat], axis=1)
-            ax.imshow(combined, cmap="gray", interpolation="none")
+            ax.imshow(combined, interpolation="none")
+
+            # --- ADD LABEL OVERLAY ---
+            h, w = arr_label.shape
+            overlay = np.zeros((h, w * 2))
+
+            if arr_label.max() > 0:
+                scaled_label = arr_label / arr_label.max()
+            else:
+                scaled_label = arr_label
+
+            overlay[:, w:] = scaled_label
+
+            ax.imshow(
+                np.ones_like(overlay),
+                cmap="spring",
+                alpha=overlay * 0.8,  # increase visibility
+                interpolation="none",
+            )
+            # --- END ADDITION ---
 
             txt = ax.text(
                 0.5,
@@ -181,7 +233,8 @@ if __name__ == "__main__":
     from displacement_tracker.paired_image_dataset import PairedImageDataset
 
     ds = PairedImageDataset(
-        "tif_files/historic/processed/deir_el_balah_nuseirat_gaza_city_20251014_121159_ssc7_u0002_visual_clip.h5"
+        "tif_files/training/khan_yunis_20241005_062045_ssc2_u0001_visual_clip.h5"
+        #"tif_files/historic/processed/khan_yunis_20250918_122620_ssc10_u0001_visual_clip.h5"
     )
 
     print("Dataset length:", len(ds))
@@ -191,6 +244,9 @@ if __name__ == "__main__":
     if len(ds) > 0:
         indices = random.sample(range(len(ds)), min(12, len(ds)))
         print("Showing indices:", indices)
-        viewer.show_batch(indices)
+        for idx in indices:
+            viewer.show_split(idx)
     else:
         print("Dataset is empty.")
+
+# poetry run python displacement_tracker/visualization/dataset_viewer.py

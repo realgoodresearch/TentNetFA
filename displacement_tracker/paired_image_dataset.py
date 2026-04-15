@@ -20,34 +20,34 @@ class PairedImageDataset(Dataset):
         self.indices: list | None = indices
         self.sigma = sigma
 
-        # Calculate normalization constant dynamically
-        # Create dummy image: 100x100 black image with 3x3 white square in center
-        dummy = np.zeros((100, 100), dtype=np.float32)
-        dummy[49:52, 49:52] = 255.0
-        blurred_dummy = gaussian_filter(dummy, sigma=self.sigma)
-        # Rescaled constant so that value of 1 is never exceeded, even with multiple tents together
-        self.norm_constant = float(np.max(blurred_dummy)) * 2.3
-
         LOGGER.info(
-            f"Initialized PairedImageDataset with sigma={self.sigma}. Normalization constant: {self.norm_constant}"
+            f"Initialized PairedImageDataset with sigma={self.sigma}. Using mass normalization."
         )
 
         # Default feature transform: numpy array to tensor
 
         self.h5 = h5py.File(self.hdf5_path, "r")  # r+ supports saving of splits
-        self.greyscale_dataset = self.h5["feature"]
+        self.feature_dataset = self.h5["feature"]
         self.prewar_dataset = self.h5["prewar"]
         self.label_dataset = self.h5["label"]
         self.meta_dataset = self.h5["meta"]
 
     @staticmethod
     def feat_transform(arr):
-        return torch.from_numpy(arr).unsqueeze(0)
+        return torch.from_numpy(arr)
 
+    # Updated to do mass normalisation (integral per tent = 1) instead of peak normalisation
     def label_transform(self, arr):
         arr = arr.astype(np.float32)
+
         blurred = gaussian_filter(arr, sigma=self.sigma)
-        return torch.from_numpy(blurred).unsqueeze(0) / self.norm_constant
+
+        # Each tent = 3x3 block of value 255
+        TENT_MASS = 255.0 * 9.0
+
+        blurred = blurred / TENT_MASS
+
+        return torch.from_numpy(blurred).unsqueeze(0)
 
     def __len__(self):
         if self.indices is not None:
@@ -58,15 +58,15 @@ class PairedImageDataset(Dataset):
     def __getitem__(self, idx, remap_idx: bool = True):
         if self.indices is not None and remap_idx:
             idx = self.indices[idx]
-        # Load greyscale and label arrays
-        grey = self.greyscale_dataset[idx].squeeze()
+        # Load feature_dataset and label arrays
+        feature_arr = self.feature_dataset[idx]
         label_arr = self.label_dataset[idx]
-        prewar = self.prewar_dataset[idx].squeeze()
+        prewar = self.prewar_dataset[idx]
 
         meta = self.meta_dataset[idx]
 
         # Apply transforms directly to numpy arrays
-        feat = PairedImageDataset.feat_transform(grey)
+        feat = PairedImageDataset.feat_transform(feature_arr)
         lab = self.label_transform(label_arr)
         prewar = PairedImageDataset.feat_transform(prewar)
         return {"feature": feat, "label": lab, "meta": meta, "prewar": prewar}
