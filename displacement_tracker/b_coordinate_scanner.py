@@ -387,7 +387,6 @@ def process_group(
     transformer,
     prewar_src: rasterio.io.DatasetReader | None = None,
     min_valid_fraction: float = 0.0,  # << added param
-    normalize_params: dict[str, float] | None = None,
 ) -> tuple[
     np.ndarray | None, np.ndarray | None, dict[str, Any] | None, np.ndarray | None
 ]:
@@ -1086,7 +1085,7 @@ def scan_all_coordinates(
                 transformer,
                 prewar_src,
                 min_valid_fraction=min_valid_fraction,
-                normalize_params=normalize_params,
+                # normalize_params=normalize_params,
             )
             if feature is not None and label is not None and meta is not None:
                 hdf5_writer.add_entry(feature, label, meta, prewar_img)

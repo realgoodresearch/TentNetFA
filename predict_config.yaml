@@ -1,18 +1,18 @@
-geotiff_dir: ${DATA_DIR}/results/TentNetFA/model_v1.1/2026-02/tiffs
+geotiff_dir: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/tiffs
 boundaries: gaza_boundaries/GazaStrip_MunicipalBoundaries.shp
-prewar_gaza:  ${DATA_DIR}/results/TentNetFA/model_v1.1/2026-02/prewar_gaza.tif
-hdf5_folder: ${DATA_DIR}/results/TentNetFA/model_v1.1/2026-02/hdf5_files_normalized
-json_folder: ${DATA_DIR}/results/TentNetFA/model_v1.1/2026-02/json_files
+prewar_gaza:  ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/prewar_gaza.tif
+hdf5_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/hdf5_files
+json_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/json_files
 loading:
   files:
-    - deir_el_balah_nuseirat_gaza_city_20260220_122923_ssc10_u0002_visual_clip.tif
-    - gaza_city_jabalia_beit_hanoun_20260220_123000_ssc10_u0001_visual_clip.tif
-    - gaza_city_jabalia_beit_lahiya_20260220_122923_ssc10_u0001_visual_clip.tif
-    - kerem_shalom_crossing_al_nasr_20260220_055911_ssc1_u0001_visual_clip.tif
-    - khan_yunis_al_maghazi_bureij_20260220_123000_ssc10_u0002_visual_clip.tif
-    - khan_yunis_al_mawasi_deir_el_balah_20260220_122923_ssc10_u0003_visual_clip.tif
-    - tel_al_sultan_20260220_122923_ssc10_u0004_visual_clip.tif
-    - rafah_rafah_crossing_khan_yunis_20260220_123000_ssc10_u0003_visual_clip.tif
+    # - "khan_yunis_al_mawasi_deir_el_balah_20260220_122923_ssc10_u0003_visual_clip.tif"
+    - "gaza_city_jabalia_beit_hanoun_20260220_123000_ssc10_u0001_visual_clip.tif"
+    # - "gaza_city_jabalia_beit_lahiya_20260220_122923_ssc10_u0001_visual_clip.tif"
+    # - "deir_el_balah_nuseirat_gaza_city_20260220_122923_ssc10_u0002_visual_clip.tif"
+    # - "kerem_shalom_crossing_al_nasr_20260220_055911_ssc1_u0001_visual_clip.tif"
+    # - "khan_yunis_al_maghazi_bureij_20260220_123000_ssc10_u0002_visual_clip.tif"
+    # - "rafah_rafah_crossing_khan_yunis_20260220_123000_ssc10_u0003_visual_clip.tif"
+    # - "tel_al_sultan_20260220_122923_ssc10_u0004_visual_clip.tif"
 processing:
   individual: true
   prediction_only: true
@@ -27,9 +27,9 @@ processing:
     min_valid_fraction: 0.9
 prediction:
   save_bounds: true
-  input_folder: ${DATA_DIR}/results/TentNetFA/model_v1.1/2026-02/hdf5_files_final
-  output_folder: ${DATA_DIR}/results/TentNetFA/model_v1.1/2026-02/lower_thresh
-  model: ${DATA_DIR}/models/v1.0.pth
+  input_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/hdf5_files
+  output_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/results_temp_lower_thresh
+  model: /home/karim/TentNetFA/runs/temp_best/best_model.pth
   batch_size: 8
   num_workers: 4  # Optional sampling configuration
   sample:
@@ -39,7 +39,8 @@ prediction:
   selection:
     method: nms
     agreement: false
-    threshold: 0.001
+    threshold: 0.0005
+    factor: 1.0
     min_area: 5
     min_distance_m: 3.0
     crop_pixels: 16  # Set to radius of total receptive field

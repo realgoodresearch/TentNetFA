@@ -100,7 +100,8 @@ def train(
     if memory:
         LOGGER.info("Caching training dataset in RAM...")
         train_set = CachedDataset(train_set)
-        LOGGER.info(f"Cached {len(train_set)} training samples.")
+        val_set = CachedDataset(val_set)
+        LOGGER.info(f"Cached {len(train_set)} training and {len(val_set)} validation samples.")
 
     train_loader = DataLoader(
         train_set,
@@ -125,7 +126,7 @@ def train(
         count_loss = torch.nn.functional.mse_loss(pred_count, true_count)
 
         # small weight keeps spatial quality dominant
-        return mse + 0.1 * count_loss
+        return 1e6 * mse # + 0.1 * count_loss
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 

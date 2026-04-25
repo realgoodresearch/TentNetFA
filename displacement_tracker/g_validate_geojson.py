@@ -235,6 +235,8 @@ def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str, exclusion_z
             if (f.endswith(".geojson") or (f.endswith(".gpkg")) or f.endswith(".json"))
         ]
 
+        print(pred_files)
+
         for pred_file in pred_files:
             # pred_file = pred_files[0]
 
@@ -262,6 +264,7 @@ def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str, exclusion_z
             best_rms = float("inf")
             rms_cutoff = None
             rms_factor = None
+            best_keep = None
 
             pred_gdf = pred_gdf.clip(exclusion_geom) if exclusion_zones else pred_gdf
 
@@ -285,24 +288,28 @@ def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str, exclusion_z
             grid_shape = grouped["grid_shape"]
             nodata_val = grouped["nodata_val"]
 
-            """parameter_map_rms = []
+            parameter_map_rms = []
             parameter_map_td = []
 
-            factor_scale = 0.27
-            factor_steps = 1
+            factor_scale = 0.01
+            factor_steps = 1000
             factor_start_steps = 0
             factor_min = factor_scale * factor_start_steps
             factor_max = factor_scale * (factor_steps + factor_start_steps)
 
 
-            for c in tqdm(range(13, 14)):
+            cutoff_step = 0.0001
+            cutoff_min = 5
+            cutoff_max = 50
+
+            for c in tqdm(range(cutoff_min, cutoff_max + 1)):
                 row_rms = []
                 row_td = []
                 for f in range(factor_start_steps, factor_steps + 1 + factor_start_steps):
                     delta = pred_prepped["adjusted_peak"] - pred_prepped["peak_value"]
                     factor = f * factor_scale
                     rescaled_peak = pred_prepped["peak_value"] + factor * delta
-                    cut_off = c * 0.001
+                    cut_off = c *cutoff_step
                     keep = (rescaled_peak >= cut_off).to_numpy()
 
                     try:
@@ -321,6 +328,7 @@ def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str, exclusion_z
                             best_rms = rms
                             rms_cutoff = cut_off
                             rms_factor = factor
+                            best_keep = keep
                         td = np.sum(diff_in_mask) if diff_in_mask.size > 0 else np.inf
                         if abs(td) < abs(best_td):
                             best_td = td
@@ -333,29 +341,29 @@ def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str, exclusion_z
                         continue
                 parameter_map_rms.append(row_rms)
                 parameter_map_td.append(row_td)
-            click.echo(f"{pred_file.split('20260220')[0].strip('_')} | Best RMS: {best_rms:.3f} at cutoff {rms_cutoff:.3f} & factor {rms_factor:.2f} | Best TD: {best_td:.2f} at cutoff {td_cutoff:.3f} & factor {td_factor:.2f}")
+            click.echo(f"{pred_file.split('20260220')[0].strip('_')} | Best RMS: {best_rms:.3f} at cutoff {rms_cutoff:.4f} & factor {rms_factor:.2f} | Best TD: {best_td:.2f} at cutoff {td_cutoff:.4f} & factor {td_factor:.2f}")
             fig = plt.figure(figsize=(12, 5))
             plt.subplot(1, 2, 1)
-            im = plt.imshow(parameter_map_rms, aspect='auto', origin='lower', extent=[factor_min, factor_max, 0.001, 0.07])
+            im = plt.imshow(parameter_map_rms, aspect='auto', origin='lower', extent=[factor_min, factor_max, cutoff_min * cutoff_step, cutoff_max * cutoff_step])
             plt.scatter(rms_factor, rms_cutoff, color='white', label='Best RMS', edgecolor='black', marker="*", s=100)
             plt.colorbar(im, label='RMS')
             plt.xlabel('Factor')
             plt.ylabel('Cutoff')
             plt.title(f'RMS across parameters for {pred_file.split("20260220")[0].strip("_")}')
             plt.subplot(1, 2, 2)
-            im = plt.imshow(parameter_map_td, aspect='auto', origin='lower', extent=[factor_min, factor_max, 0.001, 0.07], cmap="seismic", vmin=-max(map(abs, np.array(parameter_map_td).flatten())), vmax=max(map(abs, np.array(parameter_map_td).flatten())))
+            im = plt.imshow(parameter_map_td, aspect='auto', origin='lower', extent=[factor_min, factor_max, cutoff_min * cutoff_step, cutoff_max * cutoff_step], cmap="seismic", vmin=-max(map(abs, np.array(parameter_map_td).flatten())), vmax=max(map(abs, np.array(parameter_map_td).flatten())))
             plt.scatter(td_factor, td_cutoff, color='white', label='Best TD', edgecolor='black', marker="*", s=100)
             plt.colorbar(im, label='Total Difference')
             plt.xlabel('Factor')
             plt.ylabel('Cutoff')
             plt.title(f'Total Difference across parameters for {pred_file.split("20260220")[0].strip("_")}')
             plt.tight_layout()
-            plt.savefig(f"{out_dir}/{pred_file.split('20260220')[0].strip('_')}_parameter_map.png")"""
+            plt.savefig(f"{out_dir}/{pred_file.split('20260220')[0].strip('_')}_parameter_map.png")
 
 
             processed = process_grouped_cells(
-                pred_rows=pred_prepped["row"].to_numpy(dtype=np.int32),
-                pred_cols=pred_prepped["col"].to_numpy(dtype=np.int32),
+                pred_rows=pred_prepped["row"].to_numpy(dtype=np.int32)[best_keep],
+                pred_cols=pred_prepped["col"].to_numpy(dtype=np.int32)[best_keep],
                 val_raster=val_raster_base.copy(),
                 mask_array=mask_array,
                 grid_shape=grid_shape,
@@ -398,7 +406,7 @@ def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str, exclusion_z
                 if np.sum(v_valid) > 0
                 else 0,
                 "rmsle": np.sqrt(np.mean(np.square(e_valid))),
-                "exp(rmsle)": np.exp(np.sqrt(np.mean(np.square(e_valid)))),
+                # "exp(rmsle)": np.exp(np.sqrt(np.mean(np.square(e_valid)))),
                 # "bias": np.mean(d_valid),
                 # "impr": np.std(d_valid),
                 # "inac": np.abs(np.mean(d_valid)),
