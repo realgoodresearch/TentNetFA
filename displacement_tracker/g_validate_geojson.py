@@ -399,11 +399,11 @@ def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str, exclusion_z
                 "file": pred_file,
                 "pred_date": pred_date.strftime("%Y-%m-%d"),
                 "val_date": closest_date.strftime("%Y-%m-%d"),
-                "total_pred": np.sum(p_valid),
-                "total_val": np.sum(v_valid),
-                "total_diff": np.sum(v_valid) - np.sum(p_valid),
-                "total_pdiff": (np.sum(v_valid) - np.sum(p_valid)) / np.sum(v_valid)
-                if np.sum(v_valid) > 0
+                "total_pred": np.sum(p_valid[predpos_idx]),
+                "total_val": np.sum(v_valid[valpos_idx]),
+                "total_diff": np.sum(v_valid[valpos_idx]) - np.sum(p_valid[predpos_idx]),
+                "total_pdiff": (np.sum(v_valid[valpos_idx]) - np.sum(p_valid[predpos_idx])) / np.sum(v_valid[valpos_idx])
+                if np.sum(v_valid[valpos_idx]) > 0
                 else 0,
                 "rmsle": np.sqrt(np.mean(np.square(e_valid))),
                 # "exp(rmsle)": np.exp(np.sqrt(np.mean(np.square(e_valid)))),
@@ -450,8 +450,8 @@ def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str, exclusion_z
             outputs = {
                 "diff": diff,
                 # "error": error_raster,
-                # "pred_count": pred_raster,
-                # "val_count": val_raster,
+                "pred_count": pred_raster,
+                "val_count": val_raster,
             }
 
             for suffix, data in outputs.items():
