@@ -450,8 +450,8 @@ def cli(pred_dir: str, val_dir: str, master_grid: str, out_dir: str, exclusion_z
             outputs = {
                 "diff": diff,
                 # "error": error_raster,
-                "pred_count": pred_raster,
-                "val_count": val_raster,
+                "pred_count": p_valid,
+                "val_count": v_valid,
             }
 
             for suffix, data in outputs.items():

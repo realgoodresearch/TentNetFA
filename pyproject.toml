@@ -46,7 +46,8 @@ tornado = "^6.5.5"
 
 [tool.poetry.scripts]
 tif-loader = "displacement_tracker.a_tif_loader:tif_loader"
-coordinate-scanner = "displacement_tracker.b_coordinate_scanner:cli"
+annotated-scanner = "displacement_tracker.b1_annotated_scanner:cli"
+image-scanner = "displacement_tracker.b2_image_scanner:cli"
 rebalance-dataset = "displacement_tracker.c_rebalance_dataset:cli"
 train-cnn = "displacement_tracker.d_train_cnn:cli"
 predict-json = "displacement_tracker.e_predict_json:cli"

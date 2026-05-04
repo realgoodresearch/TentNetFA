@@ -1,7 +1,6 @@
 from __future__ import annotations
 import random
 from pathlib import Path
-from functools import lru_cache
 
 from torch.utils.data import Dataset
 import torch
@@ -54,7 +53,6 @@ class PairedImageDataset(Dataset):
             return len(self.indices)
         return self.label_dataset.shape[0]
 
-    @lru_cache(maxsize=None)
     def __getitem__(self, idx, remap_idx: bool = True):
         if self.indices is not None and remap_idx:
             idx = self.indices[idx]
