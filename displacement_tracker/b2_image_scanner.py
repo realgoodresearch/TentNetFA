@@ -1,13 +1,14 @@
 """Flow: scan a TIFF without annotations (image-only, full-grid).
 
-Tile production is parallelised across worker processes; each worker re-opens
-the standardised raster from disk so rasterio handles aren't shared. The HDF5
-writer stays on the main process (h5py serialises writes anyway) and consumes
-batches as they complete.
+Each worker computes tile windows + validity and emits manifest rows. The main
+process aggregates rows and writes a single Parquet manifest at end-of-TIFF.
+The HDF5 materialisation step is gone — the runtime dataset reads tiles
+directly from the standardised raster.
 """
 from __future__ import annotations
 
 import inspect
+import math
 import os
 import sys
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
@@ -16,30 +17,32 @@ from itertools import islice
 from typing import Any, Iterable, Iterator
 
 import click
-import numpy as np
 import rasterio
-from pyproj import Transformer
-from rasterio.warp import transform
 from tqdm import tqdm
 
 from displacement_tracker.util.annotations import extract_date_from_filename
 from displacement_tracker.util.env_loader import load_yaml_with_env
-from displacement_tracker.util.hdf5_writer import HDF5Writer
 from displacement_tracker.util.logging_config import setup_logging
+from displacement_tracker.util.manifest_writer import (
+    ManifestWriter,
+    compute_tile_id,
+)
 from displacement_tracker.util.raster_processing import (
+    compute_standardisation_stats,
     open_raster,
-    standardise_src,
 )
 from displacement_tracker.util.scan_orchestrator import (
     collect_tif_files,
     require_keys,
     run_scans,
 )
-from displacement_tracker.util.tile_builder import process_group
+from displacement_tracker.util.tile_builder import (
+    _read_prewar_tile,
+    compute_tile_window,
+)
 
 LOGGER = setup_logging("image_scanner")
 
-# Per-worker process state (set by the pool initializer).
 _WORKER_STATE: dict[str, Any] = {}
 
 
@@ -48,37 +51,61 @@ def _init_worker(src_path: str, prewar_path: str | None) -> None:
     src = rasterio.open(src_path)
     _WORKER_STATE["src"] = src
     _WORKER_STATE["prewar"] = rasterio.open(prewar_path) if prewar_path else None
-    _WORKER_STATE["transformer"] = Transformer.from_crs(
-        "EPSG:4326", src.crs, always_xy=True
-    )
 
 
 def _process_batch(
     coords: list[tuple[float, float]],
-    step: float,
+    core_m: float,
+    margin_m: float,
     base_name: str,
     date_target: str,
+    raster_path: str,
+    prewar_path: str,
     min_valid_fraction: float,
-) -> list[tuple[np.ndarray, np.ndarray, dict[str, Any], np.ndarray | None]]:
+) -> list[dict[str, Any]]:
     src = _WORKER_STATE["src"]
     prewar = _WORKER_STATE["prewar"]
-    transformer = _WORKER_STATE["transformer"]
-    out: list[tuple[np.ndarray, np.ndarray, dict[str, Any], np.ndarray | None]] = []
-    for lon, lat in coords:
-        feature, label, meta, prewar_img = process_group(
-            src,
-            [],
-            lon,
-            lat,
-            step,
-            base_name,
-            date_target,
-            transformer,
-            prewar,
-            min_valid_fraction=min_valid_fraction,
+    span_m = core_m + 2.0 * margin_m
+    out: list[dict[str, Any]] = []
+    for x_centre, y_centre in coords:
+        tile = compute_tile_window(
+            src, x_centre, y_centre, core_m, margin_m, min_valid_fraction
         )
-        if feature is not None and label is not None and meta is not None:
-            out.append((feature, label, meta, prewar_img))
+        if tile is None:
+            continue
+        if prewar is not None:
+            prewar_check = _read_prewar_tile(
+                prewar,
+                tile.lon_min,
+                tile.lon_max,
+                tile.lat_min,
+                tile.lat_max,
+                span_m,
+                min_valid_fraction,
+            )
+            if prewar_check is None:
+                continue
+        out.append(
+            {
+                "tile_id": compute_tile_id(raster_path, tile.r0, tile.c0),
+                "raster_path": raster_path,
+                "prewar_path": prewar_path,
+                "labels_path": "",
+                "r0": tile.r0,
+                "r1": tile.r1,
+                "c0": tile.c0,
+                "c1": tile.c1,
+                "lon_min": tile.lon_min,
+                "lon_max": tile.lon_max,
+                "lat_min": tile.lat_min,
+                "lat_max": tile.lat_max,
+                "origin_image": base_name,
+                "origin_date": date_target,
+                "valid_fraction": tile.valid_fraction,
+                "is_complete": True,
+                "label_feature_ids": [],
+            }
+        )
     return out
 
 
@@ -107,7 +134,6 @@ def _make_executor(
     prewar_worker_path: str | None,
     max_tasks_per_child: int | None,
 ) -> ProcessPoolExecutor:
-    """Build a process pool, recycling workers periodically when supported."""
     kwargs: dict[str, Any] = {
         "max_workers": n_workers,
         "initializer": _init_worker,
@@ -120,56 +146,65 @@ def _make_executor(
 
 def scan_all_coordinates(
     geotiff_path: str,
-    hdf5_writer: HDF5Writer,
+    manifest_writer: ManifestWriter,
     date_target: str | None,
-    step: float = 0.001,
+    core_m: float,
+    margin_m: float,
     prewar_path: str | None = None,
     min_valid_fraction: float = 0.0,
-    normalize_cfg: dict[str, Any] | None = None,
     max_workers: int | None = None,
     batch_size: int = 64,
-    max_tasks_per_child: int | None = 16,
-    max_pool_restarts: int = 10,
+    max_tasks_per_child: int | None = 32,
+    max_pool_restarts: int = 3,
 ) -> None:
     base_name = os.path.basename(geotiff_path)
     LOGGER.info(
-        f"Scanning entire raster grid for {base_name} with step {step} and min_valid_fraction {min_valid_fraction}"
+        f"Scanning entire raster grid for {base_name} with core_m={core_m}, "
+        f"margin_m={margin_m}, min_valid_fraction={min_valid_fraction}"
     )
 
     src = open_raster(geotiff_path)
     if src is None:
         return
 
-    src = standardise_src(src)
+    src_means, src_stds = compute_standardisation_stats(src)
+    manifest_writer.set_raster_stats(
+        src.name, src_means, src_stds, nodata=src.nodata
+    )
 
     bounds = src.bounds
-    lon_bounds, lat_bounds = transform(
-        src.crs, "EPSG:4326", [bounds.left, bounds.right], [bounds.bottom, bounds.top]
-    )
     LOGGER.info(
-        f"GeoTIFF bounds: min_lon={lon_bounds[0]}, min_lat={lat_bounds[0]}, max_lon={lon_bounds[1]}, max_lat={lat_bounds[1]}"
+        f"GeoTIFF bounds (src CRS): min_x={bounds.left}, min_y={bounds.bottom}, "
+        f"max_x={bounds.right}, max_y={bounds.top}"
     )
 
     prewar_src = open_raster(prewar_path) if prewar_path else None
-    if prewar_src is not None and "std" not in prewar_path:
-        prewar_src = standardise_src(prewar_src)
+    if prewar_src is not None:
+        prewar_means, prewar_stds = compute_standardisation_stats(prewar_src)
+        manifest_writer.set_raster_stats(
+            prewar_src.name, prewar_means, prewar_stds, nodata=prewar_src.nodata
+        )
 
     try:
-        lon_iter = np.arange(lon_bounds[0], lon_bounds[1], step)
-        lat_iter = np.arange(lat_bounds[0], lat_bounds[1], step)
+        i_start = math.floor(bounds.left / core_m)
+        i_end = math.ceil(bounds.right / core_m)
+        j_start = math.floor(bounds.bottom / core_m)
+        j_end = math.ceil(bounds.top / core_m)
         coords = [
-            (float(lon), float(lat)) for lon in lon_iter for lat in lat_iter
+            (i * core_m, j * core_m)
+            for i in range(i_start, i_end)
+            for j in range(j_start, j_end)
         ]
         if not coords:
             return
 
         batches = list(_chunked(coords, batch_size))
         n_workers = max_workers or max(1, (os.cpu_count() or 2) - 1)
-        # Cap in-flight futures so result memory doesn't grow unbounded.
         in_flight_cap = max(2 * n_workers, 4)
 
-        src_path = src.name
+        raster_path = src.name
         prewar_worker_path = prewar_src.name if prewar_src is not None else None
+        prewar_path_for_row = prewar_worker_path or ""
 
         LOGGER.info(
             f"Dispatching {len(batches)} batches of up to {batch_size} tiles to "
@@ -178,23 +213,17 @@ def scan_all_coordinates(
 
         date_arg = date_target or ""
 
-        # Resilient submit/drain loop: if a worker dies (e.g. OOM-killed by the
-        # OS) the whole ProcessPoolExecutor enters a Broken state and every
-        # pending future raises BrokenProcessPool. We track each in-flight
-        # batch alongside its future so we can rebuild the pool and resubmit
-        # any batches that were mid-flight or never even submitted.
         remaining: list[list[tuple[float, float]]] = list(batches)
-        in_progress: dict = {}  # Future -> batch
+        in_progress: dict = {}
         completed = 0
         failed_batches = 0
         restarts = 0
 
         executor = _make_executor(
-            n_workers, src_path, prewar_worker_path, max_tasks_per_child
+            n_workers, raster_path, prewar_worker_path, max_tasks_per_child
         )
 
         def _restart_pool(reason: str) -> bool:
-            """Tear down the broken pool, requeue lost work, spin up a new one."""
             nonlocal executor, restarts, in_progress
             if restarts >= max_pool_restarts:
                 LOGGER.error(
@@ -205,7 +234,6 @@ def scan_all_coordinates(
             restarts += 1
             lost = list(in_progress.values())
             in_progress = {}
-            # Lost batches go back to the front of the queue.
             remaining[:0] = lost
             LOGGER.warning(
                 f"Worker pool died ({reason}); restart {restarts}/{max_pool_restarts}, "
@@ -217,23 +245,25 @@ def scan_all_coordinates(
             except Exception:
                 pass
             executor = _make_executor(
-                n_workers, src_path, prewar_worker_path, max_tasks_per_child
+                n_workers, raster_path, prewar_worker_path, max_tasks_per_child
             )
             return True
 
         try:
             with tqdm(total=len(batches), desc=f"{base_name} batches") as pbar:
                 while remaining or in_progress:
-                    # Top up the in-flight queue.
                     while remaining and len(in_progress) < in_flight_cap:
                         batch = remaining.pop(0)
                         try:
                             fut = executor.submit(
                                 _process_batch,
                                 batch,
-                                step,
+                                core_m,
+                                margin_m,
                                 base_name,
                                 date_arg,
+                                raster_path,
+                                prewar_path_for_row,
                                 min_valid_fraction,
                             )
                         except BrokenProcessPool:
@@ -259,9 +289,8 @@ def scan_all_coordinates(
                     for fut in done:
                         batch = in_progress.pop(fut)
                         try:
-                            entries = fut.result()
+                            rows = fut.result()
                         except BrokenProcessPool:
-                            # Requeue this batch and tear down the pool.
                             remaining.insert(0, batch)
                             pool_broken = True
                             break
@@ -270,10 +299,9 @@ def scan_all_coordinates(
                                 "Worker batch failed; dropping its tiles and continuing"
                             )
                             failed_batches += 1
-                            entries = []
+                            rows = []
 
-                        for feature, label, meta, prewar_img in entries:
-                            hdf5_writer.add_entry(feature, label, meta, prewar_img)
+                        manifest_writer.extend(rows)
                         completed += 1
                         pbar.update(1)
 
@@ -288,7 +316,8 @@ def scan_all_coordinates(
 
         LOGGER.info(
             f"[{base_name}] batches complete: {completed}/{len(batches)} "
-            f"(failed={failed_batches}, pool restarts={restarts})"
+            f"(failed={failed_batches}, pool restarts={restarts}, "
+            f"manifest rows={len(manifest_writer)})"
         )
     finally:
         src.close()
@@ -307,16 +336,15 @@ def cli(config):
         raise click.ClickException(str(e))
 
     proc = params["processing"]
-    step = proc["step"]
+    core_m = float(proc["core_metres"])
+    margin_m = float(proc["margin_metres"])
     quality_thresholds = proc.get("quality_thresholds") or {}
     min_valid_fraction = (
         quality_thresholds.get("min_valid_fraction", 0.0)
         if isinstance(quality_thresholds, dict)
         else 0.0
     )
-    individual = bool(proc.get("individual", False))
     prewar_path = params.get("prewar_gaza")
-    normalize_cfg = proc.get("normalize")
     max_workers = proc.get("max_workers")
     batch_size = int(proc.get("batch_size", 64))
     max_tasks_per_child = proc.get("max_tasks_per_child", 32)
@@ -324,18 +352,15 @@ def cli(config):
         max_tasks_per_child = int(max_tasks_per_child) or None
     max_pool_restarts = int(proc.get("max_pool_restarts", 3))
 
-    if individual and not params.get("hdf5_folder"):
-        raise click.ClickException(
-            "Missing required config key: hdf5_folder when processing.individual is true"
-        )
-    if not individual and "hdf5" not in params:
-        raise click.ClickException("Missing required config key: hdf5")
+    manifest_folder = params.get("manifest_folder") or params.get("hdf5_folder")
+    if not manifest_folder:
+        raise click.ClickException("Missing required config key: manifest_folder")
 
     tif_files = collect_tif_files(params["geotiff_dir"], config)
     if not tif_files:
         raise click.ClickException(f"No .tif files found in {params['geotiff_dir']}")
 
-    def scan_one(tif_path: str, writer: HDF5Writer) -> None:
+    def scan_one(tif_path: str, writer: ManifestWriter) -> None:
         date_target = extract_date_from_filename(tif_path)
         if not date_target:
             LOGGER.warning(f"Skipping {tif_path} (no date found in filename).")
@@ -344,23 +369,17 @@ def cli(config):
             tif_path,
             writer,
             date_target,
-            step,
+            core_m,
+            margin_m,
             prewar_path,
             min_valid_fraction=min_valid_fraction,
-            normalize_cfg=normalize_cfg,
             max_workers=max_workers,
             batch_size=batch_size,
             max_tasks_per_child=max_tasks_per_child,
             max_pool_restarts=max_pool_restarts,
         )
 
-    run_scans(
-        tif_files,
-        scan_one,
-        hdf5=params.get("hdf5"),
-        hdf5_folder=params.get("hdf5_folder"),
-        individual=individual,
-    )
+    run_scans(tif_files, scan_one, manifest_folder=manifest_folder)
 
 
 if __name__ == "__main__":

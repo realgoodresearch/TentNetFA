@@ -233,8 +233,7 @@ if __name__ == "__main__":
     from displacement_tracker.paired_image_dataset import PairedImageDataset
 
     ds = PairedImageDataset(
-        "tif_files/training/khan_yunis_20241005_062045_ssc2_u0001_visual_clip.h5"
-        #"tif_files/historic/processed/khan_yunis_20250918_122620_ssc10_u0001_visual_clip.h5"
+        "tif_files/training/khan_yunis_20241005_062045_ssc2_u0001_visual_clip.parquet"
     )
 
     print("Dataset length:", len(ds))

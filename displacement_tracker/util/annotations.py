@@ -6,9 +6,6 @@ from collections import defaultdict
 from datetime import date, datetime
 from typing import Any
 
-import numpy as np
-import rasterio
-
 
 def parse_date_safe(s: str | None) -> date | None:
     if not s:
@@ -52,9 +49,20 @@ def filter_tents_by_target_date(
 
 
 def group_coords(
-    features: list[dict[str, Any]], step: float
-) -> dict[tuple[float, float], list[dict[str, Any]]]:
-    grouped = defaultdict(list)
+    features: list[dict[str, Any]],
+    core_m: float,
+    margin_m: float,
+    transformer_to_src,
+) -> dict[tuple[int, int], list[dict[str, Any]]]:
+    """Bin features by source-CRS metric cell (i, j), where the tile centred at
+    `(i*core_m, j*core_m)` spans `core_m + 2*margin_m` metres on a side.
+
+    Each feature is added to every cell whose tile geometrically contains it
+    — which for `margin_m < core_m` is at most a 3x3 neighbourhood, but the
+    inclusion test here is exact and works for any margin.
+    """
+    grouped: dict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
+    half = (core_m + 2.0 * margin_m) / 2.0
     for feat in features:
         geom = feat.get("geometry") or {}
         if geom.get("type") != "Point":
@@ -63,70 +71,14 @@ def group_coords(
         if len(coords) != 2:
             continue
         lon, lat = coords
-        base_lon = math.floor(lon / step) * step
-        base_lat = math.floor(lat / step) * step
-        # 3x5 neighbourhood to ensure all subtiles are labelled in the dataset
-        # (previously, upper subtiles had labels = 0 which caused underfitting)
-        for i in (-1, 0, 1):
-            for j in (-2, -1, 0, 1, 2):
-                grouped[
-                    (round(base_lon + i * step, 5), round(base_lat + j * step, 5))
-                ].append(feat)
+        fx, fy = transformer_to_src.transform(lon, lat)
+        i_min = math.ceil((fx - half) / core_m)
+        i_max = math.floor((fx + half) / core_m)
+        j_min = math.ceil((fy - half) / core_m)
+        j_max = math.floor((fy + half) / core_m)
+        for i in range(i_min, i_max + 1):
+            for j in range(j_min, j_max + 1):
+                grouped[(i, j)].append(feat)
     return grouped
 
 
-def is_high_quality_tile(
-    feats: list[dict[str, Any]],
-    date_target_str: str,
-    src: rasterio.io.DatasetReader,
-    lon: float,
-    lat: float,
-    step: float,
-    start_threshold: float,
-    max_missing_end: float,
-    min_valid_fraction: float,
-    transformer,
-) -> bool:
-    """
-    Checks date distributions and raster valid-pixel fraction for the tile.
-    """
-    from displacement_tracker.util.tile_builder import world_window
-
-    if not feats or not date_target_str:
-        return False
-    try:
-        date_target = datetime.strptime(date_target_str, "%Y%m%d").date()
-    except Exception:
-        return False
-
-    start_matches = sum(
-        parse_date_safe(f.get("properties", {}).get("date_start")) == date_target
-        for f in feats
-    )
-    missing_end = sum(
-        parse_date_safe(f.get("properties", {}).get("date_end")) is None for f in feats
-    )
-    n = len(feats)
-    if n == 0:
-        return False
-    if (start_matches / n) < start_threshold or (missing_end / n) > max_missing_end:
-        return False
-
-    window = world_window(src, lon, lat, step, transformer)
-    if not window:
-        return False
-    try:
-        data = src.read(
-            [1, 2, 3], window=((window[0], window[1]), (window[2], window[3]))
-        )
-        if data.size == 0:
-            return False
-        nodata = src.nodata
-        if nodata is not None:
-            valid_mask = (~np.isnan(data)) & (data != nodata)
-        else:
-            valid_mask = (~np.isnan(data)) & (data != 0)
-        valid_fraction = np.count_nonzero(valid_mask) / data.size
-        return valid_fraction >= min_valid_fraction
-    except Exception:
-        return False

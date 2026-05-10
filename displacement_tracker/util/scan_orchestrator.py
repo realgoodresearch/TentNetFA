@@ -8,12 +8,12 @@ from typing import Any, Callable
 import rasterio
 
 from displacement_tracker.util.env_loader import load_yaml_with_env
-from displacement_tracker.util.hdf5_writer import HDF5Writer
 from displacement_tracker.util.logging_config import setup_logging
+from displacement_tracker.util.manifest_writer import ManifestWriter
 
 LOGGER = setup_logging("scan_orchestrator")
 
-ScanCallback = Callable[[str, HDF5Writer], None]
+ScanCallback = Callable[[str, ManifestWriter], None]
 
 
 def collect_tif_files(geotiff_dir: str, config: str | None = None) -> list[str]:
@@ -36,63 +36,33 @@ def ensure_parent_dir(path: str) -> None:
         os.makedirs(parent, exist_ok=True)
 
 
-def hdf5_suffix(hdf5: str | None) -> str:
-    if not hdf5:
-        return ".hdf5"
-    suffix = os.path.splitext(hdf5)[1]
-    return suffix or ".hdf5"
-
-
 def run_scans(
     tif_files: list[str],
     scan_one: ScanCallback,
     *,
-    hdf5: str | None,
-    hdf5_folder: str | None,
-    individual: bool,
+    manifest_folder: str,
 ) -> None:
-    """Drive the per-TIFF scan loop, handling individual vs bundled output."""
+    """Drive the per-TIFF scan loop, writing one Parquet manifest per TIFF."""
     if not tif_files:
         LOGGER.error("No .tif files supplied")
         return
 
+    os.makedirs(manifest_folder, exist_ok=True)
+
     with rasterio.Env(GDAL_CACHEMAX=256):
-        if individual:
-            if not hdf5_folder:
-                raise ValueError(
-                    "hdf5_folder must be provided when processing individual TIFF outputs"
-                )
-            os.makedirs(hdf5_folder, exist_ok=True)
-            suffix = hdf5_suffix(hdf5)
+        for tif_path in tif_files:
+            base = os.path.splitext(os.path.basename(tif_path))[0]
+            out_manifest = os.path.join(manifest_folder, f"{base}.parquet")
+            ensure_parent_dir(out_manifest)
 
-            for tif_path in tif_files:
-                base = os.path.splitext(os.path.basename(tif_path))[0]
-                out_h5 = os.path.join(hdf5_folder, f"{base}{suffix}")
-                ensure_parent_dir(out_h5)
-
-                LOGGER.info(f"Processing {tif_path} → {out_h5}")
-                writer = HDF5Writer(out_h5)
-                try:
-                    scan_one(tif_path, writer)
-                finally:
-                    writer.write()
-                LOGGER.info(f"Saved dataset to {out_h5}")
-            return
-
-        if not hdf5:
-            raise ValueError(
-                "hdf5 must be provided when processing.individual is false"
-            )
-
-        ensure_parent_dir(hdf5)
-        LOGGER.info(f"Processing {len(tif_files)} TIFF files into {hdf5}")
-        writer = HDF5Writer(hdf5)
-        try:
-            for tif_path in tif_files:
+            LOGGER.info(f"Processing {tif_path} → {out_manifest}")
+            writer = ManifestWriter(out_manifest)
+            try:
                 scan_one(tif_path, writer)
-        finally:
-            writer.write()
-        LOGGER.info(f"Saved dataset to {hdf5}")
+            finally:
+                row_count = len(writer)
+                writer.close()
+            LOGGER.info(f"Saved {row_count} rows to {out_manifest}")
 
 
 def require_keys(params: dict[str, Any], keys: tuple[str, ...]) -> None:

@@ -11,6 +11,7 @@ import os
 import psutil
 import tempfile
 from tqdm.auto import tqdm
+import numpy as np
 
 from displacement_tracker.paired_image_dataset import PairedImageDataset
 from displacement_tracker.simple_cnn import SimpleCNN
@@ -139,18 +140,19 @@ def predict(
         tmp_handle.close()
         tmp_ndjson = Path(tmp_handle.name)
 
-    # DataLoader as before
-    loader = DataLoader(
-        subset,
+    loader_kwargs: dict = dict(
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
         pin_memory=(device.type == "cuda"),
         persistent_workers=False,
     )
+    if num_workers and num_workers > 0:
+        loader_kwargs["worker_init_fn"] = PairedImageDataset.worker_init_fn
+    loader = DataLoader(subset, **loader_kwargs)
 
     process = psutil.Process(os.getpid())
-    progress_desc = progress_label or Path(dataset.hdf5_path).name
+    progress_desc = progress_label or str(dataset.manifest_path)
     total_predicted_tents = 0
     max_tile_tents = 0
 
@@ -349,10 +351,10 @@ def resolve_prediction_jobs(pred_cfg):
             )
 
         output_dir.mkdir(parents=True, exist_ok=True)
-        input_files = sorted(input_dir.glob("*.hdf5")) + sorted(input_dir.glob("*.h5"))
+        input_files = sorted(input_dir.glob("*.parquet"))
         if not input_files:
             raise click.ClickException(
-                f"No HDF5 files found in prediction input folder: {input_dir}"
+                f"No parquet manifests found in prediction input folder: {input_dir}"
             )
 
         return [
@@ -379,8 +381,9 @@ def run_prediction_job(
     boundaries_path,
     batch_size,
     num_workers,
+    per_tile_standardisation=False,
 ):
-    dataset = PairedImageDataset(str(input_path))
+    dataset = PairedImageDataset(str(input_path), per_tile_standardisation=per_tile_standardisation)
     try:
         results = predict(
             dataset,
@@ -415,6 +418,7 @@ def cli(config) -> None:
     device = pred_cfg.get("device", None)
     batch_size = pred_cfg.get("batch_size", 12)
     num_workers = pred_cfg.get("num_workers", 4)
+    per_tile_standardisation = pred_cfg.get("per_tile_standardisation", False)
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -441,6 +445,7 @@ def cli(config) -> None:
             boundaries_path,
             batch_size,
             num_workers,
+            per_tile_standardisation=per_tile_standardisation,
         )
 
     if validation_tifs:

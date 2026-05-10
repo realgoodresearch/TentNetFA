@@ -25,11 +25,11 @@ def overlay(base, mask, alpha=0.5, color="red"):
     return (1 - alpha) * base_rgb + alpha * overlay_rgb
 
 
-def visualize_training_subset(hdf5_path, model_path, sample_size=100, device=None):
+def visualize_training_subset(manifest_path, model_path, sample_size=100, device=None):
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Load dataset
-    ds = PairedImageDataset(hdf5_path)
+    ds = PairedImageDataset(manifest_path)
 
     # Random subset of indices
     indices = random.sample(range(len(ds)), min(sample_size, len(ds)))

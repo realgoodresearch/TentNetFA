@@ -1,4 +1,10 @@
-"""Flow: scan a TIFF using GeoJSON annotations (with quality gating)."""
+"""Flow: scan a TIFF using GeoJSON annotations (with quality gating).
+
+Builds a per-TIFF Parquet manifest of accepted tiles plus a sibling labels
+JSON containing the date-filtered tent features. The runtime dataset reads
+tiles from the standardised raster on demand and rasterises labels via
+`create_label_from_feats(...)` against the JSON-stored feature list.
+"""
 from __future__ import annotations
 
 import json
@@ -8,31 +14,36 @@ from datetime import datetime
 from typing import Any
 
 import click
-import numpy as np
 from pyproj import Transformer
-from rasterio.warp import transform
 from tqdm import tqdm
 
 from displacement_tracker.util.annotations import (
     extract_date_from_filename,
     filter_tents_by_target_date,
     group_coords,
-    is_high_quality_tile,
 )
 from displacement_tracker.util.env_loader import load_yaml_with_env
-from displacement_tracker.util.hdf5_writer import HDF5Writer
 from displacement_tracker.util.logging_config import setup_logging
+from displacement_tracker.util.manifest_writer import (
+    ManifestWriter,
+    compute_tile_id,
+    labels_sibling_path,
+    write_labels_json,
+)
 from displacement_tracker.util.raster_processing import (
+    compute_standardisation_stats,
     crop_src_to_boundaries,
     open_raster,
-    standardise_src,
 )
 from displacement_tracker.util.scan_orchestrator import (
     collect_tif_files,
     require_keys,
     run_scans,
 )
-from displacement_tracker.util.tile_builder import process_group
+from displacement_tracker.util.tile_builder import (
+    _read_prewar_tile,
+    compute_tile_window,
+)
 
 LOGGER = setup_logging("annotated_scanner")
 
@@ -43,140 +54,198 @@ def _resolve_min_valid(quality_thresholds: dict[str, Any] | None) -> float:
     return 0.0
 
 
-def _scan_complete_raster(
-    src,
-    grouped: dict[tuple[float, float], list[dict[str, Any]]],
+def _build_row(
+    tile,
+    feats: list[dict[str, Any]],
     base_name: str,
     date_target: str | None,
-    step: float,
-    transformer,
+    raster_path: str,
+    prewar_path: str,
+    labels_path: str,
+    is_complete: bool,
+) -> dict[str, Any]:
+    feature_ids = [
+        int(f["_idx"]) for f in feats if isinstance(f, dict) and "_idx" in f
+    ]
+    return {
+        "tile_id": compute_tile_id(raster_path, tile.r0, tile.c0),
+        "raster_path": raster_path,
+        "prewar_path": prewar_path,
+        "labels_path": labels_path,
+        "r0": tile.r0,
+        "r1": tile.r1,
+        "c0": tile.c0,
+        "c1": tile.c1,
+        "lon_min": tile.lon_min,
+        "lon_max": tile.lon_max,
+        "lat_min": tile.lat_min,
+        "lat_max": tile.lat_max,
+        "origin_image": base_name,
+        "origin_date": date_target or "",
+        "valid_fraction": tile.valid_fraction,
+        "is_complete": is_complete,
+        "label_feature_ids": feature_ids,
+    }
+
+
+def _scan_complete_raster(
+    src,
+    grouped: dict[tuple[int, int], list[dict[str, Any]]],
+    base_name: str,
+    date_target: str | None,
+    core_m: float,
+    margin_m: float,
     prewar_src,
     min_valid: float,
-    hdf5_writer: HDF5Writer,
+    manifest_writer: ManifestWriter,
+    raster_path: str,
+    prewar_path: str,
+    labels_path: str,
 ) -> int:
     bounds = src.bounds
-    lon_bounds, lat_bounds = transform(
-        src.crs,
-        "EPSG:4326",
-        [bounds.left, bounds.right],
-        [bounds.bottom, bounds.top],
-    )
     LOGGER.info(
-        f"[{base_name}] Raster bounds (wgs84): {lon_bounds[0]}..{lon_bounds[1]} x {lat_bounds[0]}..{lat_bounds[1]}"
+        f"[{base_name}] Raster bounds (src CRS): {bounds.left}..{bounds.right} x {bounds.bottom}..{bounds.top}"
     )
+
+    span_m = core_m + 2.0 * margin_m
+    i_start = math.floor(bounds.left / core_m)
+    i_end = math.ceil(bounds.right / core_m)
+    j_start = math.floor(bounds.bottom / core_m)
+    j_end = math.ceil(bounds.top / core_m)
 
     processed_count = 0
-    lon_iter = np.arange(lon_bounds[0], lon_bounds[1], step)
-    lat_iter = np.arange(lat_bounds[0], lat_bounds[1], step)
-    for lon in tqdm(lon_iter, desc=f"{base_name} lon"):
-        for lat in lat_iter:
-            base_lon = round(math.floor(lon / step) * step, 5)
-            base_lat = round(math.floor(lat / step) * step, 5)
-            feats_for_tile = grouped.get((base_lon, base_lat), [])
+    for i in tqdm(range(i_start, i_end), desc=f"{base_name} i"):
+        x_centre = i * core_m
+        for j in range(j_start, j_end):
+            y_centre = j * core_m
+            feats_for_tile = grouped.get((i, j), [])
 
-            feature, label, meta, prewar_tile = process_group(
-                src,
-                feats_for_tile,
-                lon,
-                lat,
-                step,
-                base_name,
-                date_target or "",
-                transformer,
-                prewar_src,
-                min_valid_fraction=min_valid,
+            tile = compute_tile_window(
+                src, x_centre, y_centre, core_m, margin_m, min_valid
             )
+            if tile is None:
+                continue
+            if prewar_src is not None:
+                prewar_check = _read_prewar_tile(
+                    prewar_src,
+                    tile.lon_min,
+                    tile.lon_max,
+                    tile.lat_min,
+                    tile.lat_max,
+                    span_m,
+                    min_valid,
+                )
+                if prewar_check is None:
+                    continue
 
-            if (
-                feature is not None
-                and label is not None
-                and meta is not None
-                and prewar_tile is not None
-            ):
-                hdf5_writer.add_entry(feature, label, meta, prewar_tile)
-                processed_count += 1
+            manifest_writer.add_row(
+                _build_row(
+                    tile,
+                    feats_for_tile,
+                    base_name,
+                    date_target,
+                    raster_path,
+                    prewar_path,
+                    labels_path,
+                    is_complete=True,
+                )
+            )
+            processed_count += 1
     return processed_count
 
 
 def _scan_grouped_tiles(
     src,
-    grouped: dict[tuple[float, float], list[dict[str, Any]]],
+    grouped: dict[tuple[int, int], list[dict[str, Any]]],
     base_name: str,
     date_target: str | None,
-    step: float,
-    transformer,
+    core_m: float,
+    margin_m: float,
     prewar_src,
-    quality_thresholds: dict[str, Any],
     min_valid: float,
-    hdf5_writer: HDF5Writer,
+    manifest_writer: ManifestWriter,
+    raster_path: str,
+    prewar_path: str,
+    labels_path: str,
 ) -> int:
+    span_m = core_m + 2.0 * margin_m
     processed_count = 0
-    for (lon, lat), feats in tqdm(
+    for (i, j), feats in tqdm(
         grouped.items(), desc=f"{base_name} processing tiles"
     ):
-        if not is_high_quality_tile(
-            feats,
-            date_target,
-            src,
-            lon,
-            lat,
-            step,
-            **quality_thresholds,
-            transformer=transformer,
-        ):
+        if not feats:
             continue
-        feature, label, meta, prewar_tile = process_group(
-            src,
-            feats,
-            lon,
-            lat,
-            step,
-            base_name,
-            date_target or "",
-            transformer,
-            prewar_src,
-            min_valid_fraction=min_valid,
+        x_centre = i * core_m
+        y_centre = j * core_m
+        tile = compute_tile_window(
+            src, x_centre, y_centre, core_m, margin_m, min_valid
         )
-        if (
-            feature is not None
-            and label is not None
-            and meta is not None
-            and prewar_tile is not None
-        ):
-            hdf5_writer.add_entry(feature, label, meta, prewar_tile)
-            processed_count += 1
+        if tile is None:
+            continue
+        if prewar_src is not None:
+            prewar_check = _read_prewar_tile(
+                prewar_src,
+                tile.lon_min,
+                tile.lon_max,
+                tile.lat_min,
+                tile.lat_max,
+                span_m,
+                min_valid,
+            )
+            if prewar_check is None:
+                continue
+
+        manifest_writer.add_row(
+            _build_row(
+                tile,
+                feats,
+                base_name,
+                date_target,
+                raster_path,
+                prewar_path,
+                labels_path,
+                is_complete=False,
+            )
+        )
+        processed_count += 1
     return processed_count
 
 
 def scan_grouped_coordinates(
     geotiff_path: str,
     geojson_path: str,
-    hdf5_writer: HDF5Writer,
+    manifest_writer: ManifestWriter,
     quality_thresholds: dict[str, Any],
-    step: float,
+    core_m: float,
+    margin_m: float,
     date_target: str | None,
     prewar_path: str | None = None,
     boundaries_path: str | None = None,
     complete_list: list[str] | None = None,
-    prediction_only: bool = False,
 ) -> None:
     src = open_raster(geotiff_path)
     if src is None:
         return
-
-    transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
 
     if boundaries_path:
         cropped = crop_src_to_boundaries(src, boundaries_path)
         if cropped is None:
             return
         src = cropped
-    else:
-        src = standardise_src(src)
+
+    wgs84_to_src = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
+
+    src_means, src_stds = compute_standardisation_stats(src)
+    manifest_writer.set_raster_stats(
+        src.name, src_means, src_stds, nodata=src.nodata
+    )
 
     prewar_src = open_raster(prewar_path) if prewar_path else None
     if prewar_src is not None:
-        prewar_src = standardise_src(prewar_src)
+        prewar_means, prewar_stds = compute_standardisation_stats(prewar_src)
+        manifest_writer.set_raster_stats(
+            prewar_src.name, prewar_means, prewar_stds, nodata=prewar_src.nodata
+        )
 
     try:
         with open(geojson_path, "r") as f:
@@ -189,7 +258,7 @@ def scan_grouped_coordinates(
         return
 
     base_name = os.path.basename(geotiff_path)
-    is_complete = base_name in (complete_list or []) or prediction_only
+    is_complete_tif = base_name in (complete_list or [])
 
     min_valid = _resolve_min_valid(quality_thresholds)
 
@@ -207,10 +276,18 @@ def scan_grouped_coordinates(
                 prewar_src.close()
             return
 
-    grouped = group_coords(features, step)
+    for i, feat in enumerate(features):
+        feat["_idx"] = i
+
+    grouped = group_coords(features, core_m, margin_m, wgs84_to_src)
+
+    raster_path = src.name
+    prewar_path_for_row = (prewar_src.name if prewar_src is not None else "") or ""
+    labels_path = str(labels_sibling_path(manifest_writer.path).resolve())
+    write_labels_json(manifest_writer.path, base_name, features)
 
     try:
-        if is_complete:
+        if is_complete_tif:
             LOGGER.info(
                 f"[{base_name}] marked as COMPLETE - quality gating disabled; scanning entire raster grid."
             )
@@ -219,11 +296,14 @@ def scan_grouped_coordinates(
                 grouped,
                 base_name,
                 date_target,
-                step,
-                transformer,
+                core_m,
+                margin_m,
                 prewar_src,
                 min_valid,
-                hdf5_writer,
+                manifest_writer,
+                raster_path,
+                prewar_path_for_row,
+                labels_path,
             )
             LOGGER.info(f"[{base_name}] wrote {processed_count} tiles (complete=True).")
             if processed_count == 0:
@@ -245,12 +325,14 @@ def scan_grouped_coordinates(
             grouped,
             base_name,
             date_target,
-            step,
-            transformer,
+            core_m,
+            margin_m,
             prewar_src,
-            quality_thresholds,
             min_valid,
-            hdf5_writer,
+            manifest_writer,
+            raster_path,
+            prewar_path_for_row,
+            labels_path,
         )
         LOGGER.info(f"[{base_name}] wrote {processed_count} tiles (complete=False).")
         if processed_count == 0:
@@ -272,27 +354,23 @@ def cli(config):
         raise click.ClickException(str(e))
 
     proc = params["processing"]
-    step = proc["step"]
+    core_m = float(proc["core_metres"])
+    margin_m = float(proc["margin_metres"])
     quality_thresholds = proc["quality_thresholds"]
     complete_list = proc.get("complete", []) or []
-    individual = bool(proc.get("individual", False))
-    prediction_only = bool(proc.get("prediction_only", False))
     prewar_path = params.get("prewar_gaza")
     boundaries_path = params.get("boundaries")
     geojson = params["geojson"]
 
-    if individual and not params.get("hdf5_folder"):
-        raise click.ClickException(
-            "Missing required config key: hdf5_folder when processing.individual is true"
-        )
-    if not individual and "hdf5" not in params:
-        raise click.ClickException("Missing required config key: hdf5")
+    manifest_folder = params.get("manifest_folder") or params.get("hdf5_folder")
+    if not manifest_folder:
+        raise click.ClickException("Missing required config key: manifest_folder")
 
     tif_files = collect_tif_files(params["geotiff_dir"], config)
     if not tif_files:
         raise click.ClickException(f"No .tif files found in {params['geotiff_dir']}")
 
-    def scan_one(tif_path: str, writer: HDF5Writer) -> None:
+    def scan_one(tif_path: str, writer: ManifestWriter) -> None:
         date_target = extract_date_from_filename(tif_path)
         if not date_target:
             LOGGER.warning(f"Skipping {tif_path} (no date found in filename).")
@@ -302,21 +380,15 @@ def cli(config):
             geojson,
             writer,
             quality_thresholds,
-            step,
+            core_m,
+            margin_m,
             date_target,
             prewar_path,
             boundaries_path,
             complete_list,
-            prediction_only=prediction_only,
         )
 
-    run_scans(
-        tif_files,
-        scan_one,
-        hdf5=params.get("hdf5"),
-        hdf5_folder=params.get("hdf5_folder"),
-        individual=individual,
-    )
+    run_scans(tif_files, scan_one, manifest_folder=manifest_folder)
 
 
 if __name__ == "__main__":

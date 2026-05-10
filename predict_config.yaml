@@ -1,7 +1,7 @@
 geotiff_dir: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/tiffs
 boundaries: gaza_boundaries/GazaStrip_MunicipalBoundaries.shp
 prewar_gaza:  ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-04/prewar_gaza.tif
-hdf5_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-04/hdf5_files
+manifest_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-04/manifests
 json_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-04/jsons
 loading:
   files:
@@ -14,16 +14,13 @@ loading:
     # - "rafah_rafah_crossing_khan_yunis_20260220_123000_ssc10_u0003_visual_clip.tif"
     # - "tel_al_sultan_20260220_122923_ssc10_u0004_visual_clip.tif"
 processing:
-  individual: true
-  prediction_only: true
-  step: 0.0005
+  core_metres: 70
+  margin_metres: 15
   quality_thresholds:
-    start_threshold: 0.2
-    max_missing_end: 0.2
     min_valid_fraction: 0.9
 prediction:
   save_bounds: true
-  input_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-04/hdf5_files
+  input_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-04/manifests
   output_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-04/preds
   model: /home/karim/TentNetFA/runs/v2.0/best_model.pth
   batch_size: 8
@@ -36,8 +33,9 @@ prediction:
     method: nms
     agreement: false
     threshold: 0.001
-    factor: 1.0
+    factor: 0.0
     min_area: 5
     min_distance_m: 3.0
     crop_pixels: 16  # Set to radius of total receptive field
   validation_tifs: false # ideally set to false if sampling is false
+  per_tile_standardisation: true

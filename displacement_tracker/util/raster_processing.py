@@ -14,7 +14,12 @@ from displacement_tracker.util.logging_config import setup_logging
 
 LOGGER = setup_logging("raster_processing")
 
-_STANDARDIZED_SUFFIX = "_standardized"
+# GDAL metadata tag used to mark a GeoTIFF as already cropped to the project
+# boundaries shapefile. Set on the new dataset after a successful crop and
+# checked at the start of `crop_src_to_boundaries` to make the operation
+# idempotent across re-runs.
+_CROPPED_TAG_KEY = "DT_CROPPED_TO_BOUNDARIES"
+_CROPPED_TAG_VALUE = "1"
 
 # Tunables for the on-disk standardisation pipeline.
 # Larger CHUNK_SIZE reduces Python/GDAL overhead per call; 1024×1024 floats
@@ -51,32 +56,6 @@ def read_rgb(src: rasterio.io.DatasetReader, window):
     if data.size == 0 or np.all(np.isnan(data)) or np.all(data == 0):
         return None
     return data.astype(np.float32)
-
-
-def standardise_array(data: np.ndarray, nodata=None) -> np.ndarray:
-    """Standardise a (C, H, W) array per-channel over valid pixels (zero mean, unit variance)."""
-    data = data.astype(np.float32, copy=True)
-    for i in range(data.shape[0]):
-        channel = data[i]
-        valid_mask = np.isfinite(channel)
-        if nodata is not None:
-            valid_mask &= channel != nodata
-        valid_vals = channel[valid_mask]
-        if valid_vals.size == 0:
-            continue
-        m = float(valid_vals.mean())
-        s = float(valid_vals.std())
-        data[i] = (channel - m) / (s + 1e-6)
-    return data
-
-
-def _standardized_sibling_path(src_path: str) -> str:
-    """Return `<dir>/<stem>_standardized.tif` next to the source raster."""
-    parent = os.path.dirname(os.path.abspath(src_path)) or "."
-    stem, ext = os.path.splitext(os.path.basename(src_path))
-    if not ext:
-        ext = ".tif"
-    return os.path.join(parent, f"{stem}{_STANDARDIZED_SUFFIX}{ext}")
 
 
 def _iter_chunk_windows(width: int, height: int, chunk: int):
@@ -138,129 +117,56 @@ def _stream_per_channel_stats(
     return means, stds
 
 
-def standardise_src(src: rasterio.io.DatasetReader) -> rasterio.io.DatasetReader:
-    """
-    Standardise per-channel (zero mean, unit variance) and write the result to a
-    sibling GeoTIFF next to the source (same directory, `_standardized` suffix).
+def compute_standardisation_stats(
+    src: rasterio.io.DatasetReader,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-channel mean / std for `src`, sampled in chunks.
 
-    Direct read→standardise→write loop: one chunk in flight at a time, with
-    in-place arithmetic and a tiled+BIGTIFF output so neither Python nor GDAL's
-    block cache holds large intermediates. Memory footprint is bounded by a
-    single chunk (~tens of MB) regardless of source raster size.
-
-    The stats pass samples chunks (default ~5%) for speed.
+    Standardisation itself happens at tile read time inside the dataset using
+    these values stashed in the Parquet manifest's metadata.
     """
     src_name = os.path.basename(src.name)
     LOGGER.info(
-        f"[standardise:{src_name}] starting pipeline "
+        f"[stats:{src_name}] computing per-channel mean/std "
         f"(dims={src.width}x{src.height}, bands={src.count}, "
         f"chunk={_STANDARDISE_CHUNK_SIZE}, sample_stride={_STATS_SAMPLE_STRIDE})"
     )
-    try:
-        chunk_size = _STANDARDISE_CHUNK_SIZE
+    means, stds = _stream_per_channel_stats(
+        src, _STANDARDISE_CHUNK_SIZE, _STATS_SAMPLE_STRIDE
+    )
+    LOGGER.info(
+        f"[stats:{src_name}] ready "
+        f"(means={np.round(means, 3).tolist()}, stds={np.round(stds, 3).tolist()})"
+    )
 
-        # --- Stage 1: streaming stats pass (sampled chunks) ---
-        LOGGER.info(
-            f"[standardise:{src_name}] stage 1/3: computing per-channel mean/std "
-            f"via sampled chunks"
-        )
-        means, stds = _stream_per_channel_stats(src, chunk_size, _STATS_SAMPLE_STRIDE)
-        LOGGER.info(
-            f"[standardise:{src_name}] stage 1/3: stats ready "
-            f"(means={np.round(means, 3).tolist()}, stds={np.round(stds, 3).tolist()})"
-        )
-        nodata = src.nodata
+    # Remove last element, alpha channel
+    return means.astype(np.float32, copy=False)[:-1], stds.astype(np.float32, copy=False)[:-1]
 
-        means_b = means.reshape(-1, 1, 1).astype(np.float32)
-        denom_b = (stds + 1e-6).reshape(-1, 1, 1).astype(np.float32)
 
-        out_meta = src.meta.copy()
-        # Tiled + BIGTIFF: keeps GDAL's block cache footprint bounded for
-        # huge outputs, and lets per-window writes hit a small set of tiles
-        # rather than touching full-width strips.
-        out_meta.update(
-            {
-                "dtype": "float32",
-                "nodata": None,
-                "tiled": True,
-                "blockxsize": 512,
-                "blockysize": 512,
-                "compress": "deflate",
-                "BIGTIFF": "IF_SAFER",
-            }
-        )
+def standardise_window(
+    data: np.ndarray, means: np.ndarray, stds: np.ndarray, nodata
+) -> np.ndarray:
+    """Apply standardisation in place. Mirrors the old streaming write loop:
+    invalid pixels (nan / nodata) become 0 in the standardised output.
+    """
+    if data.dtype != np.float32:
+        data = data.astype(np.float32, copy=True)
+    else:
+        data = data.copy()
 
-        path = _standardized_sibling_path(src.name)
-        windows = list(_iter_chunk_windows(src.width, src.height, chunk_size))
+    means_b = means.reshape(-1, 1, 1).astype(np.float32)
+    denom_b = (stds + 1e-6).reshape(-1, 1, 1).astype(np.float32)
 
-        # --- Stage 2: synchronous read → standardise → write loop ---
-        LOGGER.info(
-            f"[standardise:{src_name}] stage 2/3: writing standardized output "
-            f"-> {path} ({len(windows)} chunks of ~{chunk_size}x{chunk_size}, "
-            f"tiled 512x512, BIGTIFF=IF_SAFER, compress=deflate)"
-        )
-        chunks_done = 0
-        log_every = max(1, len(windows) // 10)
-        with rasterio.open(path, "w", **out_meta) as out_ds:
-            for window in windows:
-                # Read this chunk and convert to float32. Source array is freed
-                # immediately after astype returns.
-                raw = src.read(window=window)
-                data = raw.astype(np.float32, copy=False)
-                if data is raw:
-                    # Source already float32 → make our own copy so in-place
-                    # arithmetic doesn't mutate any GDAL-internal buffer.
-                    data = data.copy()
-                del raw
+    if nodata is not None:
+        invalid = (~np.isfinite(data)) | (data == nodata)
+    else:
+        invalid = ~np.isfinite(data)
 
-                # Mark invalid pixels before we overwrite them in place.
-                if nodata is not None:
-                    invalid = (~np.isfinite(data)) | (data == nodata)
-                else:
-                    invalid = ~np.isfinite(data)
-
-                # In-place standardise: data := (data - mean) / std
-                np.subtract(data, means_b, out=data)
-                np.divide(data, denom_b, out=data)
-
-                # Invalid pixels become 0 (the standardised output has
-                # nodata=None, and downstream filters treat 0 as invalid —
-                # matches the existing convention without needing to keep a
-                # second full-size copy of the original values).
-                if invalid.any():
-                    data[invalid] = 0.0
-                del invalid
-
-                out_ds.write(data, window=window)
-                del data
-
-                chunks_done += 1
-                if chunks_done % log_every == 0 or chunks_done == len(windows):
-                    LOGGER.info(
-                        f"[standardise:{src_name}] stage 2/3: "
-                        f"{chunks_done}/{len(windows)} chunks written"
-                    )
-        LOGGER.info(
-            f"[standardise:{src_name}] stage 2/3: write complete "
-            f"({chunks_done}/{len(windows)} chunks)"
-        )
-
-        # --- Stage 3: reopen the standardized sibling file as the new source ---
-        LOGGER.info(
-            f"[standardise:{src_name}] stage 3/3: reopening standardized dataset "
-            f"for downstream use"
-        )
-        new_src = rasterio.open(path)
-        LOGGER.info(
-            f"[standardise:{src_name}] pipeline complete -> {path} "
-            f"(dims={new_src.width}x{new_src.height}, bands={new_src.count}, dtype=float32)"
-        )
-        return new_src
-    except Exception:
-        LOGGER.exception(
-            f"[standardise:{src_name}] FAILED; returning original raster"
-        )
-        return src
+    np.subtract(data, means_b, out=data)
+    np.divide(data, denom_b, out=data)
+    if invalid.any():
+        data[invalid] = 0.0
+    return data
 
 
 def crop_src_to_boundaries(
@@ -270,6 +176,12 @@ def crop_src_to_boundaries(
     LOGGER.info(
         f"[crop:{src_name}] starting crop pipeline (boundaries={boundaries_path})"
     )
+
+    if src.tags().get(_CROPPED_TAG_KEY) == _CROPPED_TAG_VALUE:
+        LOGGER.info(
+            f"[crop:{src_name}] already cropped (metadata tag present); skipping."
+        )
+        return src
 
     # --- Stage 1: read boundaries shapefile ---
     LOGGER.info(f"[crop:{src_name}] stage 1/6: reading boundaries shapefile")
@@ -343,43 +255,45 @@ def crop_src_to_boundaries(
         f"dtype={out_image.dtype}"
     )
 
-    # --- Stage 4: per-channel standardisation of the cropped array ---
-    LOGGER.info(f"[crop:{src_name}] stage 4/6: standardising cropped array")
-    out_image = standardise_array(out_image, nodata=src.nodata)
-    LOGGER.info(
-        f"[crop:{src_name}] stage 4/6: standardisation done (dtype={out_image.dtype})"
-    )
-
+    # --- Stage 4/4: overwrite the source GeoTIFF with cropped data ---
     out_meta = src.meta.copy()
     out_meta.update(
         {
             "height": out_image.shape[1],
             "width": out_image.shape[2],
             "transform": out_transform,
-            "dtype": "float32",
-            "nodata": None,
         }
     )
 
-    # --- Stage 5: write the cropped+standardised output to a sibling GeoTIFF ---
-    path = _standardized_sibling_path(src.name)
+    target_path = src.name
+    tmp_path = f"{target_path}.crop.tmp"
     out_bytes = int(out_image.nbytes)
     LOGGER.info(
-        f"[crop:{src_name}] stage 5/6: writing standardized GeoTIFF -> {path} "
+        f"[crop:{src_name}] stage 4/4: overwriting source raster -> {target_path} "
         f"(~{out_bytes / 1e6:.1f} MB on disk)"
     )
-    with rasterio.open(path, "w", **out_meta) as ds:
-        ds.write(out_image)
-    del out_image
-    LOGGER.info(f"[crop:{src_name}] stage 5/6: standardized GeoTIFF write complete")
 
+    # Release the original handle before replacing the file underneath it;
+    # write to a sibling temp first and atomically rename so a crash mid-write
+    # can't leave the source raster in a half-cropped state.
     src.close()
+    try:
+        with rasterio.open(tmp_path, "w", **out_meta) as ds:
+            ds.write(out_image)
+            ds.update_tags(**{_CROPPED_TAG_KEY: _CROPPED_TAG_VALUE})
+        os.replace(tmp_path, target_path)
+    except Exception:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                LOGGER.exception(
+                    f"[crop:{src_name}] failed to clean up temp file {tmp_path}"
+                )
+        raise
+    del out_image
 
-    # --- Stage 6: reopen the standardized sibling GeoTIFF as the new source ---
-    LOGGER.info(
-        f"[crop:{src_name}] stage 6/6: reopening standardized dataset for downstream use"
-    )
-    new_src = rasterio.open(path)
+    new_src = rasterio.open(target_path)
     LOGGER.info(
         f"[crop:{src_name}] crop pipeline complete; new bounds={new_src.bounds}, "
         f"dims={new_src.width}x{new_src.height}"

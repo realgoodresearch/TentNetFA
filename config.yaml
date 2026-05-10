@@ -1,23 +1,18 @@
-geotiff_dir: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-04/tiffs
+geotiff_dir: ${DATA_DIR}/data/training_data/tif_files
+geojson: ${DATA_DIR}/data/training_data/snapshot-tents-2025-12-03_121923.geojson
 boundaries: gaza_boundaries/GazaStrip_MunicipalBoundaries.shp
 prewar_gaza: ${DATA_DIR}/data/prewar_gaza_std.tif
-json_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-04/jsons
-hdf5_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-04/hdf5_files
+# json_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-04/jsons
+manifest_folder: ${DATA_DIR}/data/training_data/manifests
+# manifest: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-04/manifests
 artifact_dir: runs
-loading:
-  files:
-    - "gaza_city"
-    - "tel_sultan"
-    - "rafah"
-    - "beit_hanoun"
 processing:
-  individual: true
-  prediction_only: true
-  step: 0.0005
+  core_metres: 70
+  margin_metres: 15
   max_workers: 8
+  max_tasks_per_child: 16
+  max_pool_restarts: 10
   quality_thresholds:
-    start_threshold: 0.2
-    max_missing_end: 1.0
     min_valid_fraction: 0.9
   complete:
     - deir_el_balah_20250315_121122_ssc10_u0002_visual_clip_file_format.tif
@@ -29,9 +24,9 @@ processing:
     - kerem_shalom_crossing_abasan_al_kabira_20260130_055039_ssc1_u0003_visual.tif
     - rafah_abasan_al_kabira_20260117_061143_ssc1_u0001_visual_clip.tif
 rebalancing:
-  inp: "train_data_labelling.h5"
-  out: "train_data_labelling_balanced.h5"
+  out: "train_data_labelling_balanced.parquet"
   rng_seed: 42
+  null_keep_fraction: 0.25
 training:
   checkpoint: runs/20260418_101249/best_model.pth
   device: cuda
@@ -41,5 +36,6 @@ training:
   training_frac: 0.8
   validation_frac: 0.19
   memory: True
+  num_workers: 4
   model_kwargs:
     kernel_size: 3

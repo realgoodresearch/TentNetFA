@@ -46,15 +46,18 @@ def custom_collate(batch):
 @click.argument("config", type=click.Path(exists=True))
 def cli(config: str) -> None:
     params = load_yaml_with_env(config)
-    required = ["hdf5", "training"]
-    for k in required:
-        if k not in params:
-            raise click.ClickException(f"Missing required config key: {k}")
-    train(params["hdf5"], **params["training"])
+    if "training" not in params:
+        raise click.ClickException("Missing required config key: training")
+    manifest_path = params.get("manifest") or params.get("manifest_folder")
+    if not manifest_path:
+        raise click.ClickException(
+            "Missing required config key: manifest (or manifest_folder)"
+        )
+    train(manifest_path, **params["training"])
 
 
 def train(
-    hdf5_path: str,
+    manifest_path: str,
     training_frac: float,
     validation_frac: float,
     batch_size: int,
@@ -65,6 +68,7 @@ def train(
     device: str | None = None,
     model_kwargs: dict | None = None,
     memory: bool = False,
+    num_workers: int = 0,
 ) -> None:
 
     model_kwargs = model_kwargs or {}
@@ -90,7 +94,7 @@ def train(
         save_loc = None
 
     # Load and shuffle dataset
-    dataset = PairedImageDataset(hdf5_path, sigma=sigma)
+    dataset = PairedImageDataset(manifest_path, sigma=sigma)
     splits = [training_frac, validation_frac, 1 - training_frac - validation_frac]
 
     (train_set, val_set, _), idcs_list = dataset.create_subsets(
@@ -102,15 +106,21 @@ def train(
         train_set = CachedDataset(train_set)
         val_set = CachedDataset(val_set)
         LOGGER.info(f"Cached {len(train_set)} training and {len(val_set)} validation samples.")
+        loader_workers = 0
+    else:
+        loader_workers = int(num_workers)
 
-    train_loader = DataLoader(
-        train_set,
+    loader_kwargs = dict(
         batch_size=batch_size,
         collate_fn=custom_collate,
-        num_workers=0,
-        pin_memory=True,
+        num_workers=loader_workers,
     )
-    val_loader = DataLoader(val_set, batch_size=batch_size, collate_fn=custom_collate)
+    if loader_workers > 0:
+        loader_kwargs["worker_init_fn"] = PairedImageDataset.worker_init_fn
+        loader_kwargs["persistent_workers"] = True
+
+    train_loader = DataLoader(train_set, pin_memory=True, **loader_kwargs)
+    val_loader = DataLoader(val_set, **loader_kwargs)
 
     LOGGER.info(
         f"Split {len(dataset)} samples into {len(train_set)} train and {len(val_set)} validation samples."
