@@ -180,170 +180,7 @@ def _read_rgb(src: rasterio.io.DatasetReader, window):
     if data.size == 0 or np.all(np.isnan(data)) or np.all(data == 0):
         return None
     return data.astype(np.float32)
-
-
-def _compute_greyscale_stats(
-    src: rasterio.io.DatasetReader,
-) -> tuple[float, float, str] | None:
-    """Compute grayscale mean/std; uses metadata when exact stats are available."""
-    # Fast path: exact single-band statistics from metadata tags.
-    try:
-        if src.count == 1:
-            tags = src.tags(1)
-            if "STATISTICS_MEAN" in tags and "STATISTICS_STDDEV" in tags:
-                return (
-                    float(tags["STATISTICS_MEAN"]),
-                    float(tags["STATISTICS_STDDEV"]),
-                    "metadata",
-                )
-    except Exception:
-        pass
-
-    # Fallback path: stream over raster blocks (does not load full image into memory).
-    sum_grey = 0.0
-    sum_sq_grey = 0.0
-    count = 0
-
-    try:
-        nodata = src.nodata
-        band_indexes = [1, 2, 3] if src.count >= 3 else [1]
-        for _, window in src.block_windows(band_indexes[0]):
-            data = src.read(band_indexes, window=window)
-            if data.size == 0:
-                continue
-
-            if src.count >= 3:
-                r = data[0].astype(np.float32)
-                g = data[1].astype(np.float32)
-                b = data[2].astype(np.float32)
-                grey = 0.2989 * r + 0.5870 * g + 0.1140 * b
-            else:
-                grey = data[0].astype(np.float32)
-
-            valid_mask = np.isfinite(grey)
-            if nodata is not None:
-                if src.count >= 3:
-                    valid_mask &= (r != nodata) & (g != nodata) & (b != nodata)
-                else:
-                    valid_mask &= grey != nodata
-
-            if not np.any(valid_mask):
-                continue
-
-            valid_vals = grey[valid_mask]
-            sum_grey += float(valid_vals.sum(dtype=np.float64))
-            sum_sq_grey += float(
-                np.square(valid_vals, dtype=np.float64).sum(dtype=np.float64)
-            )
-            count += int(valid_vals.size)
-
-        if count == 0:
-            return None
-
-        mean = sum_grey / count
-        variance = max(0.0, (sum_sq_grey / count) - (mean * mean))
-        std = math.sqrt(variance)
-        return (mean, std, "block-scan")
-    except Exception:
-        return None
-
-
-def _log_greyscale_stats(src: rasterio.io.DatasetReader, tif_name: str) -> tuple[float, float] | None:
-    """Log grayscale mean/std and return them."""
-    stats = _compute_greyscale_stats(src)
-    if stats is None:
-        LOGGER.warning("[%s] No valid grayscale pixels found for statistics.", tif_name)
-        return None
-
-    mean, std, source = stats
-    LOGGER.info(
-        "[%s] grayscale stats (%s): mean=%.3f, std=%.3f",
-        tif_name,
-        source,
-        mean,
-        std,
-    )
-    return (mean, std)
-
-
-def _resolve_normalize_params(
-    normalize_cfg: dict[str, Any] | None,
-    current_stats: tuple[float, float] | None,
-    tif_name: str,
-) -> dict[str, float] | None:
-    """Resolve per-TIFF normalization parameters from config and measured stats."""
-    if not isinstance(normalize_cfg, dict):
-        return None
-
-    enabled = bool(normalize_cfg.get("enable", False))
-
-    if not enabled:
-        return None
-
-    target_mean = normalize_cfg.get("mean")
-    target_std = normalize_cfg.get("std")
-    if target_mean is None or target_std is None:
-        LOGGER.warning(
-            "[%s] normalization enabled but processing.normalize.mean/std missing; skipping normalization.",
-            tif_name,
-        )
-        return None
-
-    if current_stats is None:
-        LOGGER.warning(
-            "[%s] normalization enabled but source grayscale stats are unavailable; skipping normalization.",
-            tif_name,
-        )
-        return None
-
-    src_mean, src_std = current_stats
-    src_std = float(src_std)
-    if src_std <= 1e-8:
-        LOGGER.warning(
-            "[%s] source grayscale std is near zero (%.6f); skipping normalization.",
-            tif_name,
-            src_std,
-        )
-        return None
-
-    params = {
-        "source_mean": float(src_mean),
-        "source_std": src_std,
-        "target_mean": float(target_mean),
-        "target_std": float(target_std),
-    }
-    LOGGER.info(
-        "[%s] normalization enabled: source mean/std=(%.3f, %.3f) -> target mean/std=(%.3f, %.3f)",
-        tif_name,
-        params["source_mean"],
-        params["source_std"],
-        params["target_mean"],
-        params["target_std"],
-    )
-    return params
-
-
-def _apply_greyscale_normalization(
-    grey: np.ndarray,
-    normalize_params: dict[str, float] | None,
-) -> np.ndarray:
-    """Linearly rescale grayscale tile to target mean/std when enabled."""
-    if not normalize_params:
-        return grey
-
-    src_mean = normalize_params["source_mean"]
-    src_std = normalize_params["source_std"]
-    target_mean = normalize_params["target_mean"]
-    target_std = normalize_params["target_std"]
-
-    scale = target_std / src_std
-    normalized = grey.astype(np.float32, copy=True)
-    finite_mask = np.isfinite(normalized)
-    normalized[finite_mask] = (
-        (normalized[finite_mask] - src_mean) * scale + target_mean
-    )
-    return normalized
-
+    
 
 def _create_label_from_feats(
     lon_min: float,
@@ -387,7 +224,6 @@ def process_group(
     transformer,
     prewar_src: rasterio.io.DatasetReader | None = None,
     min_valid_fraction: float = 0.0,  # << added param
-    normalize_params: dict[str, float] | None = None,
 ) -> tuple[
     np.ndarray | None, np.ndarray | None, dict[str, Any] | None, np.ndarray | None
 ]:
@@ -866,11 +702,6 @@ def scan_grouped_coordinates(
         src = cropped
 
     tif_name = os.path.basename(geotiff_path)
-    current_stats = _log_greyscale_stats(src, tif_name)
-    normalize_params = _resolve_normalize_params(
-        normalize_cfg, current_stats, tif_name
-    )
-
     prewar_src = _open_raster(prewar_path) if prewar_path else None
 
     try:
@@ -955,7 +786,6 @@ def scan_grouped_coordinates(
                     transformer,
                     prewar_src,
                     min_valid_fraction=min_valid,
-                    normalize_params=normalize_params,
                 )
 
                 if (
@@ -1018,7 +848,6 @@ def scan_grouped_coordinates(
             transformer,
             prewar_src,
             min_valid_fraction=min_valid,
-            normalize_params=normalize_params,
         )
         if (
                 feature is not None
@@ -1046,7 +875,6 @@ def scan_all_coordinates(
     step: float = 0.001,
     prewar_path: str | None = None,
     min_valid_fraction: float = 0.0,
-    normalize_cfg: dict[str, Any] | None = None,
 ):
     LOGGER.info(f"Scanning entire raster grid for {os.path.basename(geotiff_path)} with step {step} and min_valid_fraction {min_valid_fraction}")
     src = _open_raster(geotiff_path)
@@ -1054,12 +882,7 @@ def scan_all_coordinates(
         return
 
     transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
-
     tif_name = os.path.basename(geotiff_path)
-    current_stats = _log_greyscale_stats(src, tif_name)
-    normalize_params = _resolve_normalize_params(
-        normalize_cfg, current_stats, tif_name
-    )
 
     bounds = src.bounds
     lon_bounds, lat_bounds = transform(
@@ -1086,7 +909,6 @@ def scan_all_coordinates(
                 transformer,
                 prewar_src,
                 min_valid_fraction=min_valid_fraction,
-                normalize_params=normalize_params,
             )
             if feature is not None and label is not None and meta is not None:
                 hdf5_writer.add_entry(feature, label, meta, prewar_img)
@@ -1131,7 +953,6 @@ def _scan_tif_to_writer(
     boundaries_path: str | None,
     complete_list: list[str],
     prediction_only: bool,
-    normalize_cfg: dict[str, Any] | None,
 ) -> bool:
     date_target = _extract_date_from_filename(tif_path)
     if not date_target:
@@ -1150,7 +971,6 @@ def _scan_tif_to_writer(
             boundaries_path,
             complete_list,
             prediction_only=prediction_only,
-            normalize_cfg=normalize_cfg,
         )
     else:
         min_valid_fraction = (
@@ -1165,7 +985,6 @@ def _scan_tif_to_writer(
             step,
             prewar_path,
             min_valid_fraction=min_valid_fraction,
-            normalize_cfg=normalize_cfg,
         )
     return True
 
@@ -1204,7 +1023,6 @@ def cli(config):
         individual=individual,
         hdf5_folder=params.get("hdf5_folder"),
         config=config,
-        normalize_cfg=proc.get("normalize"),
     )
 
 
@@ -1221,7 +1039,6 @@ def coordinate_scanner(
     individual: bool = False,
     hdf5_folder: str | None = None,
     config: str | None = None,
-    normalize_cfg: dict[str, Any] | None = None,
 ) -> None:
     tif_files = _collect_tif_files(geotiff_dir, config)
 
@@ -1244,7 +1061,7 @@ def coordinate_scanner(
                 out_h5 = os.path.join(hdf5_folder, f"{base}{suffix}")
                 _ensure_parent_dir(out_h5)
 
-                LOGGER.info(f"Processing {tif_path} → {out_h5}")
+                LOGGER.info(f"Processing {tif_path} into {out_h5}")
                 writer = HDF5Writer(out_h5)
                 try:
                     _scan_tif_to_writer(
@@ -1257,7 +1074,6 @@ def coordinate_scanner(
                         boundaries_path,
                         complete_list or [],
                         prediction_only,
-                        normalize_cfg,
                     )
                 finally:
                     writer.write()
@@ -1282,7 +1098,6 @@ def coordinate_scanner(
                     boundaries_path,
                     complete_list or [],
                     prediction_only,
-                    normalize_cfg,
                 )
         finally:
             writer.write()

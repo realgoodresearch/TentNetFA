@@ -16,40 +16,48 @@ This automated detection supports population nowcasting in the Gaza strip in col
 
 ## Key Features
 
-- **Input data:**
-  - Planet satellite GeoTIFF images of the Gaza Strip.
-  - GeoJSON files containing geolocated historic tent points identified by Forensic Architecture.
-
-- **Processing:**
-  - Groups tent locations by geographic coordinates into spatial windows.
-  - Extracts corresponding satellite image patches and converts RGB imagery to greyscale.
-  - Generates paired greyscale image patches and binary label masks marking tent locations.
-  - Supports pixel-level CNN training using Gaussian density labels to predict tent presence.
-
-- **Output:**
-  - Greyscale image tiles representing satellite imagery patches.
-  - Label masks indicating tent locations in the corresponding image tiles.
+-   **Data Ingestion**: Processes Planet GeoTIFF satellite images and GeoJSON files containing labeled tent locations.
+-   **Data Processing**:
+    -   Scans satellite imagery based on geographic coordinates to extract image tiles.
+    -   Generates paired datasets of image patches and corresponding label masks indicating tent locations.
+    -   Creates HDF5 datasets for efficient handling during training.
+-   **Model Training**: Trains a custom CNN (`SimpleCNN`) for pixel-wise semantic segmentation to predict tent presence as a density map.
+-   **Prediction & Evaluation**:
+    -   Generates GeoJSON point clouds of predicted tent locations from new satellite imagery.
+    -   Includes tools for evaluating prediction accuracy against ground truth data and for performing spatial validation analysis.
 
 ---
 
 ## Installation
 
-Ensure you have Python 3.10+ and install the required dependencies. Ideally, you will use poetry for this:
+This project uses Poetry for dependency management. Ensure you have Python 3.10+ installed.
 
-```bash
-poetry install
-```
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/realgoodresearch/TentNetFA.git
+    cd TentNetFA
+    ```
 
-Alternatively, you can manually install the list of dependencies listed in pyproject.toml with pip:
+2.  **Install dependencies using Poetry:**
+    ```bash
+    poetry install
+    ```
+    Alternatively, you can install from the `requirements.txt` file, although this is not the recommended method:
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-```bash
-pip install -r requirements.txt
-````
+3.  **Set up environment variables:**
+    Create a `.env` file in the project root to store necessary credentials, such as your `GOOGLE_API_KEY` and the Google Drive folder ID (`GDRIVE_ID`) for downloading satellite imagery.
+
+    ```
+    GOOGLE_API_KEY="your_api_key_here"
+    GDRIVE_ID="your_folder_id_here"
+    DATA_DIR="/path/to/your/data"
 
 ### Updating requirements.txt
 
-The requirements.txt is not updated automatically, and must be regenerated with
-
+If you modify dependencies in `pyproject.toml`, you must regenerate the `requirements.txt` file:
 ```bash
 poetry export -f requirements.txt --output requirements.txt --without-hashes
 ```
@@ -57,69 +65,97 @@ poetry export -f requirements.txt --output requirements.txt --without-hashes
 on a regular basis.
 
 
-## Command-Line Interface
+## Workflow and CLI Usage
 
-### Loading TIFFs
+The core workflow is managed through a series of command-line scripts. Most scripts require a `config.yaml` file to specify paths and parameters.
 
-From the root of your project, run:
+### 1. Download Satellite Imagery
+Download GeoTIFF files from Google Drive based on the filenames specified in your configuration file.
 
 ```bash
-poetry run tiff-loader config.yaml
+poetry run tif-loader config.yaml
 ```
 
-**Environment variables required:**
-- `GOOGLE_API_KEY` and `GDRIVE_ID` must be set (see .env file).
-
----
-### Extracting data from TIFFs
+### 2. Prepare Training Data
+Scan the downloaded GeoTIFFs and corresponding GeoJSON labels to create an HDF5 dataset for training.
 
 ```bash
 poetry run coordinate-scanner config.yaml
 ```
----
-### Training the model
+
+### 3. Train the Model
+Train the CNN using the generated HDF5 dataset.
 
 ```bash
 poetry run train-cnn config.yaml
 ```
+Model checkpoints and training logs will be saved to a timestamped directory inside `runs/`.
+
+### 4. Predict on New Imagery
+Use a trained model to predict tent locations on new satellite images. This script typically uses a separate `predict_config.yaml`.
+
+```bash
+poetry run predict-json predict_config.yaml
+```
+This will generate GeoJSON files containing the coordinates of predicted tents.
+
+### 5. Evaluate and Validate
+The repository includes several scripts for analyzing the results:
+
+-   `evaluate-geojson`: Compare a prediction GeoJSON against a ground truth GeoJSON to compute metrics like precision, recall, and F1-score.
+-   `validate-geojson`: Perform spatial validation by comparing rasterized prediction counts against validation counts on a master grid.
+-   `merge-geojsons`: Merge multiple prediction GeoJSONs into a single, deduplicated GeoPackage file.
 
 ---
 ## Configuration File (config.yaml)
 
-The CLI requires a YAML configuration file with the following structure:
+The pipeline is primarily configured via YAML files (`config.yaml`, `predict_config.yaml`). Below is a typical structure for `config.yaml`.
 
 ```yaml
-geotiff_dir: <directory to safe geotiffs to>
-geojson: <tent geojson file from web platform>
-hdf5: <storage location of the HDF5 dataset>
-hdf5_folder: <folder for per-TIFF HDF5 files when processing.individual is true>
-artifact_dir: <location of training run outputs>
+# --- Paths ---
+geotiff_dir: ${DATA_DIR}/results/TentNetFA/2026-02/tiffs
+boundaries: gaza_boundaries/GazaStrip_MunicipalBoundaries.shp
+prewar_gaza: ${DATA_DIR}/results/TentNetFA/2026-02/prewar_gaza.tif
+geojson: ${DATA_DIR}/results/TentNetFA/2026-02
+hdf5: train_data_labelling_balanced.h5
+artifact_dir: runs
+
+# --- Data Loading ---
 loading:
   files:
-    <List of tiff files for processing>
-processing:
-  individual: false # when true, ignore hdf5 and write one HDF5 per TIFF into hdf5_folder
-  step: 0.0005 # step size for each tile in degress lat and long
-  quality_thresholds:
-    start_threshold: 0.2  # fraction of tents with same day start date
-    max_missing_end: 0.2  # max number of tents with missing end date
-    min_valid_fraction: 0.9  # minimum fraction of the image that needs to be not black / NaN
-training:
-  checkpoint: null  # checkpoint to restart from, e.g. path/to/model.pth
-  epochs: 10000
-  batch_size: 8
-  learning_rate: 0.0005
-  training_frac: 0.7
-  validation_frac: 0.15
+    - deir_el_balah_20250315_121122_ssc10_u0002_visual_clip_file_format.tif
+    - khan_yunis_20250315_065509_ssc13_u0001_visual_file_format.tif
 
+# --- Data Processing ---
+processing:
+  prediction_only: false
+  step: 0.0005 # Step size for tiling in degrees latitude/longitude
+  quality_thresholds:
+    start_threshold: 0.2
+    max_missing_end: 1.0
+    min_valid_fraction: 0.9
+  complete: # List of TIFFs to process entirely, ignoring quality gates
+    - deir_el_balah_20250315_121122_ssc10_u0002_visual_clip_file_format.tif
+
+# --- Training ---
+training:
+  checkpoint: v1.0.pth # Optional path to a model checkpoint to resume training
+  device: cuda
+  epochs: 10000
+  batch_size: 32
+  learning_rate: 0.005
+  training_frac: 0.4
+  validation_frac: 0.1
+  memory: True # Cache dataset in RAM for faster training
+  model_kwargs:
+    kernel_size: 3
 ```
 ## Output
 
-- **GeoTIFFs:** Downloaded to the directory specified in `geotiff_dir`.
-- **HDF5 Dataset:** By default the scanner appends all selected TIFFs into the single path in `hdf5`. If `processing.individual` is `true`, it instead writes one HDF5 per TIFF into `hdf5_folder`, reusing the TIFF basename and using the configured HDF5 suffix.
-- **Model Checkpoints & Logs:** Saved during training (see `runs/` and log files).
-- **Predictions:** If generated, are saved as hdf5 files in the `runs/` directory, same structure as HDF5 ds.
-
+-   **HDF5 Datasets**: The `coordinate-scanner` script produces HDF5 files containing `feature`, `prewar`, `label`, and `meta` datasets for training and prediction.
+-   **Model Checkpoints**: The training script saves the best-performing model (`best_model.pth`) and dataset split information in the `runs/<timestamp>/` directory.
+-   **Prediction GeoJSONs**: The prediction script generates GeoJSON files with point coordinates for each detected tent, including a `peak_value` property.
+-   **Evaluation Reports**: Validation and evaluation scripts produce CSV reports and difference rasters summarizing model performance.
 ---
 
 ## Acknowledgments
