@@ -33,13 +33,13 @@ _STATS_SAMPLE_STRIDE = 20
 
 def open_raster(path: str):
     name = os.path.basename(path)
-    LOGGER.info(f"[open:{name}] opening GeoTIFF: {path}")
+    LOGGER.debug(f"[open:{name}] opening GeoTIFF: {path}")
     try:
         ds = rasterio.open(path)
     except RasterioIOError:
         LOGGER.exception(f"[open:{name}] FAILED to open GeoTIFF: {path}")
         return None
-    LOGGER.info(
+    LOGGER.debug(
         f"[open:{name}] opened: dims={ds.width}x{ds.height}, bands={ds.count}, "
         f"dtype={ds.dtypes[0] if ds.dtypes else 'unknown'}, crs={ds.crs}, "
         f"nodata={ds.nodata}"
@@ -126,7 +126,7 @@ def compute_standardisation_stats(
     these values stashed in the Parquet manifest's metadata.
     """
     src_name = os.path.basename(src.name)
-    LOGGER.info(
+    LOGGER.debug(
         f"[stats:{src_name}] computing per-channel mean/std "
         f"(dims={src.width}x{src.height}, bands={src.count}, "
         f"chunk={_STANDARDISE_CHUNK_SIZE}, sample_stride={_STATS_SAMPLE_STRIDE})"
@@ -134,7 +134,7 @@ def compute_standardisation_stats(
     means, stds = _stream_per_channel_stats(
         src, _STANDARDISE_CHUNK_SIZE, _STATS_SAMPLE_STRIDE
     )
-    LOGGER.info(
+    LOGGER.debug(
         f"[stats:{src_name}] ready "
         f"(means={np.round(means, 3).tolist()}, stds={np.round(stds, 3).tolist()})"
     )
@@ -173,23 +173,23 @@ def crop_src_to_boundaries(
     src: rasterio.io.DatasetReader, boundaries_path: str
 ) -> rasterio.io.DatasetReader | None:
     src_name = os.path.basename(src.name)
-    LOGGER.info(
+    LOGGER.debug(
         f"[crop:{src_name}] starting crop pipeline (boundaries={boundaries_path})"
     )
 
     if src.tags().get(_CROPPED_TAG_KEY) == _CROPPED_TAG_VALUE:
-        LOGGER.info(
+        LOGGER.debug(
             f"[crop:{src_name}] already cropped (metadata tag present); skipping."
         )
         return src
 
     # --- Stage 1: read boundaries shapefile ---
-    LOGGER.info(f"[crop:{src_name}] stage 1/6: reading boundaries shapefile")
+    LOGGER.debug(f"[crop:{src_name}] stage 1/6: reading boundaries shapefile")
     try:
         with fiona.open(boundaries_path, "r") as shp:
             shp_geoms = [feat["geometry"] for feat in shp]
             shp_crs = shp.crs
-        LOGGER.info(
+        LOGGER.debug(
             f"[crop:{src_name}] stage 1/6: loaded {len(shp_geoms)} geometries "
             f"(crs={shp_crs})"
         )
@@ -201,7 +201,7 @@ def crop_src_to_boundaries(
         return src
 
     # --- Stage 2: reproject geometries to source CRS ---
-    LOGGER.info(
+    LOGGER.debug(
         f"[crop:{src_name}] stage 2/6: transforming {len(shp_geoms)} geometries "
         f"from {shp_crs} -> {src.crs}"
     )
@@ -220,7 +220,7 @@ def crop_src_to_boundaries(
                 LOGGER.exception(
                     f"[crop:{src_name}] stage 2/6: failed to transform a geometry; skipping it"
                 )
-    LOGGER.info(
+    LOGGER.debug(
         f"[crop:{src_name}] stage 2/6: transformed={len(transformed)} "
         f"(fallback_to_wgs84={fallback_count}, failed={failed_count})"
     )
@@ -231,14 +231,14 @@ def crop_src_to_boundaries(
         return src
 
     # --- Stage 3: rasterio mask + crop ---
-    LOGGER.info(
+    LOGGER.debug(
         f"[crop:{src_name}] stage 3/6: applying mask.mask "
         f"(input dims={src.width}x{src.height}, bands={src.count})"
     )
     try:
         out_image, out_transform = mask.mask(src, transformed, crop=True)
     except ValueError:
-        LOGGER.info(
+        LOGGER.debug(
             f"[crop:{src_name}] stage 3/6: no overlap between raster and boundaries; "
             "skipping file."
         )
@@ -250,7 +250,7 @@ def crop_src_to_boundaries(
             "proceeding with original raster"
         )
         return src
-    LOGGER.info(
+    LOGGER.debug(
         f"[crop:{src_name}] stage 3/6: cropped array shape={out_image.shape}, "
         f"dtype={out_image.dtype}"
     )
@@ -268,7 +268,7 @@ def crop_src_to_boundaries(
     target_path = src.name
     tmp_path = f"{target_path}.crop.tmp"
     out_bytes = int(out_image.nbytes)
-    LOGGER.info(
+    LOGGER.debug(
         f"[crop:{src_name}] stage 4/4: overwriting source raster -> {target_path} "
         f"(~{out_bytes / 1e6:.1f} MB on disk)"
     )
@@ -294,7 +294,7 @@ def crop_src_to_boundaries(
     del out_image
 
     new_src = rasterio.open(target_path)
-    LOGGER.info(
+    LOGGER.debug(
         f"[crop:{src_name}] crop pipeline complete; new bounds={new_src.bounds}, "
         f"dims={new_src.width}x{new_src.height}"
     )

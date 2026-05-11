@@ -143,7 +143,9 @@ class PairedImageDataset(Dataset):
             prewar = None
         if prewar is None:
             LOGGER.warning("No prewar data for row %d (prewar_path=%s); using zeros", idx, prewar_path)
-            prewar = np.zeros((3, h, w), dtype=np.float16)
+            prewar = np.zeros((3, h, w), dtype=np.float32)
+        else:
+            prewar = self._standardise(prewar_path, prewar, per_tile=self.per_tile_standardisation)
         feats_for_tile: list[dict[str, Any]] = []
         labels_path = row["labels_path"]
         feature_ids = row["label_feature_ids"] or []
@@ -237,6 +239,7 @@ class PairedImageDataset(Dataset):
                     indices=subset_indices,
                     sigma=self.sigma,
                     gdal_cache_mb=self.gdal_cache_mb,
+                    per_tile_standardisation=self.per_tile_standardisation,
                 )
             )
             start_idx = end_idx

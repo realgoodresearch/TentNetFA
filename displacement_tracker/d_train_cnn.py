@@ -14,10 +14,22 @@ from displacement_tracker.util.logging_config import setup_logging
 
 LOGGER = setup_logging("train-cnn")
 
-
 class CachedDataset(torch.utils.data.Dataset):
-    def __init__(self, base_ds):
-        self.data = [base_ds[i] for i in range(len(base_ds))]
+    def __init__(self, base_ds, num_workers: int = 0):
+        loader = DataLoader(
+            base_ds,
+            batch_size=1,
+            num_workers=num_workers,
+            collate_fn=lambda b: b[0],
+            worker_init_fn=PairedImageDataset.worker_init_fn if num_workers else None,
+        )
+        self.data = []
+        for sample in loader:
+            # Clone tensors into regular RAM so the worker's shared-memory FD
+            # can be released before the next sample arrives.
+            self.data.append(
+                {k: v.clone() if torch.is_tensor(v) else v for k, v in sample.items()}
+            )
 
     def __len__(self):
         return len(self.data)
@@ -103,8 +115,8 @@ def train(
 
     if memory:
         LOGGER.info("Caching training dataset in RAM...")
-        train_set = CachedDataset(train_set)
-        val_set = CachedDataset(val_set)
+        train_set = CachedDataset(train_set, num_workers=int(num_workers))
+        val_set = CachedDataset(val_set, num_workers=int(num_workers))
         LOGGER.info(f"Cached {len(train_set)} training and {len(val_set)} validation samples.")
         loader_workers = 0
     else:

@@ -1,10 +1,10 @@
 geotiff_dir: ${DATA_DIR}/data/training_data/tif_files
 geojson: ${DATA_DIR}/data/training_data/snapshot-tents-2025-12-03_121923.geojson
 boundaries: gaza_boundaries/GazaStrip_MunicipalBoundaries.shp
-prewar_gaza: ${DATA_DIR}/data/prewar_gaza_std.tif
+prewar_gaza: ${DATA_DIR}/data/prewar_gaza.tif
 # json_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-04/jsons
 manifest_folder: ${DATA_DIR}/data/training_data/manifests
-# manifest: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-04/manifests
+manifest: ${DATA_DIR}/data/training_data/balanced.parquet
 artifact_dir: runs
 processing:
   core_metres: 70
@@ -24,11 +24,11 @@ processing:
     - kerem_shalom_crossing_abasan_al_kabira_20260130_055039_ssc1_u0003_visual.tif
     - rafah_abasan_al_kabira_20260117_061143_ssc1_u0001_visual_clip.tif
 rebalancing:
-  out: "train_data_labelling_balanced.parquet"
+  out: "${DATA_DIR}/data/training_data/balanced.parquet"
   rng_seed: 42
   null_keep_fraction: 0.25
 training:
-  checkpoint: runs/20260418_101249/best_model.pth
+  checkpoint: null  # runs/20260418_101249/best_model.pth
   device: cuda
   epochs: 10000
   batch_size: 64
@@ -39,3 +39,4 @@ training:
   num_workers: 4
   model_kwargs:
     kernel_size: 3
+RuntimeError: Too many open files. Communication with the workers is no longer possible. Please increase the limit using `ulimit -n` in the shell or change the sharing strategy by calling `torch.multiprocessing.set_sharing_strategy('file_system')` at the beginning of your code

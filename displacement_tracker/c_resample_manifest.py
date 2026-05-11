@@ -7,9 +7,11 @@ single output Parquet. No raster I/O — runs in seconds.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import click
 import numpy as np
@@ -19,6 +21,7 @@ from tqdm import tqdm
 
 from displacement_tracker.util.env_loader import load_yaml_with_env
 from displacement_tracker.util.logging_config import setup_logging
+from displacement_tracker.util.manifest_writer import MANIFEST_STATS_KEY
 
 LOGGER = setup_logging("resample-manifest")
 
@@ -57,6 +60,7 @@ def resample_and_merge(config_path: str) -> None:
         candidate_paths = sorted(manifest_dir_path.glob("*.parquet"))
 
     selected_tables: list[pa.Table] = []
+    merged_raster_stats: dict[str, dict[str, Any]] = {}
     total_kept = 0
     total_seen = 0
 
@@ -88,11 +92,33 @@ def resample_and_merge(config_path: str) -> None:
         total_kept += int(keep_idx.size)
         total_seen += int(table.num_rows)
 
+        meta = table.schema.metadata or {}
+        raw = meta.get(MANIFEST_STATS_KEY.encode("utf-8")) or meta.get(
+            MANIFEST_STATS_KEY
+        )
+        if raw is not None:
+            stats = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
+            for raster_path, entry in stats.items():
+                existing = merged_raster_stats.get(raster_path)
+                if existing is not None and existing != entry:
+                    LOGGER.warning(
+                        f"Conflicting raster_stats for {raster_path} across manifests; "
+                        f"keeping entry from {parquet_path}"
+                    )
+                merged_raster_stats[raster_path] = entry
+
     if not selected_tables:
         print("No rows selected. Aborting.", file=sys.stderr)
         sys.exit(1)
 
     merged = pa.concat_tables(selected_tables)
+    if merged_raster_stats:
+        metadata = {
+            MANIFEST_STATS_KEY: json.dumps(
+                merged_raster_stats, ensure_ascii=False
+            ).encode("utf-8")
+        }
+        merged = merged.replace_schema_metadata(metadata)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_name(out_path.name + ".tmp")
     pq.write_table(merged, tmp, compression="zstd")
