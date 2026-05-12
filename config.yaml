@@ -28,15 +28,32 @@ rebalancing:
   rng_seed: 42
   null_keep_fraction: 0.25
 training:
-  checkpoint: null  # runs/20260418_101249/best_model.pth
+  checkpoint: runs/20260511_104602/best_model.pth
   device: cuda
   epochs: 10000
   batch_size: 64
-  learning_rate: 0.001
+  learning_rate: 0.0001
   training_frac: 0.8
   validation_frac: 0.19
   memory: True
   num_workers: 4
   model_kwargs:
     kernel_size: 3
-RuntimeError: Too many open files. Communication with the workers is no longer possible. Please increase the limit using `ulimit -n` in the shell or change the sharing strategy by calling `torch.multiprocessing.set_sharing_strategy('file_system')` at the beginning of your code
+metadata_embedding:
+  embedding_dim: 128
+  hidden_dim: 128
+  projection_dim: 64
+  batch_size: 1024
+  epochs: 100
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-5
+  temperature: 0.5
+  augment_noise_std: 0.05
+  augment_mask_prob: 0.15
+  gaza_bbox: [34.20, 34.60, 31.20, 31.60]   # [lon_min, lon_max, lat_min, lat_max]; confirm from data
+  id_norm:
+    ssc: 25
+    u000: 2
+  num_workers: 4
+  device: cuda
+  checkpoint_path: ./checkpoints/metadata_embedding.pth
