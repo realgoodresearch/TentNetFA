@@ -75,6 +75,7 @@ def train(
     batch_size: int,
     epochs: int,
     learning_rate: float,
+    weight_decay: float = 0.,
     sigma: float = 3.0,
     checkpoint: str | None = None,
     device: str | None = None,
@@ -150,7 +151,7 @@ def train(
         # small weight keeps spatial quality dominant
         return 1e6 * mse # + 0.1 * count_loss
 
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     # Create timestamped run directory
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
