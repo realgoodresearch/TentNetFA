@@ -222,3 +222,5 @@ output/
 wd/
 runs/
 tmp/
+*.log
+*.csv
