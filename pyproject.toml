@@ -55,7 +55,7 @@ predict-json = "displacement_tracker.e_predict_json:cli"
 evaluate-geojson = "displacement_tracker.f_evaluate_geojson:cli"
 validate-geojson = "displacement_tracker.g_validate_geojson:cli"
 merge-geojsons = "displacement_tracker.h_merge_geojsons:cli"
-tile-labeler = "displacement_tracker.i_tile_labeler:cli"
+train-embedding = "displacement_tracker.util.train_embedding:cli"
 
 [build-system]
 requires = ["poetry-core"]
