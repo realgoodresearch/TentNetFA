@@ -115,7 +115,7 @@ class SimpleCNN(nn.Module):
         g = self.global_pool(x)  # (B, 8, 1, 1)
         g = self.global_fc(g)  # (B, 8, 1, 1)
         g = self.global_relu(g)
-        x = x # + g  # broadcast add
+        x = x # + g  # broadcast add  # COMMENTED OUT DELIBERATELY TO REMOVE BUG BUT KEEP COMPATIBILITY WITH TRAINED MODEL
 
         x = self.convend(x)
         return x
