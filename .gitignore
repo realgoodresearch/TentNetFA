@@ -220,3 +220,7 @@ output/
 
 *.code-workspace
 wd/
+runs/
+tmp/
+*.log
+*.csv

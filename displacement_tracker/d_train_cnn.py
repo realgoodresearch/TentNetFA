@@ -14,10 +14,22 @@ from displacement_tracker.util.logging_config import setup_logging
 
 LOGGER = setup_logging("train-cnn")
 
-
 class CachedDataset(torch.utils.data.Dataset):
-    def __init__(self, base_ds):
-        self.data = [base_ds[i] for i in range(len(base_ds))]
+    def __init__(self, base_ds, num_workers: int = 0):
+        loader = DataLoader(
+            base_ds,
+            batch_size=1,
+            num_workers=num_workers,
+            collate_fn=lambda b: b[0],
+            worker_init_fn=PairedImageDataset.worker_init_fn if num_workers else None,
+        )
+        self.data = []
+        for sample in loader:
+            # Clone tensors into regular RAM so the worker's shared-memory FD
+            # can be released before the next sample arrives.
+            self.data.append(
+                {k: v.clone() if torch.is_tensor(v) else v for k, v in sample.items()}
+            )
 
     def __len__(self):
         return len(self.data)
@@ -46,25 +58,30 @@ def custom_collate(batch):
 @click.argument("config", type=click.Path(exists=True))
 def cli(config: str) -> None:
     params = load_yaml_with_env(config)
-    required = ["hdf5", "training"]
-    for k in required:
-        if k not in params:
-            raise click.ClickException(f"Missing required config key: {k}")
-    train(params["hdf5"], **params["training"])
+    if "training" not in params:
+        raise click.ClickException("Missing required config key: training")
+    manifest_path = params.get("manifest") or params.get("manifest_folder")
+    if not manifest_path:
+        raise click.ClickException(
+            "Missing required config key: manifest (or manifest_folder)"
+        )
+    train(manifest_path, **params["training"])
 
 
 def train(
-    hdf5_path: str,
+    manifest_path: str,
     training_frac: float,
     validation_frac: float,
     batch_size: int,
     epochs: int,
     learning_rate: float,
+    weight_decay: float = 0.,
     sigma: float = 3.0,
     checkpoint: str | None = None,
     device: str | None = None,
     model_kwargs: dict | None = None,
     memory: bool = False,
+    num_workers: int = 0,
 ) -> None:
 
     model_kwargs = model_kwargs or {}
@@ -86,11 +103,11 @@ def train(
 
         save_loc = checkpoint.parent
     else:
-        model = SimpleCNN(3, 1, **model_kwargs).to(device)
+        model = SimpleCNN(9, 1, **model_kwargs).to(device)
         save_loc = None
 
     # Load and shuffle dataset
-    dataset = PairedImageDataset(hdf5_path, sigma=sigma)
+    dataset = PairedImageDataset(manifest_path, sigma=sigma)
     splits = [training_frac, validation_frac, 1 - training_frac - validation_frac]
 
     (train_set, val_set, _), idcs_list = dataset.create_subsets(
@@ -99,26 +116,42 @@ def train(
 
     if memory:
         LOGGER.info("Caching training dataset in RAM...")
-        train_set = CachedDataset(train_set)
-        LOGGER.info(f"Cached {len(train_set)} training samples.")
+        train_set = CachedDataset(train_set, num_workers=int(num_workers))
+        val_set = CachedDataset(val_set, num_workers=int(num_workers))
+        LOGGER.info(f"Cached {len(train_set)} training and {len(val_set)} validation samples.")
+        loader_workers = 0
+    else:
+        loader_workers = int(num_workers)
 
-    train_loader = DataLoader(
-        train_set,
+    loader_kwargs = dict(
         batch_size=batch_size,
         collate_fn=custom_collate,
-        num_workers=0,
-        pin_memory=True,
+        num_workers=loader_workers,
     )
-    val_loader = DataLoader(val_set, batch_size=batch_size, collate_fn=custom_collate)
+    if loader_workers > 0:
+        loader_kwargs["worker_init_fn"] = PairedImageDataset.worker_init_fn
+        loader_kwargs["persistent_workers"] = True
+
+    train_loader = DataLoader(train_set, pin_memory=True, **loader_kwargs)
+    val_loader = DataLoader(val_set, **loader_kwargs)
 
     LOGGER.info(
         f"Split {len(dataset)} samples into {len(train_set)} train and {len(val_set)} validation samples."
     )
 
     def criterion(x, y):
-        return torch.nn.functional.mse_loss(x, y)
+        # pixelwise loss
+        mse = torch.nn.functional.mse_loss(x, y)
 
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+        # count loss (mass difference)
+        pred_count = x.sum(dim=(1, 2, 3))
+        true_count = y.sum(dim=(1, 2, 3))
+        count_loss = torch.nn.functional.mse_loss(pred_count, true_count)
+
+        # small weight keeps spatial quality dominant
+        return 1e6 * mse # + 0.1 * count_loss
+
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     # Create timestamped run directory
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
