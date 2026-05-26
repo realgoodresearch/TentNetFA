@@ -21,6 +21,7 @@ tqdm = "^4.66.1"
 google-api-python-client = "^2.176.0"
 scipy = "1.15.3"
 h5py = "^3.11.0"
+pyarrow = "^17.0.0"
 PyYAML = "^6.0.1"
 
 # --- GIS libraries (with platform awareness) ---
@@ -42,16 +43,20 @@ geopandas = "^1.1.2"
 psutil = "^7.2.2"
 shapely = "^2.0.7"
 pyproj = "^3.7.0"
+tornado = "^6.5.5"
 
 [tool.poetry.scripts]
 tif-loader = "displacement_tracker.a_tif_loader:tif_loader"
-coordinate-scanner = "displacement_tracker.b_coordinate_scanner:cli"
-rebalance-dataset = "displacement_tracker.c_rebalance_dataset:cli"
+annotated-scanner = "displacement_tracker.b1_annotated_scanner:cli"
+image-scanner = "displacement_tracker.b2_image_scanner:cli"
+resample-manifest = "displacement_tracker.c_resample_manifest:cli"
 train-cnn = "displacement_tracker.d_train_cnn:cli"
 predict-json = "displacement_tracker.e_predict_json:cli"
 evaluate-geojson = "displacement_tracker.f_evaluate_geojson:cli"
-validate-geojson = "displacement_tracker.g_validate_geojson:cli"
+validate-geojson = "displacement_tracker.g2_validate_geojson:cli"
+scan-validation = "displacement_tracker.g1_scan_validation:cli"
 merge-geojsons = "displacement_tracker.h_merge_geojsons:cli"
+train-embedding = "displacement_tracker.util.train_embedding:cli"
 
 [build-system]
 requires = ["poetry-core"]
@@ -59,5 +64,6 @@ build-backend = "poetry.core.masonry.api"
 
 [dependency-groups]
 dev = [
-    "ruff (>=0.15.0,<0.16.0)"
+    "ruff (>=0.15.0,<0.16.0)",
+    "remote-plot (>=1.2.1,<2.0.0)"
 ]

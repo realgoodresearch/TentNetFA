@@ -80,42 +80,42 @@ def load_points_from_geojson(path: Path) -> list[tuple]:
         peak = float(props.get("peak_value", 0.0))
         adj_raw = props.get("adjusted_peak", 0.0)
         adj_peak = float(adj_raw) if adj_raw is not None else 0.0
-        points.append((lat, lon, peak, adj_peak))
+        points.append([lat, lon, peak, adj_peak])
 
     return points
 
 
-def load_exclusion_geometry(exclusion_zones_gpkg: str | None):
-    """Load and unify exclusion geometries from a GeoPackage file."""
-    if not exclusion_zones_gpkg:
+def load_zone_geometry(zones_path: str | None, label: str):
+    """Load and unify polygon geometries from a shapefile or GeoPackage file."""
+    if not zones_path:
         return None
 
-    path = Path(exclusion_zones_gpkg)
+    path = Path(zones_path)
     if not path.exists():
-        raise click.ClickException(f"Exclusion zones GPKG not found: {path}")
+        raise click.ClickException(f"{label} zones file not found: {path}")
 
     try:
         zones_gdf = gpd.read_file(path)
     except Exception as exc:
         raise click.ClickException(
-            f"Failed to read exclusion zones GPKG {path}: {exc}"
+            f"Failed to read {label} zones file {path}: {exc}"
         ) from exc
 
     if zones_gdf.empty:
-        LOGGER.warning("Exclusion zones file is empty: %s", path)
+        LOGGER.warning("%s zones file is empty: %s", label, path)
         return None
 
     if zones_gdf.crs is None:
         LOGGER.warning(
-            "Exclusion zones CRS missing, assuming EPSG:4326: %s", path
+            "%s zones CRS missing, assuming EPSG:4326: %s", label, path
         )
         zones_gdf = zones_gdf.set_crs("EPSG:4326")
     else:
         zones_gdf = zones_gdf.to_crs("EPSG:4326")
 
-    exclusion_geom = zones_gdf.geometry.union_all()
-    LOGGER.info("Loaded exclusion zones from %s", path)
-    return exclusion_geom
+    geom = zones_gdf.geometry.union_all()
+    LOGGER.info("Loaded %s zones from %s", label, path)
+    return geom
 
 
 def filter_points_by_exclusion(points: list[tuple], exclusion_geom) -> list[tuple]:
@@ -127,6 +127,20 @@ def filter_points_by_exclusion(points: list[tuple], exclusion_geom) -> list[tupl
     for lat, lon, peak, adj_peak in points:
         pt = Point(lon, lat)
         if exclusion_geom.contains(pt):
+            continue
+        kept.append((lat, lon, peak, adj_peak))
+    return kept
+
+
+def filter_points_by_inclusion(points: list[tuple], inclusion_geom) -> list[tuple]:
+    """Drop points that lie outside inclusion geometry."""
+    if inclusion_geom is None:
+        return points
+
+    kept = []
+    for lat, lon, peak, adj_peak in points:
+        pt = Point(lon, lat)
+        if not inclusion_geom.contains(pt):
             continue
         kept.append((lat, lon, peak, adj_peak))
     return kept
@@ -174,6 +188,12 @@ def save_merged_gpkg(points: list[tuple], out_path: Path) -> None:
     help="Global minimum adjusted_peak threshold; points below this are dropped before merging.",
 )
 @click.option(
+    "--adjustment-factor",
+    default=1.0,
+    show_default=True,
+    help="Global factor to apply to (adjusted_peak - peak_value) when filtering points."
+)
+@click.option(
     "--thresholds-config",
     default=None,
     type=click.Path(dir_okay=False),
@@ -186,7 +206,16 @@ def save_merged_gpkg(points: list[tuple], out_path: Path) -> None:
     "--exclusion-zones-gpkg",
     default=None,
     type=click.Path(dir_okay=False),
-    help="Optional GPKG file with exclusion geometries; points inside are dropped before merge.",
+    help="Optional shapefile or GPKG with exclusion geometries; points inside are dropped before merge.",
+)
+@click.option(
+    "--inclusion-zone",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help=(
+        "Optional shapefile or GPKG with an inclusion area; "
+        "points outside this geometry are dropped before merge."
+    ),
 )
 def cli(
     input_folder: str,
@@ -194,8 +223,10 @@ def cli(
     min_distance_m: float,
     agreement: int,
     min_adj_peak: float,
+    adjustment_factor: float,
     thresholds_config: str | None,
     exclusion_zones_gpkg: str | None,
+    inclusion_zone: str | None,
 ) -> None:
     input_dir = Path(input_folder)
     geojson_files = sorted(input_dir.glob("*.geojson")) + sorted(input_dir.glob("*.json"))
@@ -206,14 +237,19 @@ def cli(
     LOGGER.info("Found %d GeoJSON files in %s", len(geojson_files), input_dir)
 
     thresholds_data = load_thresholds(thresholds_config)
-    exclusion_geom = load_exclusion_geometry(exclusion_zones_gpkg)
+    exclusion_geom = load_zone_geometry(exclusion_zones_gpkg, "exclusion")
+    inclusion_geom = load_zone_geometry(inclusion_zone, "inclusion")
 
     flat: list[tuple] = []
     for path in geojson_files:
         pts = load_points_from_geojson(path)
         threshold = resolve_threshold(path.name, thresholds_data, min_adj_peak)
         if threshold > 0.0:
-            filtered = [p for p in pts if p[3] >= threshold]
+            filtered = []
+            for p in pts:
+                p[3] = (p[3] - p[2]) * adjustment_factor + p[2]  # Adjusted peak after scaling
+                if p[3] >= threshold:
+                    filtered.append(p)
             LOGGER.info(
                 "  %s: %d points loaded, %d kept (adj_peak >= %.4f)",
                 path.name, len(pts), len(filtered), threshold,
@@ -235,6 +271,21 @@ def cli(
                     "  %s: %d points removed by exclusion zones",
                     path.name,
                     before_exclusion - len(pts),
+                )
+
+        if inclusion_geom is not None:
+            before_inclusion = len(pts)
+            pts = filter_points_by_inclusion(pts, inclusion_geom)
+            LOGGER.info(
+                "  %s: %d kept after inclusion filtering",
+                path.name,
+                len(pts),
+            )
+            if before_inclusion != len(pts):
+                LOGGER.info(
+                    "  %s: %d points removed outside inclusion zone",
+                    path.name,
+                    before_inclusion - len(pts),
                 )
 
         flat.extend(pts)

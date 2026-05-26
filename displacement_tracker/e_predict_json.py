@@ -11,6 +11,8 @@ import os
 import psutil
 import tempfile
 from tqdm.auto import tqdm
+import numpy as np
+# import matplotlib.pyplot as plt
 
 from displacement_tracker.paired_image_dataset import PairedImageDataset
 from displacement_tracker.simple_cnn import SimpleCNN
@@ -25,20 +27,31 @@ from displacement_tracker.util.tiff_predictions import (
 
 LOGGER = setup_logging("predict_json")
 
+PIXEL_METRES = 0.5
+NMS_SIGMA_FRACTION = 0.75
 
-def extract_tile_centroids(probs_np, bounds, threshold, min_area):
+
+def extract_tile_centroids(probs_np, bounds, threshold, min_area, crop_pixels=0):
     """Threshold a tile prediction map and return interpolated region centroids."""
     mask = probs_np > threshold
     labeled, num_features = label(mask)
 
     coords = []
     shape = mask.shape
+    rows_max, cols_max = shape
 
     for region_id in range(1, num_features + 1):
         region_mask = labeled == region_id
         area = region_mask.sum()
         if area > min_area:
             centroid = center_of_mass(region_mask)
+            if crop_pixels > 0 and (
+                centroid[0] < crop_pixels
+                or centroid[0] >= rows_max - crop_pixels
+                or centroid[1] < crop_pixels
+                or centroid[1] >= cols_max - crop_pixels
+            ):
+                continue
             peak_value = float(probs_np[region_mask].max())
             # For centroid mode, emit a numeric adjusted_peak to avoid downstream float(None) errors.
             adjusted_peak = peak_value
@@ -51,26 +64,36 @@ def extract_tile_centroids(probs_np, bounds, threshold, min_area):
     return coords
 
 
-def extract_tile_nms(probs_np, bounds, threshold):
+def extract_tile_nms(probs_np, bounds, threshold, factor=1.0, min_area=5, sigma=50.0, crop_pixels=0):
     """Return interpolated local maxima (lat, lon, peak_value) above threshold."""
     probs_t = torch.as_tensor(probs_np, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
-    blurred_np = gaussian_filter(probs_np, sigma=50) * 3
+    blurred_np = gaussian_filter(probs_np, sigma=sigma)
     blurred_t = torch.as_tensor(blurred_np, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
-    score_t = probs_t + blurred_t
+    score_t = probs_t + blurred_t * factor
 
     max_pooled = torch.nn.functional.max_pool2d(
         score_t,
-        kernel_size=5,
+        kernel_size=min_area,
         stride=1,
-        padding=2,
+        padding=min_area // 2,
     )
     local_max_mask = (score_t == max_pooled) & (score_t > threshold)
 
     rows, cols = torch.where(local_max_mask[0, 0])
     shape = probs_np.shape
+    rows_max, cols_max = shape
     coords = []
 
+    # plt.scatter(cols.cpu(), rows.cpu(), c="r")
+
     for row, col in zip(rows.tolist(), cols.tolist()):
+        if crop_pixels > 0 and (
+            row < crop_pixels
+            or row >= rows_max - crop_pixels
+            or col < crop_pixels
+            or col >= cols_max - crop_pixels
+        ):
+            continue
         peak_value = float(probs_t[0, 0, row, col])
         adjusted_peak = float(score_t[0, 0, row, col])
         try:
@@ -101,8 +124,14 @@ def predict(
     threshold = selection_cfg.get("threshold", 0.5)
     min_area = selection_cfg.get("min_area", 20)
     crop_pixels = selection_cfg.get("crop_pixels", 0)
+    nms_sigma = selection_cfg.get("nms_sigma", 50.0)
     agreement = selection_cfg.get("agreement", False)
     min_distance_m = selection_cfg.get("min_distance_m", 2.0)
+    factor = selection_cfg.get("factor", 0.0)
+    LOGGER.info(f"🔹 Prediction selection parameters: method={selection_cfg.get('method', 'centroid')}, "
+        f"threshold={threshold}, min_area={min_area}, crop_pixels={crop_pixels}, "
+        f"nms_sigma={nms_sigma}, agreement={agreement}, min_distance_m={min_distance_m}, factor={factor}"
+    )
     method = str(selection_cfg.get("method", "centroid")).strip().lower()
     batch_size = max(1, int(batch_size))
 
@@ -139,18 +168,19 @@ def predict(
         tmp_handle.close()
         tmp_ndjson = Path(tmp_handle.name)
 
-    # DataLoader as before
-    loader = DataLoader(
-        subset,
+    loader_kwargs: dict = dict(
         batch_size=batch_size,
-        shuffle=False,
+        shuffle=True,
         num_workers=num_workers,
         pin_memory=(device.type == "cuda"),
         persistent_workers=False,
     )
+    if num_workers and num_workers > 0:
+        loader_kwargs["worker_init_fn"] = PairedImageDataset.worker_init_fn
+    loader = DataLoader(subset, **loader_kwargs)
 
     process = psutil.Process(os.getpid())
-    progress_desc = progress_label or Path(dataset.hdf5_path).name
+    progress_desc = progress_label or str(dataset.manifest_path)
     total_predicted_tents = 0
     max_tile_tents = 0
 
@@ -210,19 +240,13 @@ def predict(
                             probs_np = probs[b, 0]
                             bounds = json.loads(entry["meta"][b])
 
-                            if crop_pixels > 0:
-                                probs_np[:crop_pixels, :] = 0
-                                probs_np[-crop_pixels:, :] = 0
-                                probs_np[:, :crop_pixels] = 0
-                                probs_np[:, -crop_pixels:] = 0
-
                             if method == "nms":
                                 coords = extract_tile_nms(
-                                    probs_np, bounds, threshold
+                                    probs_np, bounds, threshold, factor=factor, min_area=min_area, sigma=nms_sigma, crop_pixels=crop_pixels
                                 )
                             else:
                                 coords = extract_tile_centroids(
-                                    probs_np, bounds, threshold, min_area
+                                    probs_np, bounds, threshold, min_area, crop_pixels=crop_pixels
                                 )
 
                             tile_tent_count = len(coords)
@@ -236,6 +260,7 @@ def predict(
 
                             del coords
 
+                        # raise Exception("Intentional error to show figures")
                         total_predicted_tents += batch_points
                         max_tile_tents = max(max_tile_tents, batch_max_tile_tents)
                         status_bar.set_description_str(
@@ -349,10 +374,10 @@ def resolve_prediction_jobs(pred_cfg):
             )
 
         output_dir.mkdir(parents=True, exist_ok=True)
-        input_files = sorted(input_dir.glob("*.hdf5")) + sorted(input_dir.glob("*.h5"))
+        input_files = sorted(input_dir.glob("*.parquet"))
         if not input_files:
             raise click.ClickException(
-                f"No HDF5 files found in prediction input folder: {input_dir}"
+                f"No parquet manifests found in prediction input folder: {input_dir}"
             )
 
         return [
@@ -379,8 +404,9 @@ def run_prediction_job(
     boundaries_path,
     batch_size,
     num_workers,
+    per_tile_standardisation=False,
 ):
-    dataset = PairedImageDataset(str(input_path))
+    dataset = PairedImageDataset(str(input_path), per_tile_standardisation=per_tile_standardisation)
     try:
         results = predict(
             dataset,
@@ -413,8 +439,21 @@ def cli(config) -> None:
     sample_cfg = pred_cfg.get("sample", {})
     selection_cfg = pred_cfg.get("selection", {})
     device = pred_cfg.get("device", None)
+
+    processing_cfg = params.get("processing", {})
+    if "margin_metres" not in processing_cfg:
+        raise click.ClickException("Missing required config key: processing.margin_metres")
+    margin_metres = float(processing_cfg["margin_metres"])
+    margin_pixels = int(round(margin_metres / PIXEL_METRES))
+    selection_cfg["crop_pixels"] = margin_pixels
+    selection_cfg["nms_sigma"] = NMS_SIGMA_FRACTION * margin_pixels
+    LOGGER.info(
+        f"🔹 Derived crop_pixels={margin_pixels} and nms_sigma={selection_cfg['nms_sigma']:.2f} "
+        f"from processing.margin_metres={margin_metres}m (pixel size {PIXEL_METRES}m)."
+    )
     batch_size = pred_cfg.get("batch_size", 12)
     num_workers = pred_cfg.get("num_workers", 4)
+    per_tile_standardisation = pred_cfg.get("per_tile_standardisation", False)
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -441,6 +480,7 @@ def cli(config) -> None:
             boundaries_path,
             batch_size,
             num_workers,
+            per_tile_standardisation=per_tile_standardisation,
         )
 
     if validation_tifs:

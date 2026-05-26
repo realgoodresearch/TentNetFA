@@ -101,8 +101,6 @@ processing:
   individual: false # when true, ignore hdf5 and write one HDF5 per TIFF into hdf5_folder
   step: 0.0005 # step size for each tile in degress lat and long
   quality_thresholds:
-    start_threshold: 0.2  # fraction of tents with same day start date
-    max_missing_end: 0.2  # max number of tents with missing end date
     min_valid_fraction: 0.9  # minimum fraction of the image that needs to be not black / NaN
 training:
   checkpoint: null  # checkpoint to restart from, e.g. path/to/model.pth
