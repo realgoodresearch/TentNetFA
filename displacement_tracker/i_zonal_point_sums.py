@@ -127,7 +127,7 @@ def write_zone_summary(
 
     output_csv = output_dir / f"zonal_sum_{zone_name}.csv"
     output_gpkg = output_dir / f"zonal_sum_{zone_name}.gpkg"
-    summary_df.to_csv(output_csv, index=False)
+    (zones_with_summary.drop(columns=["geometry"], errors="ignore")).to_csv(output_csv, index=False)
     zones_with_summary.to_file(output_gpkg, driver="GPKG")
     LOGGER.info("Saved %s zonal summary CSV: %s", zone_name, output_csv)
     LOGGER.info("Saved %s zonal summary GPKG: %s", zone_name, output_gpkg)
