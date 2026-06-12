@@ -150,6 +150,113 @@ training:
   model_kwargs:
     kernel_size: 3
 ```
+
+## Prediction Pipeline
+
+Running predictions on new satellite imagery consists of three stages:
+
+1. Process GeoTIFF imagery and generate manifests
+2. Run model inference
+3. Merge prediction outputs
+
+### Prerequisites
+
+Before running predictions, ensure the following files are available locally:
+
+* GeoTIFF files to be processed
+* `GazaStrip_MunicipalBoundaries.shp`
+* `prewar_gaza.tif`
+
+The GeoTIFF files can be stored in any folder structure, provided the correct paths are specified in the configuration files.
+
+---
+
+### Step 1: Process GeoTIFF Imagery
+
+1. Download or copy the GeoTIFF files you want to run predictions on.
+2. Store them anywhere within or outside the repository.
+3. Update `config.yaml` with:
+
+   * `geotiff_dir`: directory containing the GeoTIFF files
+   * `manifest_folder`: directory where manifests should be written
+   * `boundaries`: path to `GazaStrip_MunicipalBoundaries.shp`
+   * `prewar_gaza`: path to `prewar_gaza.tif`
+
+Run:
+
+```bash
+poetry run python -m displacement_tracker.b2_image_scanner config.yaml
+```
+
+This command scans all GeoTIFFs in `geotiff_dir` and generates manifests for files that do not already have a corresponding manifest in `manifest_folder`.
+
+---
+
+### Step 2: Run Predictions
+
+Update `predict_config.yaml` with the correct paths:
+
+* `geotiff_dir`
+* `input_folder`
+* `output_folder`
+
+Recommended selection parameters:
+
+```yaml
+selection:
+  threshold: 0.0001
+  factor: 1.0
+  min_area: 7
+  min_distance_m: 3.0
+```
+
+Run:
+
+```bash
+poetry run python -m displacement_tracker.e_predict_json predict_config.yaml
+```
+
+This command runs inference on all imagery that has a manifest available in the configured manifest folder.
+
+Output files are written as GeoJSON/JSON prediction files in the configured output directory.
+
+---
+
+### Step 3: Merge Prediction Outputs
+
+Predictions are generated as overlapping tiles and must be merged before analysis.
+
+Run:
+
+```bash
+poetry run merge-geojsons tif_files/historic/predictions ignored.gpkg \
+  --min-adj-peak 0.003 \
+  --adjustment-factor 10
+```
+
+This deduplicates overlapping predictions and produces a consolidated output.
+
+#### Group predictions by date
+
+To merge predictions separately for each acquisition date, add:
+
+```bash
+--process-by-date
+```
+
+Example:
+
+```bash
+poetry run merge-geojsons tif_files/historic/predictions ignored.gpkg \
+  --min-adj-peak 0.003 \
+  --adjustment-factor 10 \
+  --process-by-date
+```
+
+With `--process-by-date`, outputs are grouped and merged independently for each date.
+
+Without `--process-by-date`, all predictions in the input directory are merged into a single combined output containing all detected tents.
+
 ## Output
 
 -   **HDF5 Datasets**: The `coordinate-scanner` script produces HDF5 files containing `feature`, `prewar`, `label`, and `meta` datasets for training and prediction.
