@@ -125,6 +125,18 @@ loading:
   files:
     - deir_el_balah_20250315_121122_ssc10_u0002_visual_clip_file_format.tif
     - khan_yunis_20250315_065509_ssc13_u0001_visual_file_format.tif
+processing:
+  individual: false # when true, ignore hdf5 and write one HDF5 per TIFF into hdf5_folder
+  step: 0.0005 # step size for each tile in degress lat and long
+  quality_thresholds:
+    min_valid_fraction: 0.9  # minimum fraction of the image that needs to be not black / NaN
+training:
+  checkpoint: null  # checkpoint to restart from, e.g. path/to/model.pth
+  epochs: 10000
+  batch_size: 8
+  learning_rate: 0.0005
+  training_frac: 0.7
+  validation_frac: 0.15
 
 # --- Data Processing ---
 processing:

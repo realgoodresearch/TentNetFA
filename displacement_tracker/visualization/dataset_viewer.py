@@ -1,6 +1,3 @@
-import matplotlib
-matplotlib.use("TkAgg")
-
 import json
 import torch
 import numpy as np
@@ -88,7 +85,7 @@ class DatasetViewer:
         arr_feat, arr_prewar, arr_label, meta_text = self._prepare_display_data(idx)
 
         fig, axes = plt.subplots(
-            1, 5,
+            1, 3,
             figsize=(30, 8),  # bigger figure
             dpi=150  # higher resolution
         )
@@ -233,8 +230,7 @@ if __name__ == "__main__":
     from displacement_tracker.paired_image_dataset import PairedImageDataset
 
     ds = PairedImageDataset(
-        "tif_files/training/khan_yunis_20241005_062045_ssc2_u0001_visual_clip.h5"
-        #"tif_files/historic/processed/khan_yunis_20250918_122620_ssc10_u0001_visual_clip.h5"
+        "/data/projects/gazatents/data/training_data/manifests/khan_yunis_20250318_065316_ssc1_u0001_visual_clip_file_format.parquet",
     )
 
     print("Dataset length:", len(ds))
@@ -246,6 +242,7 @@ if __name__ == "__main__":
         print("Showing indices:", indices)
         for idx in indices:
             viewer.show_split(idx)
+            plt.savefig(f"tmp/overlay_{idx}.png")
     else:
         print("Dataset is empty.")
 
