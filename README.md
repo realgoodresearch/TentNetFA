@@ -241,7 +241,8 @@ Predictions are generated as overlapping tiles and must be merged before analysi
 Run:
 
 ```bash
-poetry run merge-geojsons tif_files/historic/predictions ignored.gpkg \
+poetry run -m displacement_tracker.h_merge_geojsons tif_files/historic/predictions ignored.gpkg \
+  --process-by-date \
   --min-adj-peak 0.003 \
   --adjustment-factor 10
 ```
