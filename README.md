@@ -171,13 +171,15 @@ Running predictions on new satellite imagery consists of three stages:
 2. Run model inference
 3. Merge prediction outputs
 
+Example [Collab Notebook](https://colab.research.google.com/drive/1pFXIwNghzgMpnOJng027GLW6LRaRgV91?usp=sharing) to get started.
+
 ### Prerequisites
 
 Before running predictions, ensure the following files are available locally:
 
 * GeoTIFF files to be processed
-* `GazaStrip_MunicipalBoundaries.shp`
-* `prewar_gaza.tif`
+* Gaza Strip boundaries folder including [`GazaStrip_MunicipalBoundaries.shp`](https://drive.google.com/drive/folders/1JXj-MK33lG4RQLnZLZVElYc2cQjPgdjJ?usp=sharing)
+* [`prewar_gaza.tif`](https://drive.google.com/file/d/1NyOgmIBv2NqwaG5quXaASuTa3P3pO5qL/view?usp=sharing)
 
 The GeoTIFF files can be stored in any folder structure, provided the correct paths are specified in the configuration files.
 
@@ -241,13 +243,12 @@ Predictions are generated as overlapping tiles and must be merged before analysi
 Run:
 
 ```bash
-poetry run -m displacement_tracker.h_merge_geojsons tif_files/historic/predictions ignored.gpkg \
-  --process-by-date \
+poetry run -m displacement_tracker.h_merge_geojsons tif_files/historic/predictions merged.gpkg \
   --min-adj-peak 0.003 \
   --adjustment-factor 10
 ```
 
-This deduplicates overlapping predictions and produces a consolidated output.
+This deduplicates overlapping predictions and produces a consolidated output. Note: This will merge everything in the input folder into a single gpkg file. Only do this if the predictions in the input folder are intended to be merged and dedeuplicated into one file. To merge by date instead, see below.
 
 #### Group predictions by date
 
@@ -260,10 +261,10 @@ To merge predictions separately for each acquisition date, add:
 Example:
 
 ```bash
-poetry run merge-geojsons tif_files/historic/predictions ignored.gpkg \
+poetry run -m displacement_tracker.h_merge_geojsons tif_files/historic/predictions ignored.gpkg \
+  --process-by-date \
   --min-adj-peak 0.003 \
-  --adjustment-factor 10 \
-  --process-by-date
+  --adjustment-factor 10
 ```
 
 With `--process-by-date`, outputs are grouped and merged independently for each date.
