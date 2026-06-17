@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import os
 import numpy as np
 import pandas as pd
@@ -14,7 +16,9 @@ def evaluate_municipal_bounds(
     annotation_csv: str,
     boundary_shp: str,
     output_dir: str,
-    name_column: str = "NAME"
+    manual_column: str = "manual_tent_count",
+    model_column: str = "model_tent_count",
+    name_column: str = "NAME",
 ):
     """
     Evaluate model prediction error per municipal polygon.
@@ -23,6 +27,7 @@ def evaluate_municipal_bounds(
         - municipal_bounds.csv
         - municipal_bounds_plot.png
         - municipal_bounds_map.png
+        - municipal_scatter_subplots.png
     """
 
     os.makedirs(output_dir, exist_ok=True)
@@ -41,14 +46,17 @@ def evaluate_municipal_bounds(
     required_cols = {
         "latitude",
         "longitude",
-        "manual_tent_count",
-        "model_tent_count"
+        manual_column,
+        model_column,
     }
 
     if not required_cols.issubset(df.columns):
-        raise ValueError(f"Annotation CSV missing required columns: {required_cols}")
+        missing = required_cols - set(df.columns)
+        raise ValueError(
+            f"Annotation CSV missing required columns: {sorted(missing)}"
+        )
 
-    df["tile_error"] = df["model_tent_count"] - df["manual_tent_count"]
+    df["tile_error"] = df[model_column] - df[manual_column]
 
     geometry = [Point(xy) for xy in zip(df["longitude"], df["latitude"])]
     tiles_gdf = gpd.GeoDataFrame(df, geometry=geometry, crs="EPSG:4326")
@@ -69,7 +77,7 @@ def evaluate_municipal_bounds(
         tiles_gdf,
         municipal_gdf[[name_column, "geometry"]],
         how="left",
-        predicate="within"
+        predicate="within",
     )
 
     # ==========================
@@ -78,35 +86,53 @@ def evaluate_municipal_bounds(
 
     results = []
 
-    for region_name, group in joined.groupby(name_column):
-
-        errors = group["tile_error"].values
+    for region_name, group in joined.groupby(name_column, dropna=True):
+        errors = group["tile_error"].dropna().values
         n = len(errors)
 
         if n == 0:
             continue
 
-        mean_error = np.mean(errors)
+        mean_error = float(np.mean(errors))
 
         if n > 1:
-            std_error = np.std(errors, ddof=1)
+            std_error = float(np.std(errors, ddof=1))
             ci_margin = 1.96 * (std_error / np.sqrt(n))
+            se = ci_margin / 1.96
+            s = se * np.sqrt(n)
         else:
-            ci_margin = 0
+            std_error = 0.0
+            ci_margin = 0.0
+            se = 0.0
+            s = 0.0
 
         lower = mean_error - ci_margin
         upper = mean_error + ci_margin
 
+        total_error = n * mean_error
+        total_se = n * se
+        total_lower = total_error - 1.96 * total_se
+        total_upper = total_error + 1.96 * total_se
+
         results.append({
             name_column: region_name,
             "mean_tile_error": mean_error,
+            "std_tile_error": std_error,
+            "se_tile_error": se,
+            "s_tile_error": s,
             "ci_lower": lower,
             "ci_upper": upper,
-            "num_tiles": n
+            "num_tiles": n,
+            "total_regional_error": total_error,
+            "total_regional_se": total_se,
+            "total_regional_ci_lower": total_lower,
+            "total_regional_ci_upper": total_upper,
         })
 
     results_df = pd.DataFrame(results)
-    results_df = results_df.sort_values("mean_tile_error", ascending=False)
+
+    if not results_df.empty:
+        results_df = results_df.sort_values("mean_tile_error", ascending=False)
 
     results_df.to_csv(output_csv, index=False)
 
@@ -114,30 +140,30 @@ def evaluate_municipal_bounds(
     # BAR PLOT
     # ==========================
 
-    plt.figure(figsize=(12, 7))
+    if not results_df.empty:
+        plt.figure(figsize=(12, 7))
 
-    y = np.arange(len(results_df))
-    means = results_df["mean_tile_error"].values
-    ci_lower = results_df["ci_lower"].values
-    ci_upper = results_df["ci_upper"].values
-    yerr = np.vstack((means - ci_lower, ci_upper - means))
+        y = np.arange(len(results_df))
+        means = results_df["mean_tile_error"].values
+        ci_lower = results_df["ci_lower"].values
+        ci_upper = results_df["ci_upper"].values
+        yerr = np.vstack((means - ci_lower, ci_upper - means))
 
-    plt.barh(y, means, xerr=yerr, capsize=5)
+        plt.barh(y, means, xerr=yerr, capsize=5)
 
-    # Create labels with sample sizes included
-    labels = [
-        f"{name} (n={n})"
-        for name, n in zip(results_df[name_column], results_df["num_tiles"])
-    ]
+        labels = [
+            f"{name} (n={n})"
+            for name, n in zip(results_df[name_column], results_df["num_tiles"])
+        ]
 
-    plt.yticks(y, labels)
-
-    plt.xlabel("Mean Tile-Level Prediction Error")
-    plt.title("Mean Prediction Error per Municipal Region (95% CI)")
-
-    plt.tight_layout()
-    plt.savefig(output_plot)
-    plt.close()
+        plt.yticks(y, labels)
+        plt.xlabel("Mean Tile-Level Prediction Error")
+        plt.title("Mean Prediction Error per Municipal Region (95% CI)")
+        plt.tight_layout()
+        plt.savefig(output_plot)
+        plt.close()
+    else:
+        print("WARNING: No municipal regions found for bar plot.")
 
     # ==========================
     # SPATIAL MAP
@@ -145,76 +171,76 @@ def evaluate_municipal_bounds(
 
     map_gdf = municipal_gdf.merge(results_df, on=name_column, how="left")
 
-    vmax = np.nanmax(np.abs(map_gdf["mean_tile_error"]))
-    vmin = -vmax
+    if "mean_tile_error" in map_gdf.columns and map_gdf["mean_tile_error"].notna().any():
+        vmax = np.nanmax(np.abs(map_gdf["mean_tile_error"].values))
+        vmin = -vmax
 
-    plt.figure(figsize=(10, 10))
+        plt.figure(figsize=(10, 10))
+        map_gdf.plot(
+            column="mean_tile_error",
+            cmap="RdBu_r",
+            vmin=vmin,
+            vmax=vmax,
+            legend=True,
+            edgecolor="black",
+        )
 
-    ax = map_gdf.plot(
-        column="mean_tile_error",
-        cmap="RdBu_r",
-        vmin=vmin,
-        vmax=vmax,
-        legend=True,
-        edgecolor="black"
-    )
-
-    plt.title("Average Model Over/Undercount per Municipality")
-    plt.axis("off")
-    plt.tight_layout()
-    plt.savefig(output_map)
-    plt.close()
+        plt.title("Average Model Over/Undercount per Municipality")
+        plt.axis("off")
+        plt.tight_layout()
+        plt.savefig(output_map)
+        plt.close()
+    else:
+        print("WARNING: No valid regional error values available for map plot.")
 
     # ==========================
     # MUNICIPAL SCATTER SUBPLOTS
     # ==========================
 
-    unique_regions = joined[name_column].dropna().unique()
-    unique_regions = sorted(unique_regions)
-
+    unique_regions = sorted(joined[name_column].dropna().unique())
     n_regions = len(unique_regions)
 
-    # Determine grid size
-    n_cols = 3
-    n_rows = int(np.ceil(n_regions / n_cols))
+    if n_regions > 0:
+        n_cols = 3
+        n_rows = int(np.ceil(n_regions / n_cols))
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 5 * n_rows))
-    axes = axes.flatten()
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 5 * n_rows))
+        axes = np.array(axes).reshape(-1)
 
-    for i, region in enumerate(unique_regions):
-        ax = axes[i]
-        subset = joined[joined[name_column] == region]
+        for i, region in enumerate(unique_regions):
+            ax = axes[i]
+            subset = joined[joined[name_column] == region]
 
-        x = subset["manual_tent_count"].values
-        y = subset["model_tent_count"].values
+            x = subset[manual_column].values
+            y = subset[model_column].values
 
-        if len(x) == 0:
-            continue
+            if len(x) == 0:
+                ax.axis("off")
+                continue
 
-        ax.scatter(x, y, alpha=0.6)
+            ax.scatter(x, y, alpha=0.6)
 
-        max_val = max(np.max(x), np.max(y))
-        ax.plot([0, max_val], [0, max_val])
+            max_val = max(np.max(x), np.max(y))
+            ax.plot([0, max_val], [0, max_val])
 
-        # Pearson correlation
-        if len(x) > 1:
-            r = np.corrcoef(x, y)[0, 1]
-        else:
-            r = np.nan
+            if len(x) > 1:
+                r = np.corrcoef(x, y)[0, 1]
+            else:
+                r = np.nan
 
-        ax.set_title(f"{region}\n(n={len(x)}, r={r:.2f})")
-        ax.set_xlabel("Manual")
-        ax.set_ylabel("Model")
+            ax.set_title(f"{region}\n(n={len(x)}, r={r:.2f})")
+            ax.set_xlabel("Manual")
+            ax.set_ylabel("Model")
 
-    # Hide unused axes
-    for j in range(i + 1, len(axes)):
-        axes[j].axis("off")
+        for j in range(n_regions, len(axes)):
+            axes[j].axis("off")
 
-    plt.tight_layout()
-    plt.savefig(output_scatter)
-    plt.close()
-
-    print(f"Saved municipal scatter subplots to {output_scatter}")
+        plt.tight_layout()
+        plt.savefig(output_scatter)
+        plt.close()
+        print(f"Saved municipal scatter subplots to {output_scatter}")
+    else:
+        print("WARNING: No regions available for scatter subplots.")
 
     return results_df
 
@@ -224,17 +250,11 @@ def evaluate_municipal_bounds(
 # ==========================================================
 
 if __name__ == "__main__":
-
     evaluate_municipal_bounds(
-        annotation_csv="displacement_tracker/evaluation/manual_annotation_results.csv",
+        annotation_csv="manual_annotation_results_with_new_model.csv",
         boundary_shp="gaza_boundaries/GazaStrip_MunicipalBoundaries.shp",
-        output_dir="displacement_tracker/evaluation/results"
+        output_dir="results",
+        manual_column="manual_tent_count",
+        model_column="model_tent_count",
+        name_column="NAME",
     )
-
-
-### TODO
-# Calculate se = (upper_ci - lower_ci) / 1.96
-# Calculate s = se * sqrt(n)
-# Get total regional error T = N * mean_tile_error
-# Get total regional standard error SE = N * se
-# Get 95% bounds [T - 1.96 * SE, T + 1.96 * SE]

@@ -223,4 +223,5 @@ wd/
 runs/
 tmp/
 *.log
-*.csv
+*.csvdisplacement_tracker/evaluation/spatial_data/sample.tif
+displacement_tracker/evaluation/spatial_data/sample.tif

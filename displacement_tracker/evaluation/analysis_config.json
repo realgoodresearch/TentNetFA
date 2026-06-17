@@ -1,0 +1,14 @@
+{
+  "annotation_csv": "manual_eval/manual_annotation_results_with_new_model.csv",
+  "output_csv": "manual_eval/manual_annotation_results_with_new_model3.csv",
+  "prediction_dir": "predictions/v2.2_threshold_0.0001_dbscan_days",
+  "sample_tif": "spatial_data/sample.tif",
+  "new_model_column": "threshold_0.0001_dbscan_days",
+  "output_dir": "results/v2.2_threshold_0.0001_dbscan_days",
+  "boundary_shp": "spatial_data/municipal_boundaries/GazaStrip_MunicipalBoundaries.shp",
+  "agriculture_geojson": "spatial_data/layers/agriculture.json",
+  "h3_geojson": "spatial_data/layers/h3_density.json",
+  "destruction_geojson": "spatial_data/layers/destruction.json",
+  "manual_column": "manual_tent_count",
+  "hex_size_m": 1000.0
+}
