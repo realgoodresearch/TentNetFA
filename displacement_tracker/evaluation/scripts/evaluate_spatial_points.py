@@ -1,91 +1,130 @@
+#!/usr/bin/env python3
+
 import os
+from typing import Dict, Any
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.colors import TwoSlopeNorm
 
-# ==========================
-# CONFIGURATION
-# ==========================
 
-ANNOTATION_CSV = "displacement_tracker/evaluation/manual_annotation_results.csv"
-OUTPUT_PATH = "displacement_tracker/evaluation/results/spatial_tile_error_hexbin.png"
+# ==========================================================
+# CORE FUNCTION
+# ==========================================================
 
-os.makedirs("displacement_tracker/evaluation/results", exist_ok=True)
+def evaluate_spatial_points(
+    annotation_csv: str = "manual_annotation_results_with_new_model.csv",
+    output_dir: str = "results",
+    manual_column: str = "manual_tent_count",
+    model_column: str = "model_tent_count",
+    gridsize: int = 60,
+):
+    """
+    Create a hexbin map of local mean tile error.
 
-# ==========================
-# LOAD DATA
-# ==========================
+    Outputs:
+        - spatial_tile_error_hexbin.png
 
-df = pd.read_csv(ANNOTATION_CSV)
+    Returns:
+        dict with basic summary stats
+    """
+    os.makedirs(output_dir, exist_ok=True)
 
-required_cols = {
-    "latitude",
-    "longitude",
-    "manual_tent_count",
-    "model_tent_count"
-}
+    output_path = os.path.join(output_dir, "spatial_tile_error_hexbin.png")
 
-if not required_cols.issubset(df.columns):
-    raise ValueError("Annotation CSV missing required columns.")
+    # ==========================
+    # LOAD DATA
+    # ==========================
 
-# Tile-level error
-df["tile_error"] = df["model_tent_count"] - df["manual_tent_count"]
+    df = pd.read_csv(annotation_csv)
 
-lon = df["longitude"].values
-lat = df["latitude"].values
-error = df["tile_error"].values
+    required_cols = {
+        "latitude",
+        "longitude",
+        manual_column,
+        model_column,
+    }
 
-# ==========================
-# HEXBIN PLOT
-# ==========================
+    if not required_cols.issubset(df.columns):
+        missing = required_cols - set(df.columns)
+        raise ValueError(f"Annotation CSV missing required columns: {sorted(missing)}")
 
-plt.figure(figsize=(10, 10))
+    df["tile_error"] = df[model_column] - df[manual_column]
 
-hb = plt.hexbin(
-    lon,
-    lat,
-    C=error,
-    reduce_C_function=np.mean,
-    gridsize=60,
-    cmap="RdBu_r"
-)
+    lon = df["longitude"].to_numpy()
+    lat = df["latitude"].to_numpy()
+    error = df["tile_error"].to_numpy()
 
-# Get aggregated mean values per hex
-# Get aggregated mean values per hex
-hex_means = hb.get_array()
+    if len(error) == 0:
+        raise ValueError("No rows found in annotation CSV.")
 
-if len(hex_means) == 0:
-    raise ValueError("No hex bins were created. Check data.")
+    # ==========================
+    # HEXBIN PLOT
+    # ==========================
 
-vmin = np.min(hex_means)
-vmax = np.max(hex_means)
+    plt.figure(figsize=(10, 10))
 
-# Round bounds to nearest 10
-tick_min = int(np.floor(vmin / 10.0) * 10)
-tick_max = int(np.ceil(vmax / 10.0) * 10)
+    hb = plt.hexbin(
+        lon,
+        lat,
+        C=error,
+        reduce_C_function=np.mean,
+        gridsize=gridsize,
+        cmap="RdBu_r",
+    )
 
-# Zero-centered normalization using rounded bounds
-norm = TwoSlopeNorm(vmin=tick_min, vcenter=0, vmax=tick_max)
-hb.set_norm(norm)
-hb.set_clim(tick_min, tick_max)
+    hex_means = hb.get_array()
+    if len(hex_means) == 0:
+        raise ValueError("No hex bins were created. Check data.")
 
-cbar = plt.colorbar(hb, label="Mean Tile-Level Prediction Error")
+    vmin = np.nanmin(hex_means)
+    vmax = np.nanmax(hex_means)
 
-# Create ticks in increments of 10
-ticks = np.arange(tick_min, tick_max + 10, 10)
-cbar.set_ticks(ticks)
-cbar.set_ticklabels([str(int(t)) for t in ticks])
+    tick_min = int(np.floor(vmin / 10.0) * 10)
+    tick_max = int(np.ceil(vmax / 10.0) * 10)
 
-plt.title("Local Mean Prediction Error (Hexbin Aggregation)")
-plt.xlabel("Longitude")
-plt.ylabel("Latitude")
+    if tick_min == tick_max:
+        tick_min -= 10
+        tick_max += 10
 
-plt.tight_layout()
-plt.savefig(OUTPUT_PATH)
-plt.close()
+    norm = TwoSlopeNorm(vmin=tick_min, vcenter=0, vmax=tick_max)
+    hb.set_norm(norm)
+    hb.set_clim(tick_min, tick_max)
 
-print(f"Saved hexbin plot to {OUTPUT_PATH}")
+    cbar = plt.colorbar(hb, label="Mean Tile-Level Error")
 
-### TODO
-# Spatial bootstrap to local regional hex, get hex level CIs
+    ticks = np.arange(tick_min, tick_max + 10, 10)
+    cbar.set_ticks(ticks)
+    cbar.set_ticklabels([str(int(t)) for t in ticks])
+
+    plt.title("Local Mean Prediction Error (Hexbin Aggregation)")
+    plt.xlabel("Longitude")
+    plt.ylabel("Latitude")
+
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+
+    print(f"Saved hexbin plot to {output_path}")
+
+    return {
+        "output_path": output_path,
+        "n_points": int(len(df)),
+        "n_hexes": int(len(hex_means)),
+        "mean_tile_error": float(np.mean(error)),
+    }
+
+
+# ==========================================================
+# CLI ENTRYPOINT
+# ==========================================================
+
+if __name__ == "__main__":
+    evaluate_spatial_points(
+        annotation_csv="manual_annotation_results_with_new_model.csv",
+        output_dir="results",
+        manual_column="manual_tent_count",
+        model_column="model_tent_count",
+        gridsize=60,
+    )

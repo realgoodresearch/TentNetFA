@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import os
 import numpy as np
 import pandas as pd
@@ -11,9 +13,11 @@ from shapely.geometry import Point
 # ==========================================================
 
 def evaluate_destruction_vs_non_destruction(
-    annotation_csv: str,
-    destruction_geojson: str,
-    output_dir: str
+    annotation_csv: str = "manual_annotation_results_with_new_model.csv",
+    destruction_geojson: str = "gaza_boundaries/layers/destruction.json",
+    output_dir: str = "results",
+    manual_column: str = "manual_tent_count",
+    model_column: str = "model_tent_count",
 ):
     """
     Evaluate model prediction error inside vs outside destruction polygons.
@@ -26,7 +30,6 @@ def evaluate_destruction_vs_non_destruction(
         - destruction_vs_non_destruction.csv
         - destruction_vs_non_destruction_plot.png
     """
-
     os.makedirs(output_dir, exist_ok=True)
 
     output_csv = os.path.join(output_dir, "destruction_vs_non_destruction.csv")
@@ -41,17 +44,16 @@ def evaluate_destruction_vs_non_destruction(
     required_cols = {
         "latitude",
         "longitude",
-        "manual_tent_count",
-        "model_tent_count",
-        "date"
+        "date",
+        manual_column,
+        model_column,
     }
 
     if not required_cols.issubset(df.columns):
-        raise ValueError("Annotation CSV missing required columns.")
+        missing = required_cols - set(df.columns)
+        raise ValueError(f"Annotation CSV missing required columns: {sorted(missing)}")
 
-    df["tile_error"] = df["model_tent_count"] - df["manual_tent_count"]
-
-    # Ensure tile date is datetime
+    df["tile_error"] = df[model_column] - df[manual_column]
     df["date"] = pd.to_datetime(df["date"])
 
     geometry = [Point(xy) for xy in zip(df["longitude"], df["latitude"])]
@@ -64,48 +66,42 @@ def evaluate_destruction_vs_non_destruction(
 
     destruction_gdf["date_start"] = pd.to_datetime(destruction_gdf["date_start"])
 
-    # CRS alignment
     if destruction_gdf.crs != tiles_gdf.crs:
         destruction_gdf = destruction_gdf.to_crs(tiles_gdf.crs)
 
     # ==========================
-    # SPATIAL JOIN (many-to-one)
+    # SPATIAL JOIN
     # ==========================
 
     joined = gpd.sjoin(
         tiles_gdf,
         destruction_gdf[["date_start", "geometry"]],
         how="left",
-        predicate="within"
+        predicate="within",
     )
 
     # ==========================
     # TEMPORAL FILTER
     # ==========================
 
-    # Tile is active destruction if:
-    # - It spatially matched a polygon
-    # - Polygon date_start <= tile date
-
     joined["active_destruction"] = (
         (~joined["date_start"].isna()) &
         (joined["date_start"] <= joined["date"])
     )
 
-    # If multiple overlapping polygons exist, collapse by tile
     collapsed = (
         joined
         .groupby(joined.index)
         .agg({
             "tile_error": "first",
-            "active_destruction": "max"   # any True means destruction
+            "active_destruction": "max",
         })
     )
 
     collapsed["region_type"] = np.where(
         collapsed["active_destruction"],
         "Destruction",
-        "Non-Destruction"
+        "Non-Destruction",
     )
 
     # ==========================
@@ -115,20 +111,19 @@ def evaluate_destruction_vs_non_destruction(
     results = []
 
     for region_type, group in collapsed.groupby("region_type"):
-
-        errors = group["tile_error"].values
+        errors = group["tile_error"].dropna().values
         n = len(errors)
 
         if n == 0:
             continue
 
-        mean_error = np.mean(errors)
+        mean_error = float(np.mean(errors))
 
         if n > 1:
-            std_error = np.std(errors, ddof=1)
+            std_error = float(np.std(errors, ddof=1))
             ci_margin = 1.96 * (std_error / np.sqrt(n))
         else:
-            ci_margin = 0
+            ci_margin = 0.0
 
         lower = mean_error - ci_margin
         upper = mean_error + ci_margin
@@ -138,11 +133,13 @@ def evaluate_destruction_vs_non_destruction(
             "mean_tile_error": mean_error,
             "ci_lower": lower,
             "ci_upper": upper,
-            "num_tiles": n
+            "num_tiles": n,
         })
 
     results_df = pd.DataFrame(results)
-    results_df = results_df.sort_values("mean_tile_error", ascending=False)
+
+    if not results_df.empty:
+        results_df = results_df.sort_values("mean_tile_error", ascending=False)
 
     results_df.to_csv(output_csv, index=False)
 
@@ -150,35 +147,36 @@ def evaluate_destruction_vs_non_destruction(
     # BAR PLOT
     # ==========================
 
-    plt.figure(figsize=(8, 5))
+    if not results_df.empty:
+        plt.figure(figsize=(8, 5))
 
-    means = results_df["mean_tile_error"].values
-    ci_lower = results_df["ci_lower"].values
-    ci_upper = results_df["ci_upper"].values
+        means = results_df["mean_tile_error"].values
+        ci_lower = results_df["ci_lower"].values
+        ci_upper = results_df["ci_upper"].values
 
-    lower_err = np.maximum(0, means - ci_lower)
-    upper_err = np.maximum(0, ci_upper - means)
-    yerr = np.vstack((lower_err, upper_err))
+        lower_err = np.maximum(0, means - ci_lower)
+        upper_err = np.maximum(0, ci_upper - means)
+        yerr = np.vstack((lower_err, upper_err))
 
-    x = np.arange(len(results_df))
+        x = np.arange(len(results_df))
 
-    plt.bar(x, means, yerr=yerr, capsize=5)
+        plt.bar(x, means, yerr=yerr, capsize=5)
 
-    labels = [
-        f"{name} (n={n})"
-        for name, n in zip(results_df["region_type"], results_df["num_tiles"])
-    ]
+        labels = [
+            f"{name} (n={n})"
+            for name, n in zip(results_df["region_type"], results_df["num_tiles"])
+        ]
 
-    plt.xticks(x, labels)
-    plt.ylabel("Mean Tile-Level Prediction Error")
-    plt.title("Prediction Error: Destruction vs Non-Destruction (95% CI)")
+        plt.xticks(x, labels)
+        plt.ylabel("Mean Tile-Level Prediction Error")
+        plt.title("Prediction Error: Destruction vs Non-Destruction (95% CI)")
+        plt.axhline(0, linestyle="--")
 
-    # horizontal zero reference line
-    plt.axhline(0, linestyle="--")
-
-    plt.tight_layout()
-    plt.savefig(output_plot)
-    plt.close()
+        plt.tight_layout()
+        plt.savefig(output_plot)
+        plt.close()
+    else:
+        print("WARNING: No destruction comparison groups found for plot.")
 
     return results_df
 
@@ -188,9 +186,10 @@ def evaluate_destruction_vs_non_destruction(
 # ==========================================================
 
 if __name__ == "__main__":
-
     evaluate_destruction_vs_non_destruction(
-        annotation_csv="displacement_tracker/evaluation/manual_annotation_results.csv",
+        annotation_csv="manual_annotation_results_with_new_model.csv",
         destruction_geojson="gaza_boundaries/layers/destruction.json",
-        output_dir="displacement_tracker/evaluation/results"
+        output_dir="results",
+        manual_column="manual_tent_count",
+        model_column="model_tent_count",
     )
