@@ -65,6 +65,41 @@ poetry export -f requirements.txt --output requirements.txt --without-hashes
 on a regular basis.
 
 
+## Interactive Pipelines (recommended)
+
+The individual stages below can also be run end-to-end through the pipeline runner, which handles config resolution and artifact layout for you. Every pipeline run creates a self-contained directory with fixed subfolder names:
+
+```
+<run root>/<pipeline>/<run name>/
+    config.yaml     # fully resolved config used by all stages
+    logs/           # one log file per stage
+    manifests/ preds/ merged/    # prediction pipeline
+    manifests/ dataset/ model/   # training pipeline
+```
+
+The run root defaults to `${DATA_DIR}/results/TentNetFA/pipeline_runs`; the run name defaults to a timestamp.
+
+### Browser UI
+
+```bash
+poetry install --with ui   # installs streamlit
+poetry run pipeline-ui
+```
+
+This opens a browser session where you pick the pipeline (training or prediction), override any parameter from `config.yaml` / `predict_config.yaml` in a form (plus a free-form YAML box for anything not exposed), toggle individual stages, and watch live logs while the run executes.
+
+### Headless CLI
+
+The same orchestration is scriptable without a browser:
+
+```bash
+poetry run pipeline-run predict --set prediction.batch_size=16 --name 2026-02-rerun
+poetry run pipeline-run train --skip download --set training.epochs=500
+poetry run pipeline-run predict --dry-run   # print the plan without executing
+```
+
+`--set` takes dotted config paths (`section.key=value`, YAML-parsed); `--only`/`--skip` select stages. Pipeline definitions (stages, exposed parameters, artifact layout) live in `displacement_tracker/pipelines/spec.py`.
+
 ## Workflow and CLI Usage
 
 The core workflow is managed through a series of command-line scripts. Most scripts require a `config.yaml` file to specify paths and parameters.
