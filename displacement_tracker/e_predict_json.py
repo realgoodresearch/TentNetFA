@@ -20,6 +20,7 @@ from displacement_tracker.util.env_loader import load_yaml_with_env
 from displacement_tracker.util.logging_config import setup_logging
 from displacement_tracker.util.distance import interpolate_centroid
 from displacement_tracker.util.deduplication import merge_close_points_global
+from displacement_tracker.util.thresholding import passes_threshold
 from displacement_tracker.util.tiff_predictions import (
     save_prediction_tiff,
     merge_prediction_tiffs,
@@ -33,7 +34,7 @@ NMS_SIGMA_FRACTION = 0.75
 
 def extract_tile_centroids(probs_np, bounds, threshold, min_area, crop_pixels=0):
     """Threshold a tile prediction map and return interpolated region centroids."""
-    mask = probs_np > threshold
+    mask = passes_threshold(probs_np, threshold)
     labeled, num_features = label(mask)
 
     coords = []
@@ -77,7 +78,7 @@ def extract_tile_nms(probs_np, bounds, threshold, factor=1.0, min_area=5, sigma=
         stride=1,
         padding=min_area // 2,
     )
-    local_max_mask = (score_t == max_pooled) & (score_t > threshold)
+    local_max_mask = (score_t == max_pooled) & passes_threshold(score_t, threshold)
 
     rows, cols = torch.where(local_max_mask[0, 0])
     shape = probs_np.shape

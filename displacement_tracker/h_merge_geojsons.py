@@ -19,6 +19,7 @@ import yaml
 
 from displacement_tracker.util.deduplication import merge_close_points_global
 from displacement_tracker.util.logging_config import setup_logging
+from displacement_tracker.util.thresholding import filter_points_by_adjusted_peak
 
 LOGGER = setup_logging("merge_geojsons")
 
@@ -244,19 +245,12 @@ def cli(
     for path in geojson_files:
         pts = load_points_from_geojson(path)
         threshold = resolve_threshold(path.name, thresholds_data, min_adj_peak)
-        if threshold > 0.0:
-            filtered = []
-            for p in pts:
-                p[3] = (p[3] - p[2]) * adjustment_factor + p[2]  # Adjusted peak after scaling
-                if p[3] >= threshold:
-                    filtered.append(p)
-            LOGGER.info(
-                "  %s: %d points loaded, %d kept (adj_peak >= %.4f)",
-                path.name, len(pts), len(filtered), threshold,
-            )
-            pts = filtered
-        else:
-            LOGGER.info("  %s: %d points", path.name, len(pts))
+        loaded = len(pts)
+        pts = filter_points_by_adjusted_peak(pts, threshold, adjustment_factor)
+        LOGGER.info(
+            "  %s: %d points loaded, %d kept (adj_peak >= %.4f)",
+            path.name, loaded, len(pts), threshold,
+        )
 
         if exclusion_geom is not None:
             before_exclusion = len(pts)
