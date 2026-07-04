@@ -185,18 +185,29 @@ _MERMAID_TEMPLATE = """
     if (ch) dark = 0.299 * ch[0] + 0.587 * ch[1] + 0.114 * ch[2] < 128;
   } catch (err) { /* keep the media-query guess */ }
   const fit = () => {
-    if (window.frameElement) {
-      window.frameElement.style.height =
-        document.documentElement.scrollHeight + 8 + "px";
-    }
+    const h = document.documentElement.scrollHeight;
+    if (!window.frameElement || h <= 16) return;
+    window.frameElement.style.height = (h + 8) + "px";
+    // streamlit's element container keeps the declared component height
+    // via an emotion class; without this the next elements overlap us
+    const holder = window.frameElement.closest(
+      'div[data-testid="stElementContainer"]');
+    if (holder) holder.style.height = "auto";
   };
   try {
     const { default: mermaid } = await import(
       "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs");
+    // The Help tab may still be inactive when this iframe loads; rendering
+    // while hidden makes mermaid measure zero-sized text and garble the
+    // layout, so wait until the frame actually has a width.
+    while (document.documentElement.clientWidth === 0) {
+      await new Promise((done) => setTimeout(done, 200));
+    }
     mermaid.initialize({ startOnLoad: false, theme: dark ? "dark" : "neutral" });
     await mermaid.run();
+    new ResizeObserver(fit).observe(document.documentElement);
   } catch (err) { /* offline: leave the raw mermaid source visible */ }
-  fit(); setTimeout(fit, 300); setTimeout(fit, 1200);
+  fit(); setTimeout(fit, 300);
 </script>
 </body>
 """
