@@ -64,7 +64,7 @@ def extract_tile_centroids(probs_np, bounds, threshold, min_area, crop_pixels=0)
     return coords
 
 
-def extract_tile_nms(probs_np, bounds, threshold, factor=1.0, min_area=5, sigma=50.0, crop_pixels=0):
+def extract_tile_nms(probs_np, bounds, threshold, factor=1.0, kernel_size=7, sigma=50.0, crop_pixels=0):
     """Return interpolated local maxima (lat, lon, peak_value) above threshold."""
     probs_t = torch.as_tensor(probs_np, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
     blurred_np = gaussian_filter(probs_np, sigma=sigma)
@@ -72,9 +72,9 @@ def extract_tile_nms(probs_np, bounds, threshold, factor=1.0, min_area=5, sigma=
     score_t = probs_t + blurred_t * factor
 
     # Pad manually so the pooled map always matches score_t's shape: max_pool2d's
-    # built-in symmetric padding of min_area // 2 only preserves the shape for odd
-    # kernel sizes, producing an off-by-one dimensionality mismatch for even ones.
-    kernel_size = int(min_area)
+    # built-in symmetric padding of kernel_size // 2 only preserves the shape for
+    # odd kernel sizes, producing an off-by-one dimensionality mismatch for even ones.
+    kernel_size = int(kernel_size)
     pad_before = (kernel_size - 1) // 2
     pad_after = kernel_size - 1 - pad_before
     padded_score_t = torch.nn.functional.pad(
@@ -132,15 +132,17 @@ def predict(
     Streaming: write per-tile centroids to a tmp NDJSON to avoid accumulating Python objects.
     """
     threshold = selection_cfg.get("threshold", 0.5)
-    min_area = selection_cfg.get("min_area", 20)
+    min_area = selection_cfg.get("min_area", 20)  # centroid method only
+    nms_kernel_size = selection_cfg.get("nms_kernel_size", 7)  # nms method only
     crop_pixels = selection_cfg.get("crop_pixels", 0)
     nms_sigma = selection_cfg.get("nms_sigma", 50.0)
     agreement = selection_cfg.get("agreement", False)
     min_distance_m = selection_cfg.get("min_distance_m", 2.0)
     factor = selection_cfg.get("factor", 0.0)
     LOGGER.info(f"🔹 Prediction selection parameters: method={selection_cfg.get('method', 'centroid')}, "
-        f"threshold={threshold}, min_area={min_area}, crop_pixels={crop_pixels}, "
-        f"nms_sigma={nms_sigma}, agreement={agreement}, min_distance_m={min_distance_m}, factor={factor}"
+        f"threshold={threshold}, min_area={min_area}, nms_kernel_size={nms_kernel_size}, "
+        f"crop_pixels={crop_pixels}, nms_sigma={nms_sigma}, agreement={agreement}, "
+        f"min_distance_m={min_distance_m}, factor={factor}"
     )
     method = str(selection_cfg.get("method", "centroid")).strip().lower()
     batch_size = max(1, int(batch_size))
@@ -252,7 +254,7 @@ def predict(
 
                             if method == "nms":
                                 coords = extract_tile_nms(
-                                    probs_np, bounds, threshold, factor=factor, min_area=min_area, sigma=nms_sigma, crop_pixels=crop_pixels
+                                    probs_np, bounds, threshold, factor=factor, kernel_size=nms_kernel_size, sigma=nms_sigma, crop_pixels=crop_pixels
                                 )
                             else:
                                 coords = extract_tile_centroids(
