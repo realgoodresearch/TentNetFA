@@ -16,7 +16,12 @@ def main() -> None:
         )
 
     app_path = Path(__file__).with_name("app.py")
-    sys.argv = ["streamlit", "run", str(app_path), *sys.argv[1:]]
+    extra = sys.argv[1:]
+    # Hide streamlit's deploy button and developer menu unless the caller
+    # explicitly asks for a different toolbar mode.
+    if not any("client.toolbarMode" in arg for arg in extra):
+        extra = ["--client.toolbarMode", "viewer", *extra]
+    sys.argv = ["streamlit", "run", str(app_path), *extra]
     sys.exit(stcli.main())
 
 

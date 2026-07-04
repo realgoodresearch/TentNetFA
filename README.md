@@ -88,6 +88,8 @@ poetry run pipeline-ui
 
 This starts a local web server and opens a browser session where you pick the pipeline (training or prediction), override any parameter from `config.yaml` / `predict_config.yaml` in a form (plus a free-form YAML box for anything not exposed), toggle individual stages, and watch live logs while the run executes.
 
+A run is tied to its browser session: switching pipeline, refreshing or closing the page cancels the running stage and terminates all of its child processes. Completed artifacts and per-stage logs remain in the run directory, so you can resume by re-running with only the remaining stages enabled. For long unattended runs prefer the headless CLI below inside tmux/screen.
+
 Extra arguments are passed through to `streamlit run` (e.g. `--server.port 8501`).
 
 #### Running on a remote machine (SSH tunnel)

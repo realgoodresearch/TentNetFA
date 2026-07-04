@@ -106,6 +106,13 @@ def main() -> None:
         )
         raw_yaml = st.text_area("YAML", value="", height=160, label_visibility="collapsed")
 
+    st.caption(
+        ":warning: Keep this tab open while a run is in progress — switching "
+        "pipeline, changing inputs, refreshing or closing the page cancels the "
+        "running stage and terminates its processes. Completed artifacts and "
+        "logs stay in the run directory; re-run with only the remaining stages "
+        "enabled to resume. For long unattended runs use `pipeline-run` in tmux."
+    )
     if not st.button("Run pipeline", type="primary", disabled=not enabled_stages):
         return
 

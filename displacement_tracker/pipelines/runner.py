@@ -19,6 +19,7 @@ from __future__ import annotations
 import copy
 import datetime
 import os
+import signal
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -170,27 +171,52 @@ def stage_argv(ctx: RunContext, stage: Stage) -> list[str]:
     return ARGV_BUILDERS.get(stage.key, _default_argv)(ctx, stage)
 
 
+def _terminate_group(proc: subprocess.Popen) -> None:
+    """SIGTERM the stage's process group, escalating to SIGKILL."""
+    try:
+        pgid = os.getpgid(proc.pid)
+    except ProcessLookupError:
+        return
+    os.killpg(pgid, signal.SIGTERM)
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        os.killpg(pgid, signal.SIGKILL)
+        proc.wait()
+
+
 def iter_stage_output(ctx: RunContext, stage: Stage) -> Iterator[str]:
     """Run a stage, yielding output lines and teeing them to the stage log.
 
-    Raises StageFailedError on a non-zero exit code.
+    Raises StageFailedError on a non-zero exit code. If the consumer stops
+    iterating early (e.g. the driving UI session is rerun, refreshed or
+    closed), the stage's whole process group — including any worker
+    children it spawned — is terminated so no orphaned jobs keep running.
     """
     argv = stage_argv(ctx, stage)
     log_path = ctx.log_path(stage)
     with open(log_path, "w") as log:
         log.write(f"$ {' '.join(argv)}\n")
+        # New session = new process group, so cancellation can take down
+        # dataloader workers / multiprocessing pools along with the stage.
         proc = subprocess.Popen(
             argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            start_new_session=True,
         )
         assert proc.stdout is not None
-        for line in proc.stdout:
-            log.write(line)
-            log.flush()
-            yield line
-        returncode = proc.wait()
+        try:
+            for line in proc.stdout:
+                log.write(line)
+                log.flush()
+                yield line
+            returncode = proc.wait()
+        finally:
+            if proc.poll() is None:
+                _terminate_group(proc)
+                log.write("\n[pipeline] stage cancelled: session interrupted\n")
     if returncode != 0:
         raise StageFailedError(stage, returncode, log_path)
