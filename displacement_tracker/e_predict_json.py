@@ -71,11 +71,21 @@ def extract_tile_nms(probs_np, bounds, threshold, factor=1.0, min_area=5, sigma=
     blurred_t = torch.as_tensor(blurred_np, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
     score_t = probs_t + blurred_t * factor
 
-    max_pooled = torch.nn.functional.max_pool2d(
+    # Pad manually so the pooled map always matches score_t's shape: max_pool2d's
+    # built-in symmetric padding of min_area // 2 only preserves the shape for odd
+    # kernel sizes, producing an off-by-one dimensionality mismatch for even ones.
+    kernel_size = int(min_area)
+    pad_before = (kernel_size - 1) // 2
+    pad_after = kernel_size - 1 - pad_before
+    padded_score_t = torch.nn.functional.pad(
         score_t,
-        kernel_size=min_area,
+        (pad_before, pad_after, pad_before, pad_after),
+        value=float("-inf"),
+    )
+    max_pooled = torch.nn.functional.max_pool2d(
+        padded_score_t,
+        kernel_size=kernel_size,
         stride=1,
-        padding=min_area // 2,
     )
     local_max_mask = (score_t == max_pooled) & (score_t > threshold)
 
