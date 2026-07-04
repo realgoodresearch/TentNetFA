@@ -79,6 +79,8 @@ The individual stages below can also be run end-to-end through the pipeline runn
 
 The run root defaults to `${DATA_DIR}/results/TentNetFA/pipeline_runs`; the run name defaults to a timestamp.
 
+Both pipelines include an optional (default-off) download stage that fetches newly arrived GeoTIFFs from Google Drive into `geotiff_dir` before scanning, using the `loading.files` entries as search strings (requires `GOOGLE_API_KEY` and `GDRIVE_ID` in `.env`).
+
 ### Browser UI
 
 ```bash

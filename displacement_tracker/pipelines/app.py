@@ -30,6 +30,13 @@ def _widget(param: Param, default, key: str):
             param.label, value=float(default if default is not None else 0.0),
             format="%g", key=key, help=param.help or None,
         )
+    if param.type == "list":
+        text = st.text_area(
+            param.label, value="\n".join(default or []),
+            key=key, help=param.help or None,
+        )
+        entries = [line.strip() for line in text.splitlines() if line.strip()]
+        return entries or None
     # str / path
     value = st.text_input(
         param.label, value="" if default is None else str(default),

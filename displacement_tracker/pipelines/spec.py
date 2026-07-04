@@ -72,12 +72,23 @@ PREDICT = Pipeline(
     label="Prediction pipeline",
     base_config="predict_config.yaml",
     stages=(
+        Stage(
+            "download", "Download GeoTIFFs from Drive", "displacement_tracker.a_tif_loader",
+            default_enabled=False,
+        ),
         Stage("scan", "Scan imagery & build manifests", "displacement_tracker.b2_image_scanner"),
         Stage("predict", "Run model inference", "displacement_tracker.e_predict_json"),
         Stage("merge", "Merge & deduplicate predictions", "displacement_tracker.h_merge_geojsons"),
     ),
     params=(
         Param("geotiff_dir", "GeoTIFF directory", "path", "Inputs"),
+        Param(
+            "loading.files", "GeoTIFF files / search strings", "list", "Inputs",
+            optional=True,
+            help="One entry per line. Used as Drive search strings by the "
+                 "download stage and as filename filters when scanning; "
+                 "leave empty to scan every .tif in the GeoTIFF directory.",
+        ),
         Param("boundaries", "Municipal boundaries (.shp)", "path", "Inputs"),
         Param("prewar_gaza", "Pre-war reference raster", "path", "Inputs"),
         Param("prediction.model", "Model checkpoint (.pth)", "path", "Inputs"),
@@ -144,6 +155,13 @@ TRAIN = Pipeline(
     ),
     params=(
         Param("geotiff_dir", "GeoTIFF directory", "path", "Inputs"),
+        Param(
+            "loading.files", "GeoTIFF files / search strings", "list", "Inputs",
+            optional=True,
+            help="One entry per line. Used as Drive search strings by the "
+                 "download stage and as filename filters when scanning; "
+                 "leave empty to scan every .tif in the GeoTIFF directory.",
+        ),
         Param("geojson", "Tent annotations (.geojson)", "path", "Inputs"),
         Param("boundaries", "Municipal boundaries (.shp)", "path", "Inputs"),
         Param("prewar_gaza", "Pre-war reference raster", "path", "Inputs"),
