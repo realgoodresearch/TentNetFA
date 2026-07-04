@@ -110,6 +110,14 @@ poetry run pipeline-ui --remote
 
 `--remote` is shorthand for `--server.headless true --server.address localhost`: no browser is opened on the remote, and the UI is reachable only through the tunnel — recommended, since the UI has no authentication and can launch jobs and write to `DATA_DIR`. Individual flags can still be overridden (e.g. `--remote --server.port 8600`), and whenever an SSH session is detected the tunnel command is printed even without `--remote`. On a trusted LAN you can drop `--remote` and use the "Network URL" streamlit prints instead of a tunnel, but never expose the port to untrusted networks.
 
+After pulling new code (or when a port is stuck), stop any stale backends before restarting:
+
+```bash
+poetry run pipeline-ui-stop            # add --dry-run to only list them
+```
+
+This gracefully terminates every running `pipeline-ui` server including the pipeline stages it spawned, plus stage processes orphaned by an earlier hard kill. Deliberate headless `pipeline-run` sessions are left untouched.
+
 ### Headless CLI
 
 The same orchestration is scriptable without a browser:

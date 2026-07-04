@@ -234,7 +234,11 @@ def _widget(param: Param, default, key: str):
 
 
 def main() -> None:
-    st.set_page_config(page_title="TentNetFA", layout="wide")
+    st.set_page_config(
+        page_title="TentNetFA",
+        page_icon=str(Path(__file__).parent / "assets" / "icon.png"),
+        layout="wide",
+    )
     st.title("TentNetFA")
 
     with st.sidebar:

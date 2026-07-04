@@ -59,6 +59,7 @@ merge-geojsons = "displacement_tracker.h_merge_geojsons:cli"
 zonal-point-sums = "displacement_tracker.i_zonal_point_sums:cli"
 train-embedding = "displacement_tracker.util.train_embedding:cli"
 pipeline-ui = "displacement_tracker.pipelines.launch:main"
+pipeline-ui-stop = "displacement_tracker.pipelines.stop:cli"
 pipeline-run = "displacement_tracker.pipelines.cli:cli"
 
 [build-system]
