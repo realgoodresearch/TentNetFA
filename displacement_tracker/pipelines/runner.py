@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import copy
 import datetime
+import io
 import os
 import signal
 import subprocess
@@ -186,7 +187,13 @@ def _terminate_group(proc: subprocess.Popen) -> None:
 
 
 def iter_stage_output(ctx: RunContext, stage: Stage) -> Iterator[str]:
-    """Run a stage, yielding output lines and teeing them to the stage log.
+    """Run a stage, yielding output segments and teeing them to the stage log.
+
+    Segments keep their terminator: ``\\n`` means "append a line" while a
+    bare ``\\r`` means "overwrite the current line" — the convention used
+    by tqdm progress bars and ``print(..., end="\\r")``. Terminals handle
+    this natively (the CLI just writes segments through); the streamlit
+    frontend replays it onto its line buffer.
 
     Raises StageFailedError on a non-zero exit code. If the consumer stops
     iterating early (e.g. the driving UI session is rerun, refreshed or
@@ -195,7 +202,12 @@ def iter_stage_output(ctx: RunContext, stage: Stage) -> Iterator[str]:
     """
     argv = stage_argv(ctx, stage)
     log_path = ctx.log_path(stage)
-    with open(log_path, "w") as log:
+    env = dict(os.environ)
+    # Live logs: don't let child Python block-buffer stdout, and cap tqdm's
+    # refresh rate (callers that set their own values win).
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    env.setdefault("TQDM_MININTERVAL", "1")
+    with open(log_path, "w", newline="") as log:
         log.write(f"$ {' '.join(argv)}\n")
         # New session = new process group, so cancellation can take down
         # dataloader workers / multiprocessing pools along with the stage.
@@ -203,16 +215,19 @@ def iter_stage_output(ctx: RunContext, stage: Stage) -> Iterator[str]:
             argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
+            bufsize=0,
             start_new_session=True,
+            env=env,
         )
         assert proc.stdout is not None
+        # newline="" keeps \r visible (text mode would fold it into \n,
+        # turning every progress-bar refresh into a new line).
+        stdout = io.TextIOWrapper(proc.stdout, errors="replace", newline="")
         try:
-            for line in proc.stdout:
-                log.write(line)
+            for segment in iter(stdout.readline, ""):
+                log.write(segment)
                 log.flush()
-                yield line
+                yield segment
             returncode = proc.wait()
         finally:
             if proc.poll() is None:

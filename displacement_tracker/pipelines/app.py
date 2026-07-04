@@ -7,6 +7,7 @@ exposed there can still be overridden via the advanced YAML box.
 
 from __future__ import annotations
 
+import time
 from collections import deque
 
 import streamlit as st
@@ -155,12 +156,27 @@ def main() -> None:
     for stage in enabled_stages:
         with st.status(stage.label, expanded=True) as status:
             box = st.empty()
+            # Mini terminal emulation: segments ending in \n append a line,
+            # segments ending in a bare \r overwrite the last one — so tqdm
+            # bars update in place instead of flooding the tail.
             tail: deque[str] = deque(maxlen=30)
+            overwrite = False
+            last_render = 0.0
             try:
-                for line in runner.iter_stage_output(ctx, stage):
-                    tail.append(line)
-                    box.code("".join(tail))
+                for segment in runner.iter_stage_output(ctx, stage):
+                    text = segment.rstrip("\r\n")
+                    if overwrite and tail:
+                        tail[-1] = text
+                    else:
+                        tail.append(text)
+                    overwrite = segment.endswith("\r") and not segment.endswith("\r\n")
+                    now = time.monotonic()
+                    if now - last_render > 0.2:
+                        box.code("\n".join(tail))
+                        last_render = now
+                box.code("\n".join(tail))
             except runner.StageFailedError as exc:
+                box.code("\n".join(tail))
                 status.update(state="error", expanded=True)
                 st.error(f"{exc} — full log at `{exc.log_path}`")
                 return
