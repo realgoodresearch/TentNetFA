@@ -15,7 +15,6 @@ import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
 from shapely.geometry import Point, Polygon
-from shapely.affinity import translate
 from pyproj import CRS
 
 # -----------------------

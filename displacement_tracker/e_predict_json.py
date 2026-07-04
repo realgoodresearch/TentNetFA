@@ -11,7 +11,6 @@ import os
 import psutil
 import tempfile
 from tqdm.auto import tqdm
-import numpy as np
 # import matplotlib.pyplot as plt
 
 from displacement_tracker.paired_image_dataset import PairedImageDataset
@@ -21,7 +20,6 @@ from displacement_tracker.util.logging_config import setup_logging
 from displacement_tracker.util.distance import interpolate_centroid
 from displacement_tracker.util.deduplication import merge_close_points_global
 from displacement_tracker.util.tiff_predictions import (
-    save_prediction_tiff,
     merge_prediction_tiffs,
 )
 

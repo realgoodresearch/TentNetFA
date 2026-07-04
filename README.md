@@ -81,6 +81,74 @@ The run root defaults to `${DATA_DIR}/results/TentNetFA/pipeline_runs`; the run 
 
 Both pipelines include an optional (default-off) download stage that fetches newly arrived GeoTIFFs from Google Drive into `geotiff_dir` before scanning, using the `loading.files` entries as search strings (requires `GOOGLE_API_KEY` and `GDRIVE_ID` in `.env`).
 
+### Pipeline stages
+
+Training pipeline (`config.yaml`):
+
+```
+   Google Drive                    tent annotations           pre-war raster
+        │                            (geojson)                (prewar_gaza)
+        ▼                                │                         │
+  ┌─[download]─┐   GeoTIFFs             │                         │
+  │ a_tif_loader├──▶ geotiff_dir ────────┼─────────────────────────┤
+  └─(optional)──┘        │               ▼                         ▼
+                         └────▶ ┌─────[scan]──────────────────────────┐
+                                │ b1_annotated_scanner                │
+                                │ tiles imagery inside `boundaries`,  │
+                                │ pairs it with pre-war tiles and     │
+                                │ rasterised tent-label masks         │
+                                └──────────────┬──────────────────────┘
+                                               ▼  manifests/*.parquet
+                                ┌─────[rebalance]─────────────────────┐
+                                │ c_resample_manifest                 │
+                                │ merges manifests, downsamples       │
+                                │ empty tiles (null_keep_fraction)    │
+                                └──────────────┬──────────────────────┘
+                                               ▼  dataset/balanced.parquet
+                                ┌─────[train]─────────────────────────┐
+                                │ d_train_cnn                         │
+                                │ trains SimpleCNN on (image, prewar, │
+                                │ diff) stacks vs. label density maps │
+                                └──────────────┬──────────────────────┘
+                                               ▼
+                                  model/<timestamp>/best_model.pth
+```
+
+Prediction pipeline (`predict_config.yaml`):
+
+```
+   Google Drive                                          trained checkpoint
+        │                                                (prediction.model)
+        ▼                                                        │
+  ┌─[download]─┐   GeoTIFFs                                      │
+  │ a_tif_loader├──▶ geotiff_dir                                 │
+  └─(optional)──┘        │                                       │
+                         ▼                                       │
+              ┌─────[scan]──────────────────────────┐            │
+              │ b2_image_scanner                    │            │
+              │ tiles new imagery inside            │            │
+              │ `boundaries` (no labels needed)     │            │
+              └──────────────┬──────────────────────┘            │
+                             ▼  manifests/*.parquet              │
+              ┌─────[predict]───────────────────────┐            │
+              │ e_predict_json                      │◀───────────┘
+              │ runs inference per tile, extracts   │
+              │ tent points (NMS / centroids) above │
+              │ `selection` thresholds              │
+              └──────────────┬──────────────────────┘
+                             ▼  preds/*.geojson  (overlapping tiles!)
+              ┌─────[merge]─────────────────────────┐
+              │ h_merge_geojsons                    │
+              │ filters by adjusted peak, drops     │
+              │ excluded zones, merges points       │
+              │ within `merge.min_distance_m`       │
+              └──────────────┬──────────────────────┘
+                             ▼
+                    merged/merged.gpkg
+```
+
+The same diagrams, together with a full reference of every config key, are available in the UI's **Help** tab (sourced from [`displacement_tracker/pipelines/help.md`](displacement_tracker/pipelines/help.md)).
+
 ### Browser UI
 
 ```bash

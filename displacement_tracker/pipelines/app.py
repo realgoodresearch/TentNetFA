@@ -293,7 +293,10 @@ def main() -> None:
             runner.deep_merge(merged, base_config[section])
         base_config[section] = merged
 
-    config_tab, logs_tab = st.tabs(["Configuration", "Run logs"])
+    config_tab, logs_tab, help_tab = st.tabs(["Configuration", "Run logs", "Help"])
+
+    with help_tab:
+        st.markdown((Path(__file__).parent / "help.md").read_text(encoding="utf-8"))
 
     with config_tab:
         st.caption(
