@@ -220,7 +220,7 @@ Recommended selection parameters:
 selection:
   threshold: 0.0001
   factor: 1.0
-  min_area: 7
+  nms_kernel_size: 7
   min_distance_m: 3.0
 ```
 
