@@ -85,9 +85,10 @@ PREDICT = Pipeline(
         Param(
             "loading.files", "GeoTIFF files / search strings", "list", "Inputs",
             optional=True,
-            help="One entry per line. Used as Drive search strings by the "
-                 "download stage and as filename filters when scanning; "
-                 "leave empty to scan every .tif in the GeoTIFF directory.",
+            help="One entry per line. Download stage: entries are Drive search "
+                 "strings — if empty, the stage downloads nothing. Scan stage: "
+                 "entries are filename filters — if empty, ALL .tif files in "
+                 "the GeoTIFF directory are scanned.",
         ),
         Param("boundaries", "Municipal boundaries (.shp)", "path", "Inputs"),
         Param("prewar_gaza", "Pre-war reference raster", "path", "Inputs"),
@@ -158,9 +159,10 @@ TRAIN = Pipeline(
         Param(
             "loading.files", "GeoTIFF files / search strings", "list", "Inputs",
             optional=True,
-            help="One entry per line. Used as Drive search strings by the "
-                 "download stage and as filename filters when scanning; "
-                 "leave empty to scan every .tif in the GeoTIFF directory.",
+            help="One entry per line. Download stage: entries are Drive search "
+                 "strings — if empty, the stage downloads nothing. Scan stage: "
+                 "entries are filename filters — if empty, ALL .tif files in "
+                 "the GeoTIFF directory are scanned.",
         ),
         Param("geojson", "Tent annotations (.geojson)", "path", "Inputs"),
         Param("boundaries", "Municipal boundaries (.shp)", "path", "Inputs"),

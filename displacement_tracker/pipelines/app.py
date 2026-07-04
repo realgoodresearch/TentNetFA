@@ -34,6 +34,8 @@ def _widget(param: Param, default, key: str):
         text = st.text_area(
             param.label, value="\n".join(default or []),
             key=key, help=param.help or None,
+            placeholder="Empty: scan stage processes ALL .tif files in the "
+            "GeoTIFF directory; download stage downloads nothing.",
         )
         entries = [line.strip() for line in text.splitlines() if line.strip()]
         return entries or None
