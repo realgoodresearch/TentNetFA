@@ -193,27 +193,21 @@ def predict(
             unit="batch",
             leave=True,
             dynamic_ncols=True,
-            position=0,
         )
-        status_bar = tqdm(
-            total=0,
-            bar_format="{desc}",
-            leave=False,
-            dynamic_ncols=True,
-            position=1,
-        )
+        # Postfix state shown on the bar; updated with refresh=False so it
+        # rides tqdm's mininterval-throttled redraws instead of forcing a
+        # refresh (and a new log line when piped) on every batch.
+        postfix: dict[str, str] = {}
         try:
             with torch.no_grad():
                 for i, entry in enumerate(progress_bar):
                     if i % 200 == 0:
                         mem_gb = process.memory_info().rss / (1024**3)
+                        postfix["rss_gb"] = f"{mem_gb:.2f}"
                         if device.type == "cuda":
-                            progress_bar.set_postfix(
-                                rss_gb=f"{mem_gb:.2f}",
-                                cuda_gb=f"{torch.cuda.memory_allocated(device)/(1024**3):.2f}",
+                            postfix["cuda_gb"] = (
+                                f"{torch.cuda.memory_allocated(device)/(1024**3):.2f}"
                             )
-                        else:
-                            progress_bar.set_postfix(rss_gb=f"{mem_gb:.2f}")
 
                     try:
                         feature = entry["feature"]
@@ -263,10 +257,9 @@ def predict(
                         # raise Exception("Intentional error to show figures")
                         total_predicted_tents += batch_points
                         max_tile_tents = max(max_tile_tents, batch_max_tile_tents)
-                        status_bar.set_description_str(
-                            "current tent predictions: "
-                            f"{total_predicted_tents} | max tents in tile: {max_tile_tents}"
-                        )
+                        postfix["tents"] = str(total_predicted_tents)
+                        postfix["max_tile"] = str(max_tile_tents)
+                        progress_bar.set_postfix(postfix, refresh=False)
 
                     except Exception:
                         LOGGER.exception("Prediction error during batch processing")
@@ -276,7 +269,6 @@ def predict(
                         tmp_f.flush()
                         gc.collect()
         finally:
-            status_bar.close()
             progress_bar.close()
 
         # ensure final flush

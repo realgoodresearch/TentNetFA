@@ -16,14 +16,13 @@ from collections import deque
 from pathlib import Path
 
 import streamlit as st
-import streamlit.components.v1 as components
 import yaml
 
 from displacement_tracker.pipelines import runner
 from displacement_tracker.pipelines.spec import PIPELINES, Param
 from displacement_tracker.util.env_loader import load_yaml_with_env
 
-# The load bar is a components.html iframe rather than st.markdown: the
+# The load bar is an st.iframe (srcdoc) rather than st.markdown: the
 # same-origin script pins the frame to the viewport bottom, aligns its left
 # edge with the sidebar (observing collapse/resize), and drives the chevron
 # collapse toggle, persisting that state in localStorage across re-renders.
@@ -178,7 +177,7 @@ def _render_load_bar(
         .replace("__MEM_W__", width(mem_pct))
     )
     with box:
-        components.html(html, height=70)
+        st.iframe(html, height=70)
 
 
 def _update_load_bar(box, monitor, stage_label: str) -> None:
