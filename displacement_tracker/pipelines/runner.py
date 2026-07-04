@@ -112,6 +112,8 @@ class StageLoadMonitor:
         self._psutil = psutil
         self._root_pid = proc.pid
         self._procs: dict[int, "psutil.Process"] = {}
+        self.cpu_count: int = psutil.cpu_count() or 1
+        self.total_memory: int = psutil.virtual_memory().total
         self.sample()  # prime the cpu_percent counters
 
     def sample(self) -> tuple[float, int]:
