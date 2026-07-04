@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 from collections import deque
+from pathlib import Path
 
 import streamlit as st
 import yaml
@@ -65,6 +66,12 @@ def main() -> None:
         run_name = st.text_input(
             "Run name", value="", placeholder="empty = timestamp",
             help="Artifacts land in <run root>/<pipeline>/<run name>/.",
+        )
+        st.caption("Artifacts will be written to:")
+        st.code(
+            str(Path(run_root) / pipeline.key / (run_name.strip() or "<timestamp>")),
+            language=None,
+            wrap_lines=True,
         )
 
         st.subheader("Stages")
