@@ -86,7 +86,26 @@ poetry install --with ui   # installs streamlit
 poetry run pipeline-ui
 ```
 
-This opens a browser session where you pick the pipeline (training or prediction), override any parameter from `config.yaml` / `predict_config.yaml` in a form (plus a free-form YAML box for anything not exposed), toggle individual stages, and watch live logs while the run executes.
+This starts a local web server and opens a browser session where you pick the pipeline (training or prediction), override any parameter from `config.yaml` / `predict_config.yaml` in a form (plus a free-form YAML box for anything not exposed), toggle individual stages, and watch live logs while the run executes.
+
+Extra arguments are passed through to `streamlit run` (e.g. `--server.port 8501`).
+
+#### Running on a remote machine (SSH tunnel)
+
+Pipelines will typically run on a remote GPU machine. The UI is just a web server on that machine, so start it there and forward the port to your local browser:
+
+```bash
+# on the remote, inside the repo (tmux/screen recommended: the pipeline
+# stages are children of the UI process and die with your SSH session)
+poetry run pipeline-ui --server.headless true --server.port 8501 --server.address localhost
+
+# on your local machine
+ssh -L 8501:localhost:8501 user@remote
+
+# then open http://localhost:8501 locally
+```
+
+`--server.headless true` prevents streamlit from trying to open a browser on the remote. `--server.address localhost` makes the UI reachable only through the tunnel — recommended, since the UI has no authentication and can launch jobs and write to `DATA_DIR`. On a trusted LAN you can omit it and use the "Network URL" streamlit prints instead of a tunnel, but never expose the port to untrusted networks.
 
 ### Headless CLI
 
