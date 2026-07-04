@@ -101,15 +101,14 @@ Pipelines will typically run on a remote GPU machine. The UI is just a web serve
 ```bash
 # on the remote, inside the repo (tmux/screen recommended: the pipeline
 # stages are children of the UI process and die with your SSH session)
-poetry run pipeline-ui --server.headless true --server.port 8501 --server.address localhost
+poetry run pipeline-ui --remote
 
-# on your local machine
-ssh -L 8501:localhost:8501 user@remote
-
+# it prints the matching tunnel command to run on your local machine, e.g.
+#     ssh -L 8501:localhost:8501 user@remote
 # then open http://localhost:8501 locally
 ```
 
-`--server.headless true` prevents streamlit from trying to open a browser on the remote. `--server.address localhost` makes the UI reachable only through the tunnel — recommended, since the UI has no authentication and can launch jobs and write to `DATA_DIR`. On a trusted LAN you can omit it and use the "Network URL" streamlit prints instead of a tunnel, but never expose the port to untrusted networks.
+`--remote` is shorthand for `--server.headless true --server.address localhost`: no browser is opened on the remote, and the UI is reachable only through the tunnel — recommended, since the UI has no authentication and can launch jobs and write to `DATA_DIR`. Individual flags can still be overridden (e.g. `--remote --server.port 8600`), and whenever an SSH session is detected the tunnel command is printed even without `--remote`. On a trusted LAN you can drop `--remote` and use the "Network URL" streamlit prints instead of a tunnel, but never expose the port to untrusted networks.
 
 ### Headless CLI
 
