@@ -111,14 +111,16 @@ Prediction pipeline (`predict_config.yaml`):
 flowchart TB
     drive[("Google Drive")]
     tifs["GeoTIFFs<br/>(geotiff_dir)"]
+    prewar["Pre-war raster<br/>(prewar_gaza)"]
     ckpt["Trained checkpoint<br/>(prediction.model)"]
-    scan["<b>scan</b> — b2_image_scanner<br/>tiles new imagery inside boundaries<br/>(no labels needed)"]
+    scan["<b>scan</b> — b2_image_scanner<br/>tiles new imagery inside boundaries,<br/>pairs it with pre-war tiles (no labels needed)"]
     predict["<b>predict</b> — e_predict_json<br/>runs inference per tile, extracts tent points<br/>(NMS / centroids) above selection thresholds"]
     merge["<b>merge</b> — h_merge_geojsons<br/>filters by adjusted peak, drops excluded zones,<br/>merges points within merge.min_distance_m"]
     out(["merged/merged.gpkg"])
 
     drive -. "download (optional)<br/>a_tif_loader" .-> tifs
     tifs --> scan
+    prewar --> scan
     scan -- "manifests/*.parquet" --> predict
     ckpt --> predict
     predict -- "preds/*.geojson<br/>(overlapping tiles!)" --> merge
