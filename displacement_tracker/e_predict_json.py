@@ -152,6 +152,13 @@ def predict(
             "selection.method must be one of: 'centroid', 'nms'"
         )
 
+    if method == "nms" and "min_area" in selection_cfg:
+        raise click.ClickException(
+            "selection.min_area has been migrated to selection.nms_kernel_size for the "
+            "'nms' method (default 7); rename the key in your config. selection.min_area "
+            "now only applies to the 'centroid' method."
+        )
+
     if sample_cfg and sample_cfg.get("enable", True):
         total = len(dataset)
         size = min(sample_cfg.get("size", total), total)
