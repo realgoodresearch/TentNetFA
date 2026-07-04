@@ -16,72 +16,144 @@ from collections import deque
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 import yaml
 
 from displacement_tracker.pipelines import runner
 from displacement_tracker.pipelines.spec import PIPELINES, Param
 from displacement_tracker.util.env_loader import load_yaml_with_env
 
-# Meter styling follows the reference dataviz palette: blue accent with a
-# same-ramp track, yellow/red severity steps, text in text tokens, and
-# explicitly selected dark-mode colors (not an automatic flip).
-_LOADBAR_STYLE = """
+# The load bar is a components.html iframe rather than st.markdown: the
+# same-origin script pins the frame to the viewport bottom, aligns its left
+# edge with the sidebar (observing collapse/resize), and drives the chevron
+# collapse toggle, persisting that state in localStorage across re-renders.
+# Meter styling follows the reference dataviz palette: blue accent on a
+# same-ramp track, yellow/red severity steps, text in text tokens, dark-mode
+# colors selected explicitly.
+_LOADBAR_TEMPLATE = """
 <style>
-div[data-testid="stMainBlockContainer"] { padding-bottom: 7rem; }
-.tn-loadbar {
-  position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
-  background: #fcfcfb; border-top: 1px solid rgba(11,11,11,.10);
-  padding: 0.65rem 1.5rem 0.85rem;
-}
-.tn-loadbar .tn-row { display: flex; gap: 2.5rem; align-items: flex-end; }
-.tn-loadbar .tn-title {
-  font-size: 0.72rem; letter-spacing: .06em; text-transform: uppercase;
-  color: #52514e; white-space: nowrap; padding-bottom: 0.15rem;
-}
-.tn-meter { flex: 1; min-width: 8rem; }
-.tn-meter .tn-lbl {
-  display: flex; justify-content: space-between;
-  font-size: 0.8rem; color: #52514e; margin-bottom: 0.25rem;
-}
-.tn-meter .tn-lbl b {
-  color: #0b0b0b; font-weight: 600; font-variant-numeric: tabular-nums;
-}
-.tn-meter .tn-track {
-  height: 8px; border-radius: 4px; overflow: hidden; background: #cde2fb;
-}
-.tn-meter .tn-fill { height: 100%; border-radius: 4px; background: #2a78d6; }
-.tn-meter.warn .tn-track { background: #f7e3b6; }
-.tn-meter.warn .tn-fill { background: #eda100; }
-.tn-meter.crit .tn-track { background: #f8d2d2; }
-.tn-meter.crit .tn-fill { background: #e34948; }
-@media (prefers-color-scheme: dark) {
-  .tn-loadbar { background: #1a1a19; border-top-color: rgba(255,255,255,.14); }
-  .tn-loadbar .tn-title { color: #c3c2b7; }
-  .tn-meter .tn-lbl { color: #c3c2b7; }
-  .tn-meter .tn-lbl b { color: #ffffff; }
-  .tn-meter .tn-track { background: #0d366b; }
-  .tn-meter .tn-fill { background: #3987e5; }
-  .tn-meter.warn .tn-track { background: #4a3404; }
-  .tn-meter.warn .tn-fill { background: #c98500; }
-  .tn-meter.crit .tn-track { background: #571f1f; }
-  .tn-meter.crit .tn-fill { background: #e66767; }
-}
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; overflow: hidden;
+    font-family: "Source Sans Pro", "Source Sans", sans-serif;
+  }
+  .bar {
+    display: flex; gap: 2.5rem; align-items: flex-end;
+    height: 70px; padding: 0.7rem 1.5rem 0.95rem;
+    background: #fcfcfb; border-top: 1px solid rgba(11,11,11,.10);
+  }
+  .title {
+    font-size: 0.72rem; letter-spacing: .06em; text-transform: uppercase;
+    color: #52514e; white-space: nowrap; padding-bottom: 0.15rem;
+  }
+  .meter { flex: 1; min-width: 8rem; }
+  .lbl {
+    display: flex; justify-content: space-between;
+    font-size: 0.8rem; color: #52514e; margin-bottom: 0.25rem;
+  }
+  .lbl b { color: #0b0b0b; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .track { height: 8px; border-radius: 4px; overflow: hidden; background: #cde2fb; }
+  .fill { height: 100%; border-radius: 4px; background: #2a78d6; }
+  .meter.warn .track { background: #f7e3b6; }
+  .meter.warn .fill { background: #eda100; }
+  .meter.crit .track { background: #f8d2d2; }
+  .meter.crit .fill { background: #e34948; }
+  .chev {
+    border: 1px solid rgba(11,11,11,.15); border-radius: 50%;
+    width: 26px; height: 26px; padding: 0; cursor: pointer;
+    background: #fcfcfb; color: #52514e; font-size: 13px; line-height: 1;
+    align-self: center;
+  }
+  .chev:hover { color: #0b0b0b; border-color: rgba(11,11,11,.4); }
+  #tn-show { display: none; width: 34px; height: 34px; margin: 4px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.2); }
+  body.collapsed .bar { display: none; }
+  body.collapsed #tn-show { display: block; }
+  @media (prefers-color-scheme: dark) {
+    .bar { background: #1a1a19; border-top-color: rgba(255,255,255,.14); }
+    .title, .lbl { color: #c3c2b7; }
+    .lbl b { color: #ffffff; }
+    .track { background: #0d366b; }
+    .fill { background: #3987e5; }
+    .meter.warn .track { background: #4a3404; }
+    .meter.warn .fill { background: #c98500; }
+    .meter.crit .track { background: #571f1f; }
+    .meter.crit .fill { background: #e66767; }
+    .chev { background: #1a1a19; color: #c3c2b7;
+      border-color: rgba(255,255,255,.25); }
+    .chev:hover { color: #ffffff; }
+  }
 </style>
+<body>
+  <div class="bar">
+    <span class="title">__TITLE__</span>
+    <div class="meter __CPU_CLS__">
+      <div class="lbl"><span>CPU (avg per core)</span><b>__CPU_TEXT__</b></div>
+      <div class="track"><div class="fill" style="width:__CPU_W__%"></div></div>
+    </div>
+    <div class="meter __MEM_CLS__">
+      <div class="lbl"><span>Memory (of total)</span><b>__MEM_TEXT__</b></div>
+      <div class="track"><div class="fill" style="width:__MEM_W__%"></div></div>
+    </div>
+    <button class="chev" id="tn-hide" title="Hide system load">&#x2304;</button>
+  </div>
+  <button class="chev" id="tn-show" title="Show system load">&#x2303;</button>
+  <script>
+    const KEY = "tnLoadbarCollapsed";
+    const frame = window.frameElement;
+    const pdoc = window.parent.document;
+    const sidebar = pdoc.querySelector('section[data-testid="stSidebar"]');
+    frame.style.position = "fixed";
+    frame.style.border = "0";
+    frame.style.zIndex = "999";
+
+    function mainBlock() {
+      return pdoc.querySelector('div[data-testid="stMainBlockContainer"]')
+          || pdoc.querySelector('section[data-testid="stMain"]');
+    }
+    function layout() {
+      const collapsed = localStorage.getItem(KEY) === "1";
+      document.body.classList.toggle("collapsed", collapsed);
+      if (collapsed) {
+        frame.style.left = "auto";
+        frame.style.right = "8px";
+        frame.style.bottom = "8px";
+        frame.style.width = "44px";
+        frame.style.height = "44px";
+      } else {
+        const left = sidebar
+          ? Math.max(0, sidebar.getBoundingClientRect().right) : 0;
+        frame.style.right = "auto";
+        frame.style.bottom = "0";
+        frame.style.left = left + "px";
+        frame.style.width = "calc(100vw - " + left + "px)";
+        frame.style.height = "70px";
+      }
+      const mb = mainBlock();
+      if (mb) mb.style.paddingBottom = collapsed ? "3rem" : "6.5rem";
+    }
+    document.getElementById("tn-hide").onclick = () => {
+      localStorage.setItem(KEY, "1"); layout();
+    };
+    document.getElementById("tn-show").onclick = () => {
+      localStorage.setItem(KEY, "0"); layout();
+    };
+    if (sidebar) {
+      new ResizeObserver(layout).observe(sidebar);
+      new MutationObserver(layout).observe(sidebar, { attributes: true });
+    }
+    window.addEventListener("resize", layout);
+    setInterval(layout, 500);  // fallback for animated sidebar transitions
+    layout();
+  </script>
+</body>
 """
 
 
-def _meter_html(label: str, value: str, pct: float | None) -> str:
+def _severity(pct: float | None) -> str:
     if pct is None:
-        cls, width = "", 0.0
-    else:
-        width = max(0.0, min(100.0, pct))
-        cls = "crit" if pct >= 90 else "warn" if pct >= 75 else ""
-    return (
-        f'<div class="tn-meter {cls}">'
-        f'<div class="tn-lbl"><span>{label}</span><b>{value}</b></div>'
-        f'<div class="tn-track"><div class="tn-fill" style="width:{width:.1f}%"></div></div>'
-        f"</div>"
-    )
+        return ""
+    return "crit" if pct >= 90 else "warn" if pct >= 75 else ""
 
 
 def _render_load_bar(
@@ -92,15 +164,41 @@ def _render_load_bar(
     mem_pct: float | None = None,
     mem_text: str = "—",
 ) -> None:
-    box.markdown(
-        _LOADBAR_STYLE
-        + '<div class="tn-loadbar"><div class="tn-row">'
-        + f'<span class="tn-title">{title}</span>'
-        + _meter_html("CPU (avg per core)", cpu_text, cpu_pct)
-        + _meter_html("Memory (of total)", mem_text, mem_pct)
-        + "</div></div>",
-        unsafe_allow_html=True,
+    def width(pct: float | None) -> str:
+        return f"{max(0.0, min(100.0, pct or 0.0)):.1f}"
+
+    html = (
+        _LOADBAR_TEMPLATE
+        .replace("__TITLE__", title)
+        .replace("__CPU_CLS__", _severity(cpu_pct))
+        .replace("__CPU_TEXT__", cpu_text)
+        .replace("__CPU_W__", width(cpu_pct))
+        .replace("__MEM_CLS__", _severity(mem_pct))
+        .replace("__MEM_TEXT__", mem_text)
+        .replace("__MEM_W__", width(mem_pct))
     )
+    with box:
+        components.html(html, height=70)
+
+
+def _update_load_bar(box, monitor, stage_label: str) -> None:
+    """Best-effort load sampling — must never break a running pipeline."""
+    try:
+        cpu_sum, rss = monitor.sample()
+        cores = getattr(monitor, "cpu_count", None) or 1
+        total = getattr(monitor, "total_memory", None) or 0
+        cpu_pct = cpu_sum / cores
+        mem_pct = rss / total * 100 if total else None
+        mem_text = (
+            f"{rss / 2**30:.1f} / {total / 2**30:.0f} GiB" if total
+            else f"{rss / 2**30:.1f} GiB"
+        )
+        _render_load_bar(
+            box, f"System load — {stage_label}",
+            cpu_pct, f"{cpu_pct:.0f} %", mem_pct, mem_text,
+        )
+    except Exception:
+        pass
 
 
 def _widget(param: Param, default, key: str):
@@ -136,8 +234,8 @@ def _widget(param: Param, default, key: str):
 
 
 def main() -> None:
-    st.set_page_config(page_title="TentNetFA pipelines", layout="wide")
-    st.title("TentNetFA pipeline runner")
+    st.set_page_config(page_title="TentNetFA", layout="wide")
+    st.title("TentNetFA")
 
     with st.sidebar:
         pipeline_key = st.radio(
@@ -178,7 +276,6 @@ def main() -> None:
             "Completed artifacts and logs stay in the run directory. For "
             "long unattended runs use `pipeline-run` in tmux."
         )
-        show_load = st.checkbox("Show system load bar", value=True)
 
     try:
         base_config = load_yaml_with_env(base_config_path)
@@ -222,10 +319,9 @@ def main() -> None:
             )
             raw_yaml = st.text_area("YAML", value="", height=160, label_visibility="collapsed")
 
-    # Fixed bottom bar (position: fixed escapes the tab container).
+    # Fixed bottom bar (the iframe script escapes the tab flow entirely).
     load_box = st.empty()
-    if show_load:
-        _render_load_bar(load_box, "System load — idle")
+    _render_load_bar(load_box, "System load — idle")
 
     if not run_clicked:
         with logs_tab:
@@ -286,34 +382,25 @@ def main() -> None:
                         if now - last_render > 0.2:
                             box.code("\n".join(tail))
                             last_render = now
-                        if show_load and now - last_load > 1.0:
+                        if now - last_load > 1.0:
                             if monitor is None and ctx.active_process is not None:
-                                monitor = runner.StageLoadMonitor(ctx.active_process)
+                                try:
+                                    monitor = runner.StageLoadMonitor(ctx.active_process)
+                                except Exception:
+                                    monitor = None
                             elif monitor is not None:
-                                cpu_sum, rss = monitor.sample()
-                                cpu_pct = cpu_sum / monitor.cpu_count
-                                mem_pct = rss / monitor.total_memory * 100
-                                _render_load_bar(
-                                    load_box,
-                                    f"System load — {stage.label}",
-                                    cpu_pct, f"{cpu_pct:.0f} %",
-                                    mem_pct,
-                                    f"{rss / 2**30:.1f} / "
-                                    f"{monitor.total_memory / 2**30:.0f} GiB",
-                                )
+                                _update_load_bar(load_box, monitor, stage.label)
                             last_load = now
                     box.code("\n".join(tail))
                 except runner.StageFailedError as exc:
                     box.code("\n".join(tail))
                     status.update(state="error", expanded=True)
-                    if show_load:
-                        _render_load_bar(load_box, "System load — idle")
+                    _render_load_bar(load_box, "System load — idle")
                     st.error(f"{exc} — full log at `{exc.log_path}`")
                     return
                 status.update(state="complete", expanded=False)
 
-        if show_load:
-            _render_load_bar(load_box, "System load — idle")
+        _render_load_bar(load_box, "System load — idle")
         st.success(f"Pipeline finished. Artifacts in `{ctx.run_dir}`")
 
 
