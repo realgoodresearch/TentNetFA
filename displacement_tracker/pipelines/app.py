@@ -160,15 +160,32 @@ def main() -> None:
     with st.expander("Resolved config"):
         st.code(yaml.safe_dump(ctx.config, sort_keys=False), language="yaml")
 
+    # Bottom bar: created before the stage loop so it can be updated while
+    # logs stream, but placed after `stages_area` so it renders below them.
+    stages_area = st.container()
+    with st.expander("System load", expanded=True):
+        load_box = st.empty()
+        load_box.caption("Waiting for pipeline processes…")
+
+    def render_load(cpu: float, rss: int) -> None:
+        load_box.markdown(
+            f"**CPU** {cpu:.0f} % &nbsp;·&nbsp; "
+            f"**Memory** {rss / 2**30:.2f} GiB "
+            f"<small>(current stage incl. workers; CPU is summed over "
+            f"cores)</small>",
+            unsafe_allow_html=True,
+        )
+
     for stage in enabled_stages:
-        with st.status(stage.label, expanded=True) as status:
+        with stages_area.status(stage.label, expanded=True) as status:
             box = st.empty()
             # Mini terminal emulation: segments ending in \n append a line,
             # segments ending in a bare \r overwrite the last one — so tqdm
             # bars update in place instead of flooding the tail.
             tail: deque[str] = deque(maxlen=30)
             overwrite = False
-            last_render = 0.0
+            monitor = None
+            last_render = last_load = 0.0
             try:
                 for segment in runner.iter_stage_output(ctx, stage):
                     text = segment.rstrip("\r\n")
@@ -181,14 +198,22 @@ def main() -> None:
                     if now - last_render > 0.2:
                         box.code("\n".join(tail))
                         last_render = now
+                    if now - last_load > 1.0:
+                        if monitor is None and ctx.active_process is not None:
+                            monitor = runner.StageLoadMonitor(ctx.active_process)
+                        elif monitor is not None:
+                            render_load(*monitor.sample())
+                        last_load = now
                 box.code("\n".join(tail))
             except runner.StageFailedError as exc:
                 box.code("\n".join(tail))
                 status.update(state="error", expanded=True)
+                load_box.caption("No active pipeline processes.")
                 st.error(f"{exc} — full log at `{exc.log_path}`")
                 return
             status.update(state="complete", expanded=False)
 
+    load_box.caption("Pipeline finished — no active processes.")
     st.success(f"Pipeline finished. Artifacts in `{ctx.run_dir}`")
 
 

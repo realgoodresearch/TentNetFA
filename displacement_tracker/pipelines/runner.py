@@ -90,9 +90,52 @@ class RunContext:
     run_dir: Path
     config_path: Path
     config: dict
+    # Set by iter_stage_output while a stage subprocess is running, so
+    # frontends can observe it (e.g. resource monitoring).
+    active_process: subprocess.Popen | None = None
 
     def log_path(self, stage: Stage) -> Path:
         return self.run_dir / "logs" / f"{stage.key}.log"
+
+
+class StageLoadMonitor:
+    """Samples total CPU and memory of a stage's whole process tree.
+
+    psutil's cpu_percent() measures the interval since the previous call
+    on the *same* Process object, so instances are cached across samples;
+    the first sample after construction reports 0% CPU.
+    """
+
+    def __init__(self, proc: subprocess.Popen):
+        import psutil
+
+        self._psutil = psutil
+        self._root_pid = proc.pid
+        self._procs: dict[int, "psutil.Process"] = {}
+        self.sample()  # prime the cpu_percent counters
+
+    def sample(self) -> tuple[float, int]:
+        """Return (total CPU percent, total RSS bytes) for the tree.
+
+        CPU is summed over processes, so it can exceed 100 on multi-core.
+        """
+        ps = self._psutil
+        try:
+            root = ps.Process(self._root_pid)
+            tree = [root, *root.children(recursive=True)]
+        except ps.NoSuchProcess:
+            tree = []
+        cpu, rss, procs = 0.0, 0, {}
+        for proc in tree:
+            cached = self._procs.get(proc.pid, proc)
+            procs[proc.pid] = cached
+            try:
+                cpu += cached.cpu_percent(interval=None)
+                rss += cached.memory_info().rss
+            except (ps.NoSuchProcess, ps.ZombieProcess, ps.AccessDenied):
+                continue
+        self._procs = procs
+        return cpu, rss
 
 
 def prepare_run(
@@ -220,6 +263,7 @@ def iter_stage_output(ctx: RunContext, stage: Stage) -> Iterator[str]:
             env=env,
         )
         assert proc.stdout is not None
+        ctx.active_process = proc
         # newline="" keeps \r visible (text mode would fold it into \n,
         # turning every progress-bar refresh into a new line).
         stdout = io.TextIOWrapper(proc.stdout, errors="replace", newline="")
@@ -230,6 +274,7 @@ def iter_stage_output(ctx: RunContext, stage: Stage) -> Iterator[str]:
                 yield segment
             returncode = proc.wait()
         finally:
+            ctx.active_process = None
             if proc.poll() is None:
                 _terminate_group(proc)
                 log.write("\n[pipeline] stage cancelled: session interrupted\n")
