@@ -85,66 +85,44 @@ Both pipelines include an optional (default-off) download stage that fetches new
 
 Training pipeline (`config.yaml`):
 
-```
-   Google Drive                    tent annotations           pre-war raster
-        │                            (geojson)                (prewar_gaza)
-        ▼                                │                         │
-  ┌─[download]─┐   GeoTIFFs             │                         │
-  │ a_tif_loader├──▶ geotiff_dir ────────┼─────────────────────────┤
-  └─(optional)──┘        │               ▼                         ▼
-                         └────▶ ┌─────[scan]──────────────────────────┐
-                                │ b1_annotated_scanner                │
-                                │ tiles imagery inside `boundaries`,  │
-                                │ pairs it with pre-war tiles and     │
-                                │ rasterised tent-label masks         │
-                                └──────────────┬──────────────────────┘
-                                               ▼  manifests/*.parquet
-                                ┌─────[rebalance]─────────────────────┐
-                                │ c_resample_manifest                 │
-                                │ merges manifests, downsamples       │
-                                │ empty tiles (null_keep_fraction)    │
-                                └──────────────┬──────────────────────┘
-                                               ▼  dataset/balanced.parquet
-                                ┌─────[train]─────────────────────────┐
-                                │ d_train_cnn                         │
-                                │ trains SimpleCNN on (image, prewar, │
-                                │ diff) stacks vs. label density maps │
-                                └──────────────┬──────────────────────┘
-                                               ▼
-                                  model/<timestamp>/best_model.pth
+```mermaid
+flowchart TB
+    drive[("Google Drive")]
+    ann["Tent annotations<br/>(geojson)"]
+    prewar["Pre-war raster<br/>(prewar_gaza)"]
+    tifs["GeoTIFFs<br/>(geotiff_dir)"]
+    scan["<b>scan</b> — b1_annotated_scanner<br/>tiles imagery inside boundaries, pairs it with<br/>pre-war tiles and rasterised tent-label masks"]
+    rebalance["<b>rebalance</b> — c_resample_manifest<br/>merges manifests, downsamples empty tiles<br/>(null_keep_fraction)"]
+    train["<b>train</b> — d_train_cnn<br/>trains SimpleCNN on (image, pre-war, diff)<br/>stacks vs. label density maps"]
+    model(["model/&lt;timestamp&gt;/best_model.pth"])
+
+    drive -. "download (optional)<br/>a_tif_loader" .-> tifs
+    tifs --> scan
+    ann --> scan
+    prewar --> scan
+    scan -- "manifests/*.parquet" --> rebalance
+    rebalance -- "dataset/balanced.parquet" --> train
+    train --> model
 ```
 
 Prediction pipeline (`predict_config.yaml`):
 
-```
-   Google Drive                                          trained checkpoint
-        │                                                (prediction.model)
-        ▼                                                        │
-  ┌─[download]─┐   GeoTIFFs                                      │
-  │ a_tif_loader├──▶ geotiff_dir                                 │
-  └─(optional)──┘        │                                       │
-                         ▼                                       │
-              ┌─────[scan]──────────────────────────┐            │
-              │ b2_image_scanner                    │            │
-              │ tiles new imagery inside            │            │
-              │ `boundaries` (no labels needed)     │            │
-              └──────────────┬──────────────────────┘            │
-                             ▼  manifests/*.parquet              │
-              ┌─────[predict]───────────────────────┐            │
-              │ e_predict_json                      │◀───────────┘
-              │ runs inference per tile, extracts   │
-              │ tent points (NMS / centroids) above │
-              │ `selection` thresholds              │
-              └──────────────┬──────────────────────┘
-                             ▼  preds/*.geojson  (overlapping tiles!)
-              ┌─────[merge]─────────────────────────┐
-              │ h_merge_geojsons                    │
-              │ filters by adjusted peak, drops     │
-              │ excluded zones, merges points       │
-              │ within `merge.min_distance_m`       │
-              └──────────────┬──────────────────────┘
-                             ▼
-                    merged/merged.gpkg
+```mermaid
+flowchart TB
+    drive[("Google Drive")]
+    tifs["GeoTIFFs<br/>(geotiff_dir)"]
+    ckpt["Trained checkpoint<br/>(prediction.model)"]
+    scan["<b>scan</b> — b2_image_scanner<br/>tiles new imagery inside boundaries<br/>(no labels needed)"]
+    predict["<b>predict</b> — e_predict_json<br/>runs inference per tile, extracts tent points<br/>(NMS / centroids) above selection thresholds"]
+    merge["<b>merge</b> — h_merge_geojsons<br/>filters by adjusted peak, drops excluded zones,<br/>merges points within merge.min_distance_m"]
+    out(["merged/merged.gpkg"])
+
+    drive -. "download (optional)<br/>a_tif_loader" .-> tifs
+    tifs --> scan
+    scan -- "manifests/*.parquet" --> predict
+    ckpt --> predict
+    predict -- "preds/*.geojson<br/>(overlapping tiles!)" --> merge
+    merge --> out
 ```
 
 The same diagrams, together with a full reference of every config key, are available in the UI's **Help** tab (sourced from [`displacement_tracker/pipelines/help.md`](displacement_tracker/pipelines/help.md)).

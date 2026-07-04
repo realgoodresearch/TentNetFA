@@ -11,6 +11,8 @@ tab; a fixed bottom bar shows the system load of the running stage.
 
 from __future__ import annotations
 
+import html
+import re
 import time
 from collections import deque
 from pathlib import Path
@@ -26,62 +28,61 @@ from displacement_tracker.util.env_loader import load_yaml_with_env
 # same-origin script pins the frame to the viewport bottom, aligns its left
 # edge with the sidebar (observing collapse/resize), and drives the chevron
 # collapse toggle, persisting that state in localStorage across re-renders.
-# Meter styling follows the reference dataviz palette: blue accent on a
-# same-ramp track, yellow/red severity steps, text in text tokens, dark-mode
-# colors selected explicitly.
+# To blend in with the host app, layout() samples the live streamlit theme
+# from the parent document (sidebar surface + app text color) into the --bg
+# and --text CSS variables; meter fills step through streamlit's status
+# palette (info blue → warning orange → error red) with severity.
 _LOADBAR_TEMPLATE = """
 <style>
   * { box-sizing: border-box; }
   body {
-    margin: 0; overflow: hidden;
+    --bg: #f0f2f6; --text: #31333f;
+    margin: 0; overflow: hidden; color: var(--text);
     font-family: "Source Sans Pro", "Source Sans", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { --bg: #262730; --text: #fafafa; }
   }
   .bar {
     display: flex; gap: 2.5rem; align-items: flex-end;
-    height: 70px; padding: 0.7rem 1.5rem 0.95rem;
-    background: #fcfcfb; border-top: 1px solid rgba(11,11,11,.10);
+    height: 70px; padding: 0.75rem 1.5rem 1rem;
+    background: var(--bg);
+    border-top: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
   }
   .title {
-    font-size: 0.72rem; letter-spacing: .06em; text-transform: uppercase;
-    color: #52514e; white-space: nowrap; padding-bottom: 0.15rem;
+    font-size: 0.875rem; white-space: nowrap; padding-bottom: 0.1rem;
+    color: color-mix(in srgb, var(--text) 60%, transparent);
   }
   .meter { flex: 1; min-width: 8rem; }
   .lbl {
     display: flex; justify-content: space-between;
-    font-size: 0.8rem; color: #52514e; margin-bottom: 0.25rem;
+    font-size: 0.875rem; margin-bottom: 0.3rem;
+    color: color-mix(in srgb, var(--text) 60%, transparent);
   }
-  .lbl b { color: #0b0b0b; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .track { height: 8px; border-radius: 4px; overflow: hidden; background: #cde2fb; }
-  .fill { height: 100%; border-radius: 4px; background: #2a78d6; }
-  .meter.warn .track { background: #f7e3b6; }
-  .meter.warn .fill { background: #eda100; }
-  .meter.crit .track { background: #f8d2d2; }
-  .meter.crit .fill { background: #e34948; }
+  .lbl b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .track {
+    height: 8px; border-radius: 9999px; overflow: hidden;
+    background: color-mix(in srgb, var(--text) 15%, transparent);
+  }
+  .fill { height: 100%; border-radius: 9999px; background: #1c83e1; }
+  .meter.warn .fill { background: #ffa421; }
+  .meter.crit .fill { background: #ff2b2b; }
   .chev {
-    border: 1px solid rgba(11,11,11,.15); border-radius: 50%;
+    border: 1px solid color-mix(in srgb, var(--text) 20%, transparent);
+    border-radius: 50%;
     width: 26px; height: 26px; padding: 0; cursor: pointer;
-    background: #fcfcfb; color: #52514e; font-size: 13px; line-height: 1;
+    background: transparent; font-size: 13px; line-height: 1;
+    color: color-mix(in srgb, var(--text) 60%, transparent);
     align-self: center;
   }
-  .chev:hover { color: #0b0b0b; border-color: rgba(11,11,11,.4); }
+  .chev:hover {
+    color: var(--text);
+    border-color: color-mix(in srgb, var(--text) 40%, transparent);
+  }
   #tn-show { display: none; width: 34px; height: 34px; margin: 4px;
-    box-shadow: 0 1px 4px rgba(0,0,0,.2); }
+    background: var(--bg); box-shadow: 0 1px 4px rgba(0,0,0,.2); }
   body.collapsed .bar { display: none; }
   body.collapsed #tn-show { display: block; }
-  @media (prefers-color-scheme: dark) {
-    .bar { background: #1a1a19; border-top-color: rgba(255,255,255,.14); }
-    .title, .lbl { color: #c3c2b7; }
-    .lbl b { color: #ffffff; }
-    .track { background: #0d366b; }
-    .fill { background: #3987e5; }
-    .meter.warn .track { background: #4a3404; }
-    .meter.warn .fill { background: #c98500; }
-    .meter.crit .track { background: #571f1f; }
-    .meter.crit .fill { background: #e66767; }
-    .chev { background: #1a1a19; color: #c3c2b7;
-      border-color: rgba(255,255,255,.25); }
-    .chev:hover { color: #ffffff; }
-  }
 </style>
 <body>
   <div class="bar">
@@ -111,6 +112,17 @@ _LOADBAR_TEMPLATE = """
           || pdoc.querySelector('section[data-testid="stMain"]');
     }
     function layout() {
+      try {
+        if (sidebar) {
+          document.body.style.setProperty(
+            "--bg", getComputedStyle(sidebar).backgroundColor);
+        }
+        const app = pdoc.querySelector(".stApp");
+        if (app) {
+          document.body.style.setProperty(
+            "--text", getComputedStyle(app).color);
+        }
+      } catch (err) { /* keep the prefers-color-scheme fallback */ }
       const collapsed = localStorage.getItem(KEY) === "1";
       document.body.classList.toggle("collapsed", collapsed);
       if (collapsed) {
@@ -147,6 +159,65 @@ _LOADBAR_TEMPLATE = """
   </script>
 </body>
 """
+
+
+# st.markdown cannot render ```mermaid fences, so those blocks go through a
+# same-origin iframe that loads mermaid.js from the jsdelivr CDN in the
+# *viewer's* browser (works through an SSH tunnel; no internet on the server
+# needed). Offline, the import fails and the raw mermaid source stays
+# visible as a code block. The script picks the mermaid theme from the host
+# app's background and resizes the frame to the rendered diagram.
+_MERMAID_TEMPLATE = """
+<style>
+  body { margin: 0; background: transparent;
+    font-family: "Source Sans Pro", "Source Sans", sans-serif; }
+  pre.mermaid { margin: 0; overflow-x: auto; color: #808495;
+    font-family: "Source Code Pro", monospace; font-size: 0.8rem; }
+</style>
+<body>
+<pre class="mermaid">__CODE__</pre>
+<script type="module">
+  let dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  try {
+    const bg = getComputedStyle(
+      window.parent.document.querySelector(".stApp")).backgroundColor;
+    const ch = bg.match(/[0-9.]+/g);
+    if (ch) dark = 0.299 * ch[0] + 0.587 * ch[1] + 0.114 * ch[2] < 128;
+  } catch (err) { /* keep the media-query guess */ }
+  const fit = () => {
+    if (window.frameElement) {
+      window.frameElement.style.height =
+        document.documentElement.scrollHeight + 8 + "px";
+    }
+  };
+  try {
+    const { default: mermaid } = await import(
+      "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs");
+    mermaid.initialize({ startOnLoad: false, theme: dark ? "dark" : "neutral" });
+    await mermaid.run();
+  } catch (err) { /* offline: leave the raw mermaid source visible */ }
+  fit(); setTimeout(fit, 300); setTimeout(fit, 1200);
+</script>
+</body>
+"""
+
+_MERMAID_FENCE = re.compile(r"```mermaid\n(.*?)```", re.DOTALL)
+
+
+def _markdown_with_mermaid(md: str) -> None:
+    pos = 0
+    for match in _MERMAID_FENCE.finditer(md):
+        before = md[pos:match.start()]
+        if before.strip():
+            st.markdown(before)
+        st.iframe(
+            _MERMAID_TEMPLATE.replace("__CODE__", html.escape(match.group(1))),
+            height=480,
+        )
+        pos = match.end()
+    rest = md[pos:]
+    if rest.strip():
+        st.markdown(rest)
 
 
 def _severity(pct: float | None) -> str:
@@ -296,7 +367,9 @@ def main() -> None:
     config_tab, logs_tab, help_tab = st.tabs(["Configuration", "Run logs", "Help"])
 
     with help_tab:
-        st.markdown((Path(__file__).parent / "help.md").read_text(encoding="utf-8"))
+        _markdown_with_mermaid(
+            (Path(__file__).parent / "help.md").read_text(encoding="utf-8")
+        )
 
     with config_tab:
         st.caption(
