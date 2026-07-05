@@ -5,8 +5,8 @@
 # (DATA_DIR, ...) are left untouched.
 set -euo pipefail
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-env_file="$script_dir/.env"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+env_file="$repo_root/.env"
 
 current() {  # last assignment in .env wins; optional surrounding quotes stripped
     local val
@@ -56,4 +56,4 @@ ask SESSION_NAME "Remote tmux/screen session name" "pipeline-ui"
 ask NS           "Local network namespace name" "tentnet"
 ask WG_IF        "Local wireguard interface name (max 15 chars)" "wg-tnfa"
 echo
-echo "Done. Connect with:  ./pipeline-connect.sh"
+echo "Done. Connect with:  scripts/pipeline-connect.sh"

@@ -20,14 +20,15 @@
 # already in known_hosts — the tunnel runs in the background and cannot
 # answer interactive prompts.
 #
-# Configure via ./pipeline-connect-setup.sh (writes the gitignored .env).
+# Configure via scripts/pipeline-connect-setup.sh (writes the gitignored .env).
 set -euo pipefail
 
 # Machine-specific settings come from, in order of precedence: the
 # environment, the repo .env, then the defaults below. Only the whitelisted
 # keys are read from .env - the rest of it (DATA_DIR, ...) is left alone.
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "$script_dir/.env" ]]; then
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+env_file="$repo_root/.env"
+if [[ -f "$env_file" ]]; then
     while IFS= read -r _line || [[ -n "$_line" ]]; do
         [[ "$_line" =~ ^[[:space:]]*(#|$) ]] && continue
         _key="${_line%%=*}"; _val="${_line#*=}"
@@ -37,7 +38,7 @@ if [[ -f "$script_dir/.env" ]]; then
             WG_CONF | SSH_HOST | REMOTE_DIR | PORT | SESSION_NAME | NS | WG_IF)
                 [[ -z "${!_key:-}" ]] && printf -v "$_key" '%s' "$_val" ;;
         esac
-    done < "$script_dir/.env"
+    done < "$env_file"
 fi
 
 WG_CONF="${WG_CONF:-}"                  # wg-quick name (/etc/wireguard/<name>.conf) or path to a .conf
@@ -51,7 +52,7 @@ SOCK="/tmp/tentnet-ui-${PORT}.sock"     # must stay short: AF_UNIX paths cap at 
 
 if [[ -z "$WG_CONF" || -z "$SSH_HOST" ]]; then
     echo "WG_CONF / SSH_HOST are not configured." >&2
-    echo "Run ./pipeline-connect-setup.sh once (writes them to the gitignored .env)," >&2
+    echo "Run scripts/pipeline-connect-setup.sh once (writes them to the gitignored .env)," >&2
     echo "or set them in the environment." >&2
     exit 1
 fi
