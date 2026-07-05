@@ -18,6 +18,11 @@ from rasterio import features, mask
 from rasterio.transform import rowcol
 from scipy.stats import spearmanr
 
+from displacement_tracker.util.thresholding import (
+    passes_threshold,
+    rescale_adjusted_peak,
+)
+
 
 # Direction of optimization for each metric: "min" = lower is better.
 METRIC_DIRECTIONS: Dict[str, str] = {
@@ -148,9 +153,10 @@ def keep_mask_from_params(pred_prepped, factor: float, cutoff: float) -> np.ndar
     The rescaled peak is `peak_value + factor * (adjusted_peak - peak_value)`;
     a point is kept iff its rescaled peak is >= `cutoff`.
     """
-    delta = pred_prepped["adjusted_peak"] - pred_prepped["peak_value"]
-    rescaled = pred_prepped["peak_value"] + factor * delta
-    return (rescaled >= cutoff).to_numpy()
+    rescaled = rescale_adjusted_peak(
+        pred_prepped["peak_value"], pred_prepped["adjusted_peak"], factor
+    )
+    return passes_threshold(rescaled, cutoff).to_numpy()
 
 
 def compute_metrics(
