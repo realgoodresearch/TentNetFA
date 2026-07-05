@@ -65,7 +65,7 @@ def cli(config: str) -> None:
         raise click.ClickException(
             "Missing required config key: manifest (or manifest_folder)"
         )
-    train(manifest_path, **params["training"])
+    train(manifest_path, artifact_dir=params.get("artifact_dir", "runs"), **params["training"])
 
 
 def train(
@@ -82,6 +82,7 @@ def train(
     model_kwargs: dict | None = None,
     memory: bool = False,
     num_workers: int = 0,
+    artifact_dir: str = "runs",
 ) -> None:
 
     model_kwargs = model_kwargs or {}
@@ -155,7 +156,7 @@ def train(
 
     # Create timestamped run directory
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = os.path.join("runs", timestamp)
+    run_dir = os.path.join(artifact_dir, timestamp)
     os.makedirs(run_dir, exist_ok=True)
 
     # caching splits for future use

@@ -58,6 +58,9 @@ scan-validation = "displacement_tracker.g1_scan_validation:cli"
 merge-geojsons = "displacement_tracker.h_merge_geojsons:cli"
 zonal-point-sums = "displacement_tracker.i_zonal_point_sums:cli"
 train-embedding = "displacement_tracker.util.train_embedding:cli"
+pipeline-ui = "displacement_tracker.pipelines.launch:main"
+pipeline-ui-stop = "displacement_tracker.pipelines.stop:cli"
+pipeline-run = "displacement_tracker.pipelines.cli:cli"
 
 [build-system]
 requires = ["poetry-core"]
@@ -68,3 +71,9 @@ dev = [
     "ruff (>=0.15.0,<0.16.0)",
     "remote-plot (>=1.2.1,<2.0.0)"
 ]
+ui = [
+    "streamlit (>=1.40.0,<2.0.0)"
+]
+
+[tool.poetry.group.ui]
+optional = true

@@ -65,6 +65,119 @@ poetry export -f requirements.txt --output requirements.txt --without-hashes
 on a regular basis.
 
 
+## Interactive Pipelines (recommended)
+
+The individual stages below can also be run end-to-end through the pipeline runner, which handles config resolution and artifact layout for you. Every pipeline run creates a self-contained directory with fixed subfolder names:
+
+```
+<run root>/<pipeline>/<run name>/
+    config.yaml     # fully resolved config used by all stages
+    logs/           # one log file per stage
+    manifests/ preds/ merged/    # prediction pipeline
+    manifests/ dataset/ model/   # training pipeline
+```
+
+The run root defaults to `${DATA_DIR}/results/TentNetFA/pipeline_runs`; the run name defaults to a timestamp.
+
+Both pipelines include an optional (default-off) download stage that fetches newly arrived GeoTIFFs from Google Drive into `geotiff_dir` before scanning, using the `loading.files` entries as search strings (requires `GOOGLE_API_KEY` and `GDRIVE_ID` in `.env`).
+
+### Pipeline stages
+
+Training pipeline (`config.yaml`):
+
+```mermaid
+flowchart TB
+    drive[("Google Drive")]
+    ann["Tent annotations<br/>(geojson)"]
+    prewar["Pre-war raster<br/>(prewar_gaza)"]
+    tifs["GeoTIFFs<br/>(geotiff_dir)"]
+    scan["<b>scan</b> — b1_annotated_scanner<br/>tiles imagery inside boundaries, pairs it with<br/>pre-war tiles and rasterised tent-label masks"]
+    rebalance["<b>rebalance</b> — c_resample_manifest<br/>merges manifests, downsamples empty tiles<br/>(null_keep_fraction)"]
+    train["<b>train</b> — d_train_cnn<br/>trains SimpleCNN on (image, pre-war, diff)<br/>stacks vs. label density maps"]
+    model(["model/&lt;timestamp&gt;/best_model.pth"])
+
+    drive -. "download (optional)<br/>a_tif_loader" .-> tifs
+    tifs --> scan
+    ann --> scan
+    prewar --> scan
+    scan -- "manifests/*.parquet" --> rebalance
+    rebalance -- "dataset/balanced.parquet" --> train
+    train --> model
+```
+
+Prediction pipeline (`predict_config.yaml`):
+
+```mermaid
+flowchart TB
+    drive[("Google Drive")]
+    tifs["GeoTIFFs<br/>(geotiff_dir)"]
+    prewar["Pre-war raster<br/>(prewar_gaza)"]
+    ckpt["Trained checkpoint<br/>(prediction.model)"]
+    scan["<b>scan</b> — b2_image_scanner<br/>tiles new imagery inside boundaries,<br/>pairs it with pre-war tiles (no labels needed)"]
+    predict["<b>predict</b> — e_predict_json<br/>runs inference per tile, extracts tent points<br/>(NMS / centroids) above selection thresholds"]
+    merge["<b>merge</b> — h_merge_geojsons<br/>filters by adjusted peak, drops excluded zones,<br/>merges points within merge.min_distance_m"]
+    out(["merged/merged.gpkg"])
+
+    drive -. "download (optional)<br/>a_tif_loader" .-> tifs
+    tifs --> scan
+    prewar --> scan
+    scan -- "manifests/*.parquet" --> predict
+    ckpt --> predict
+    predict -- "preds/*.geojson<br/>(overlapping tiles!)" --> merge
+    merge --> out
+```
+
+The same diagrams, together with a full reference of every config key, are available in the UI's **Help** tab (sourced from [`displacement_tracker/pipelines/help.md`](displacement_tracker/pipelines/help.md)).
+
+### Browser UI
+
+```bash
+poetry install --with ui   # installs streamlit
+poetry run pipeline-ui
+```
+
+This starts a local web server and opens a browser session where you pick the pipeline (training or prediction), override any parameter from `config.yaml` / `predict_config.yaml` in a form (plus a free-form YAML box for anything not exposed), toggle individual stages, and watch live logs while the run executes.
+
+A run is tied to its browser session: switching pipeline, refreshing or closing the page cancels the running stage and terminates all of its child processes. Completed artifacts and per-stage logs remain in the run directory, so you can resume by re-running with only the remaining stages enabled. For long unattended runs prefer the headless CLI below inside tmux/screen.
+
+Extra arguments are passed through to `streamlit run` (e.g. `--server.port 8501`).
+
+#### Running on a remote machine (SSH tunnel)
+
+Pipelines will typically run on a remote GPU machine. The UI is just a web server on that machine, so start it there and forward the port to your local browser:
+
+```bash
+# on the remote, inside the repo (tmux/screen recommended: the pipeline
+# stages are children of the UI process and die with your SSH session)
+poetry run pipeline-ui --remote
+
+# it prints the matching tunnel command to run on your local machine, e.g.
+#     ssh -L 8501:localhost:8501 user@remote
+# then open http://localhost:8501 locally
+```
+
+`--remote` is shorthand for `--server.headless true --server.address localhost`: no browser is opened on the remote, and the UI is reachable only through the tunnel — recommended, since the UI has no authentication and can launch jobs and write to `DATA_DIR`. Individual flags can still be overridden (e.g. `--remote --server.port 8600`), and whenever an SSH session is detected the tunnel command is printed even without `--remote`. On a trusted LAN you can drop `--remote` and use the "Network URL" streamlit prints instead of a tunnel, but never expose the port to untrusted networks.
+
+After pulling new code (or when a port is stuck), stop any stale backends before restarting:
+
+```bash
+poetry run pipeline-ui-stop            # add --dry-run to only list them
+```
+
+This gracefully terminates every running `pipeline-ui` server including the pipeline stages it spawned, plus stage processes orphaned by an earlier hard kill. Deliberate headless `pipeline-run` sessions are left untouched.
+
+### Headless CLI
+
+The same orchestration is scriptable without a browser:
+
+```bash
+poetry run pipeline-run predict --set prediction.batch_size=16 --name 2026-02-rerun
+poetry run pipeline-run train --skip download --set training.epochs=500
+poetry run pipeline-run predict --dry-run   # print the plan without executing
+```
+
+`--set` takes dotted config paths (`section.key=value`, YAML-parsed); `--only`/`--skip` select stages. Pipeline definitions (stages, exposed parameters, artifact layout) live in `displacement_tracker/pipelines/spec.py`.
+
 ## Workflow and CLI Usage
 
 The core workflow is managed through a series of command-line scripts. Most scripts require a `config.yaml` file to specify paths and parameters.
