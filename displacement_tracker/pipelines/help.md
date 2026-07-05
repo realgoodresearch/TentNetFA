@@ -126,7 +126,8 @@ manually.
 | `prediction.selection.method` | Point extraction: `nms` (local maxima) or `centroid` (blob centroids). |
 | `prediction.selection.threshold` | Minimum score for a detection. |
 | `prediction.selection.factor` | Weight of the blurred score added during NMS (adjusted peak). |
-| `prediction.selection.min_area` | Minimum blob area / NMS pooling size in pixels. |
+| `prediction.selection.min_area` | Minimum blob area in pixels (`centroid` method only; setting it with `nms` aborts the run). |
+| `prediction.selection.nms_kernel_size` | Max-pool kernel size in pixels for NMS peak picking (`nms` method only). |
 | `prediction.selection.min_distance_m` | Minimum distance between extracted points. |
 | `prediction.input_folder`, `output_folder` | Manifest input / GeoJSON output. **Runner-managed** → `manifests/`, `preds/`. |
 | `merge.min_distance_m` | Points closer than this (m) are merged into one tent. |

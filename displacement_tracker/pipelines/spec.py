@@ -108,7 +108,11 @@ PREDICT = Pipeline(
         Param("prediction.sample.seed", "Sample seed", "int", "Prediction"),
         Param("prediction.selection.threshold", "Selection threshold", "float", "Selection"),
         Param("prediction.selection.factor", "Selection factor", "float", "Selection"),
-        Param("prediction.selection.min_area", "Min blob area (px)", "int", "Selection"),
+        Param(
+            "prediction.selection.nms_kernel_size", "NMS kernel size (px)", "int", "Selection",
+            help="Max-pool kernel for NMS peak picking. For the 'centroid' "
+                 "method set selection.min_area via the YAML overrides instead.",
+        ),
         Param("prediction.selection.min_distance_m", "Min peak distance (m)", "float", "Selection"),
         Param("merge.min_distance_m", "Merge distance (m)", "float", "Merge"),
         Param("merge.agreement", "Min cluster size", "int", "Merge"),
