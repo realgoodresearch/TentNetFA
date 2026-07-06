@@ -6,7 +6,11 @@ GeoPackage (.gpkg), using the same merge_close_points_global function used durin
 prediction.
 
 Usage:
-    poetry run merge-geojsons <input_folder> <output.gpkg> [OPTIONS]
+    poetry run merge-geojsons config.yaml
+
+All settings come from the ``merge`` section of the config; the input folder
+defaults to ``prediction.output_folder`` so the stage chains onto the
+prediction output without extra configuration.
 """
 
 import json
@@ -17,6 +21,7 @@ import geopandas as gpd
 from shapely.geometry import Point
 import yaml
 
+from displacement_tracker.util.config import flow_option, load_flow_config
 from displacement_tracker.util.deduplication import merge_close_points_global
 from displacement_tracker.util.logging_config import setup_logging
 from displacement_tracker.util.thresholding import filter_points_by_adjusted_peak
@@ -168,68 +173,57 @@ def save_merged_gpkg(points: list[tuple], out_path: Path) -> None:
 
 
 @click.command()
-@click.argument("input_folder", type=click.Path(exists=True, file_okay=False))
-@click.argument("output_gpkg", type=click.Path(dir_okay=False))
-@click.option(
-    "--min-distance-m",
-    default=3.0,
-    show_default=True,
-    help="Merge points within this distance (metres).",
-)
-@click.option(
-    "--agreement",
-    default=1,
-    show_default=True,
-    help="Minimum cluster size to keep after merging.",
-)
-@click.option(
-    "--min-adj-peak",
-    default=0.0,
-    show_default=True,
-    help="Global minimum adjusted_peak threshold; points below this are dropped before merging.",
-)
-@click.option(
-    "--adjustment-factor",
-    default=1.0,
-    show_default=True,
-    help="Global factor to apply to (adjusted_peak - peak_value) when filtering points."
-)
-@click.option(
-    "--thresholds-config",
-    default=None,
-    type=click.Path(dir_okay=False),
-    help=(
-        "Optional YAML file with per-file adj_peak thresholds. "
-        "Keys: 'default' (overrides --min-adj-peak) and 'per_file' (filename -> threshold)."
-    ),
-)
-@click.option(
-    "--exclusion-zones-gpkg",
-    default=None,
-    type=click.Path(dir_okay=False),
-    help="Optional shapefile or GPKG with exclusion geometries; points inside are dropped before merge.",
-)
-@click.option(
-    "--inclusion-zone",
-    default=None,
-    type=click.Path(dir_okay=False),
-    help=(
-        "Optional shapefile or GPKG with an inclusion area; "
-        "points outside this geometry are dropped before merge."
-    ),
-)
-def cli(
+@click.argument("config", type=click.Path(exists=True, dir_okay=False))
+@flow_option(default="predict")
+def cli(config: str, flow: str) -> None:
+    """Merge prediction GeoJSONs into one deduplicated GeoPackage.
+
+    Reads the ``merge`` section of the YAML config; the input folder
+    defaults to ``prediction.output_folder``.
+    """
+    params = load_flow_config(config, flow)
+    merge_cfg = params.get("merge") or {}
+
+    input_folder = merge_cfg.get("input_folder") or (
+        params.get("prediction") or {}
+    ).get("output_folder")
+    if not input_folder:
+        raise click.ClickException(
+            "Missing required config key: merge.input_folder "
+            "(or prediction.output_folder as fallback)"
+        )
+    output_gpkg = merge_cfg.get("output")
+    if not output_gpkg:
+        raise click.ClickException("Missing required config key: merge.output")
+
+    merge_geojsons(
+        input_folder,
+        output_gpkg,
+        min_distance_m=float(merge_cfg.get("min_distance_m", 3.0)),
+        agreement=int(merge_cfg.get("agreement", 1)),
+        min_adj_peak=float(merge_cfg.get("min_adj_peak", 0.0)),
+        adjustment_factor=float(merge_cfg.get("adjustment_factor", 1.0)),
+        thresholds_config=merge_cfg.get("thresholds_config"),
+        exclusion_zones_gpkg=merge_cfg.get("exclusion_zones_gpkg"),
+        inclusion_zone=merge_cfg.get("inclusion_zone"),
+    )
+
+
+def merge_geojsons(
     input_folder: str,
     output_gpkg: str,
-    min_distance_m: float,
-    agreement: int,
-    min_adj_peak: float,
-    adjustment_factor: float,
-    thresholds_config: str | None,
-    exclusion_zones_gpkg: str | None,
-    inclusion_zone: str | None,
+    *,
+    min_distance_m: float = 3.0,
+    agreement: int = 1,
+    min_adj_peak: float = 0.0,
+    adjustment_factor: float = 1.0,
+    thresholds_config: str | None = None,
+    exclusion_zones_gpkg: str | None = None,
+    inclusion_zone: str | None = None,
 ) -> None:
     input_dir = Path(input_folder)
+    if not input_dir.is_dir():
+        raise click.ClickException(f"Input folder not found: {input_dir}")
     geojson_files = sorted(input_dir.glob("*.geojson")) + sorted(input_dir.glob("*.json"))
 
     if not geojson_files:

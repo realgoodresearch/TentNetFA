@@ -31,9 +31,7 @@ class Param:
 class Stage:
     """One executable step of a pipeline.
 
-    By default a stage is run as ``python -m <module> <resolved_config>``.
-    Stages with a different CLI surface (e.g. h_merge_geojsons) get a
-    custom argv builder in ``runner.py``, keyed by ``key``.
+    Every stage is run as ``python -m <module> <resolved_config>``.
     """
 
     key: str
@@ -46,7 +44,10 @@ class Stage:
 class Pipeline:
     key: str
     label: str
-    base_config: str  # default base YAML, relative to the repo root
+    # Default base YAML, relative to the repo root. The single config.yaml
+    # holds shared/train/predict sections; the runner resolves the section
+    # matching the pipeline key (deep-merged over `shared`) before use.
+    base_config: str
     stages: tuple[Stage, ...]
     params: tuple[Param, ...]
     # Dotted config path -> path relative to the run directory. These are
@@ -70,7 +71,7 @@ class Pipeline:
 PREDICT = Pipeline(
     key="predict",
     label="Prediction pipeline",
-    base_config="predict_config.yaml",
+    base_config="config.yaml",
     stages=(
         Stage(
             "download", "Download GeoTIFFs from Drive", "displacement_tracker.a_tif_loader",

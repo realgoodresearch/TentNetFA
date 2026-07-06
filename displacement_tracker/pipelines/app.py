@@ -22,7 +22,7 @@ import yaml
 
 from displacement_tracker.pipelines import runner
 from displacement_tracker.pipelines.spec import PIPELINES, Param
-from displacement_tracker.util.env_loader import load_yaml_with_env
+from displacement_tracker.util.config import load_flow_config
 
 # The load bar is an st.iframe (srcdoc) rather than st.markdown: the
 # same-origin script pins the frame to the viewport bottom, aligns its left
@@ -363,7 +363,9 @@ def main() -> None:
         )
 
     try:
-        base_config = load_yaml_with_env(base_config_path)
+        # resolve the pipeline's flow section so widget defaults match the
+        # flat config the runner will execute with
+        base_config = load_flow_config(base_config_path, pipeline.key)
     except (FileNotFoundError, KeyError) as exc:
         st.error(f"Could not load base config: {exc}")
         st.stop()

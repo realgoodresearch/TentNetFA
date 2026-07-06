@@ -19,7 +19,7 @@ selected stages against it.
 
 ## Pipeline diagrams
 
-### Training pipeline (`config.yaml`)
+### Training pipeline (`train` section of `config.yaml`)
 
 ```mermaid
 flowchart TB
@@ -41,7 +41,7 @@ flowchart TB
     train --> model
 ```
 
-### Prediction pipeline (`predict_config.yaml`)
+### Prediction pipeline (`predict` section of `config.yaml`)
 
 ```mermaid
 flowchart TB
@@ -69,6 +69,16 @@ advanced YAML overrides at that run's folders, or skip *merge* while tuning
 selection parameters.
 
 ## Configuration reference
+
+Both pipelines are configured through the single `config.yaml`, which has
+three top-level sections: `shared` (single source of truth for values used
+by both flows), `train` and `predict` (everything specific to one flow).
+Before a run, the selected pipeline's section is deep-merged over `shared`
+(the flow section wins), producing the flat key layout documented below —
+so e.g. `boundaries` lives under `shared:` while `prediction.model` lives
+under `predict:`. Stage CLIs resolve their natural flow by default and
+accept `--flow train|predict` to override; the resolved config written into
+each run directory is already flat.
 
 Paths may reference environment variables as `${VAR}` (resolved from `.env`);
 `${DATA_DIR}` is the conventional data root. Keys marked **runner-managed**
@@ -136,6 +146,7 @@ manually.
 | `merge.adjustment_factor` | Factor applied to (adjusted_peak − peak) when filtering. |
 | `merge.thresholds_config` | Optional YAML with per-file adjusted-peak thresholds. |
 | `merge.exclusion_zones_gpkg`, `inclusion_zone` | Drop points inside / outside these geometries. |
+| `merge.input_folder` | Prediction GeoJSONs to merge; defaults to `prediction.output_folder`. |
 | `merge.output` | Final GeoPackage. **Runner-managed** → `merged/merged.gpkg`. |
 
 ### Anything else

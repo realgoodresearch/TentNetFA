@@ -15,7 +15,7 @@ from tqdm.auto import tqdm
 
 from displacement_tracker.paired_image_dataset import PairedImageDataset
 from displacement_tracker.simple_cnn import SimpleCNN
-from displacement_tracker.util.env_loader import load_yaml_with_env
+from displacement_tracker.util.config import flow_option, load_flow_config
 from displacement_tracker.util.logging_config import setup_logging
 from displacement_tracker.util.distance import interpolate_centroid
 from displacement_tracker.util.deduplication import merge_close_points_global
@@ -439,8 +439,9 @@ def run_prediction_job(
 
 @click.command()
 @click.argument("config", type=click.Path(exists=True))
-def cli(config) -> None:
-    params = load_yaml_with_env(config)
+@flow_option(default="predict")
+def cli(config, flow) -> None:
+    params = load_flow_config(config, flow)
 
     if "prediction" not in params:
         raise click.ClickException("Missing required config key: prediction")
@@ -502,4 +503,4 @@ def cli(config) -> None:
 if __name__ == "__main__":
     cli()
 
-# poetry run python displacement_tracker/04_predict_json.py predict_config.yaml
+# poetry run predict-json config.yaml

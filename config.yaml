@@ -1,59 +1,136 @@
-geotiff_dir: ${DATA_DIR}/data/training_data/tif_files
-geojson: ${DATA_DIR}/data/training_data/snapshot-tents-2025-12-03_121923.geojson
-boundaries: gaza_boundaries/GazaStrip_MunicipalBoundaries.shp
-prewar_gaza: ${DATA_DIR}/data/prewar_gaza.tif
-# json_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-04/jsons
-manifest_folder: ${DATA_DIR}/data/training_data/manifests
-manifest: ${DATA_DIR}/data/training_data/balanced.parquet
-artifact_dir: runs
-processing:
-  core_metres: 70
-  margin_metres: 15
-  max_workers: 8
-  max_tasks_per_child: 16
-  max_pool_restarts: 10
-  quality_thresholds:
-    min_valid_fraction: 0.9
-  complete:
-    - deir_el_balah_20250315_121122_ssc10_u0002_visual_clip_file_format.tif
-    - netzarim_corridor_gaza_city_beit_lahiya_20250331_121449_ssc10_u0001_visual_clip.tif
-    - deir_el_balah_and_nuseirat_20250326_054752_ssc2_u0002_visual_clip_file_format.tif
-    - khan_yunis_20250315_065509_ssc13_u0001_visual_file_format.tif
-    - gaza_city_and_jabalia_20250319_121502_ssc8_u0001_visual_clip_file_format.tif
-    - deir_el_balah_20250330_121424_ssc7_u0001_visual_clip.tif
-    - kerem_shalom_crossing_abasan_al_kabira_20260130_055039_ssc1_u0003_visual.tif
-    - rafah_abasan_al_kabira_20260117_061143_ssc1_u0001_visual_clip.tif
-rebalancing:
-  out: "${DATA_DIR}/data/training_data/balanced.parquet"
-  rng_seed: 42
-  null_keep_fraction: 0.25
-training:
-  checkpoint: runs/20260511_104602/best_model.pth
-  device: cuda
-  epochs: 10000
-  batch_size: 64
-  learning_rate: 0.0001
-  training_frac: 0.8
-  validation_frac: 0.19
-  memory: True
-  num_workers: 4
-  model_kwargs:
-    kernel_size: 3
-metadata_embedding:
-  embedding_dim: 128
-  hidden_dim: 128
-  projection_dim: 64
-  batch_size: 1024
-  epochs: 100
-  learning_rate: 1.0e-3
-  weight_decay: 1.0e-5
-  temperature: 0.5
-  augment_noise_std: 0.05
-  augment_mask_prob: 0.15
-  gaza_bbox: [34.20, 34.60, 31.20, 31.60]   # [lon_min, lon_max, lat_min, lat_max]; confirm from data
-  id_norm:
-    ssc: 25
-    u000: 2
-  num_workers: 4
-  device: cuda
-  checkpoint_path: ./checkpoints/metadata_embedding.pth
+# TentNetFA configuration — single file for both pipelines.
+#
+#   shared:   values used by more than one flow (single source of truth).
+#   train:    training flow    (a_tif_loader -> b1_annotated_scanner
+#                               -> c_resample_manifest -> d_train_cnn)
+#   predict:  prediction flow  (a_tif_loader -> b2_image_scanner
+#                               -> e_predict_json -> h_merge_geojsons)
+#
+# Each stage resolves its config as deep_merge(shared, <flow section>); the
+# flow section wins on conflicts. Stage CLIs default to their natural flow
+# and accept --flow train|predict to override; the pipeline runner/UI picks
+# the flow matching the selected pipeline automatically.
+
+shared:
+  # Municipal boundaries; tiles outside them are skipped by every scan stage.
+  boundaries: gaza_boundaries/GazaStrip_MunicipalBoundaries.shp
+  # Pre-war reference raster paired with every tile by every scan stage.
+  prewar_gaza: ${DATA_DIR}/data/prewar_gaza.tif
+  processing:
+    # Tile geometry must be identical at training and prediction time,
+    # so it is defined once here.
+    core_metres: 70
+    margin_metres: 15
+
+train:
+  # Annotated GeoTIFFs (download stage writes here, scan stage reads).
+  geotiff_dir: ${DATA_DIR}/data/training_data/tif_files
+  # Tent-annotation snapshot rasterised into label masks (b1_annotated_scanner).
+  geojson: ${DATA_DIR}/data/training_data/snapshot-tents-2025-12-03_121923.geojson
+  # Per-image tile manifests (written by the scan stage, read by rebalancing).
+  manifest_folder: ${DATA_DIR}/data/training_data/manifests
+  # Balanced dataset consumed by d_train_cnn (written at rebalancing.out).
+  manifest: ${DATA_DIR}/data/training_data/balanced.parquet
+  # Model checkpoints and split info (d_train_cnn).
+  artifact_dir: runs
+  # loading:
+  #   files:  # optional filename filters / Drive search strings; empty = all
+  processing:
+    max_workers: 8
+    max_tasks_per_child: 16
+    max_pool_restarts: 10
+    quality_thresholds:
+      min_valid_fraction: 0.9
+    complete:
+      - deir_el_balah_20250315_121122_ssc10_u0002_visual_clip_file_format.tif
+      - netzarim_corridor_gaza_city_beit_lahiya_20250331_121449_ssc10_u0001_visual_clip.tif
+      - deir_el_balah_and_nuseirat_20250326_054752_ssc2_u0002_visual_clip_file_format.tif
+      - khan_yunis_20250315_065509_ssc13_u0001_visual_file_format.tif
+      - gaza_city_and_jabalia_20250319_121502_ssc8_u0001_visual_clip_file_format.tif
+      - deir_el_balah_20250330_121424_ssc7_u0001_visual_clip.tif
+      - kerem_shalom_crossing_abasan_al_kabira_20260130_055039_ssc1_u0003_visual.tif
+      - rafah_abasan_al_kabira_20260117_061143_ssc1_u0001_visual_clip.tif
+  rebalancing:
+    out: "${DATA_DIR}/data/training_data/balanced.parquet"
+    rng_seed: 42
+    null_keep_fraction: 0.25
+  training:
+    checkpoint: runs/20260511_104602/best_model.pth
+    device: cuda
+    epochs: 10000
+    batch_size: 64
+    learning_rate: 0.0001
+    training_frac: 0.8
+    validation_frac: 0.19
+    memory: True
+    num_workers: 4
+    model_kwargs:
+      kernel_size: 3
+  metadata_embedding:
+    embedding_dim: 128
+    hidden_dim: 128
+    projection_dim: 64
+    batch_size: 1024
+    epochs: 100
+    learning_rate: 1.0e-3
+    weight_decay: 1.0e-5
+    temperature: 0.5
+    augment_noise_std: 0.05
+    augment_mask_prob: 0.15
+    gaza_bbox: [34.20, 34.60, 31.20, 31.60]   # [lon_min, lon_max, lat_min, lat_max]; confirm from data
+    id_norm:
+      ssc: 25
+      u000: 2
+    num_workers: 4
+    device: cuda
+    checkpoint_path: ./checkpoints/metadata_embedding.pth
+
+predict:
+  # New imagery to run inference on (download stage writes here, scan stage reads).
+  geotiff_dir: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/tiffs
+  # Per-image tile manifests (written by the scan stage, read by prediction).
+  manifest_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/manifests
+  loading:
+    files:
+      # - "khan_yunis_al_mawasi_deir_el_balah_20260220_122923_ssc10_u0003_visual_clip.tif"
+      # - "gaza_city_jabalia_beit_hanoun_20260220_123000_ssc10_u0001_visual_clip.tif"
+      # - "gaza_city_jabalia_beit_lahiya_20260220_122923_ssc10_u0001_visual_clip.tif"
+      # - "deir_el_balah_nuseirat_gaza_city_20260220_122923_ssc10_u0002_visual_clip.tif"
+      # - "kerem_shalom_crossing_al_nasr_20260220_055911_ssc1_u0001_visual_clip.tif"
+      # - "khan_yunis_al_maghazi_bureij_20260220_123000_ssc10_u0002_visual_clip.tif"
+      # - "rafah_rafah_crossing_khan_yunis_20260220_123000_ssc10_u0003_visual_clip.tif"
+      # - "tel_al_sultan_20260220_122923_ssc10_u0004_visual_clip.tif"
+  processing:
+    quality_thresholds:
+      min_valid_fraction: 0.1
+  prediction:
+    save_bounds: true
+    input_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/manifests
+    output_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/preds
+    model: /home/karim/TentNetFA/runs/v2.0/best_model.pth
+    batch_size: 8
+    num_workers: 4  # Optional sampling configuration
+    sample:
+      enable: false        # set to false to run on all tiles
+      size: 200           # number of random tiles to predict
+      seed: 5            # optional random seed for reproducibility
+    selection:
+      method: nms
+      agreement: false
+      threshold: 0.0001
+      factor: 1.0
+      nms_kernel_size: 7
+      min_distance_m: 3.0
+      # crop_pixels and nms_sigma are derived from processing.margin_metres
+    validation_tifs: false # ideally set to false if sampling is false
+    per_tile_standardisation: true
+  merge:
+    # input_folder: null  # defaults to prediction.output_folder
+    output: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/merged/merged.gpkg
+    min_distance_m: 3.0
+    agreement: 1
+    min_adj_peak: 0.0
+    adjustment_factor: 1.0
+    thresholds_config: null     # optional YAML with per-file adj_peak thresholds
+    exclusion_zones_gpkg: null  # drop points inside these geometries
+    inclusion_zone: null        # drop points outside this geometry
