@@ -1,10 +1,12 @@
-# TentNetFA configuration — single file for both pipelines.
+# TentNetFA configuration — single file for all pipelines.
 #
 #   shared:   values used by more than one flow (single source of truth).
 #   train:    training flow    (a_tif_loader -> b1_annotated_scanner
 #                               -> c_resample_manifest -> d_train_cnn)
 #   predict:  prediction flow  (a_tif_loader -> b2_image_scanner
 #                               -> e_predict_json -> h_merge_geojsons)
+#   tune:     hyperparameter tuning flow  (h_merge_geojsons [unthresholded]
+#                               -> g1_scan_validation -> h2_merge_tuned)
 #
 # Each stage resolves its config as deep_merge(shared, <flow section>); the
 # flow section wins on conflicts. Stage CLIs default to their natural flow
@@ -134,3 +136,47 @@ predict:
     thresholds_config: null     # optional YAML with per-file adj_peak thresholds
     exclusion_zones_gpkg: null  # drop points inside these geometries
     inclusion_zone: null        # drop points outside this geometry
+
+tune:
+  merge:
+    # Prediction GeoJSONs to tune on — typically the preds/ folder of an
+    # earlier prediction pipeline run.
+    input_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/preds
+    # First pass merges WITHOUT thresholding so the scan sees every
+    # candidate point — the thresholds are exactly what is being tuned.
+    output: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/tuning/merged_raw.gpkg
+    min_distance_m: 3.0
+    agreement: 1
+    min_adj_peak: 0.0           # keep everything in the raw pass
+    adjustment_factor: 1.0
+    thresholds_config: null
+    exclusion_zones_gpkg: null
+    inclusion_zone: null
+  tuning:
+    # input: null  # merged raw predictions; defaults to merge.output
+    # Master grid the reference data and predictions are resolved onto.
+    master_grid: ${DATA_DIR}/data/master_grid_100m.tif
+    # Ground-truth reference (see displacement_tracker/util/reference_data.py):
+    #   vector  point annotations in any OGR-readable file (GeoJSON/GPKG/SHP)
+    #   unosat  a UNOSAT export — a file, or a directory + explicit date
+    #   raster  counts already resolved on the master grid
+    reference:
+      type: unosat
+      path: ${DATA_DIR}/data/reference/unosat
+      date: 2026-02-15        # required when path is a directory of exports
+      # layer: null           # layer in multi-layer files (GPKG/GDB)
+      # where: null           # OGR SQL attribute filter
+    metric: rms               # optimum of this metric drives the final merge
+    metrics: [rms, mae, abs_total_diff]   # tracked during the scan
+    factor_min: 0.0           # adjustment_factor search bounds
+    factor_max: 10.0
+    cutoff_min: 0.0001        # min_adj_peak search bounds
+    cutoff_max: 0.01
+    ridge_probes: 5
+    xtol_factor: 1.0e-3
+    xtol_cutoff: 1.0e-6
+    refine_maxiter: 60
+    exclusion_zones: null     # optional gpkg; predictions are clipped to its union
+    out_dir: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/tuning
+    best_params: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/tuning/best_params.yaml
+    final_output: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/merged/merged_tuned.gpkg

@@ -75,6 +75,7 @@ The individual stages below can also be run end-to-end through the pipeline runn
     logs/           # one log file per stage
     manifests/ preds/ merged/    # prediction pipeline
     manifests/ dataset/ model/   # training pipeline
+    merged_raw/ tuning/ merged/  # hyperparameter tuning pipeline
 ```
 
 The run root defaults to `${DATA_DIR}/results/TentNetFA/pipeline_runs`; the run name defaults to a timestamp.
@@ -127,6 +128,29 @@ flowchart TB
     merge --> out
 ```
 
+Hyperparameter tuning pipeline (the `tune` section of `config.yaml`) — the typical follow-up once predictions exist: it finds the merge thresholds (`min_adj_peak`, `adjustment_factor`) that best match a reference dataset, then re-merges the predictions with them:
+
+```mermaid
+flowchart TB
+    preds["Prediction GeoJSONs<br/>(merge.input_folder — the preds/ folder<br/>of an earlier prediction run)"]
+    refdata["Reference data<br/>(tuning.reference:<br/>vector | unosat | raster)"]
+    grid["Master grid raster<br/>(tuning.master_grid)"]
+    merge_raw["<b>merge_raw</b> — h_merge_geojsons<br/>merges & deduplicates WITHOUT thresholding"]
+    scan["<b>scan</b> — g1_scan_validation<br/>rasterizes predictions vs. reference on the master grid,<br/>searches (adjustment_factor, min_adj_peak) optimising tuning.metric"]
+    merge_tuned["<b>merge_tuned</b> — h2_merge_tuned<br/>re-merges the raw predictions with the tuned thresholds"]
+    out(["merged/merged_tuned.gpkg"])
+
+    preds --> merge_raw
+    merge_raw -- "merged_raw/merged_raw.gpkg" --> scan
+    refdata --> scan
+    grid --> scan
+    scan -- "tuning/best_params.yaml" --> merge_tuned
+    preds --> merge_tuned
+    merge_tuned --> out
+```
+
+The reference data is declared explicitly through a generic interface (`displacement_tracker/util/reference_data.py`): `vector` point annotations in any OGR-readable file (GeoJSON, GPKG, SHP, ...), a `unosat` export (a file, or a directory of exports with an explicit `date` — no pairing by timestamp), or a `raster` of counts already resolved on the master grid. Any other source of master-grid-resolved ground truth can be added by implementing a `ReferenceSource`.
+
 The same diagrams, together with a full reference of every config key, are available in the UI's **Help** tab (sourced from [`displacement_tracker/pipelines/help.md`](displacement_tracker/pipelines/help.md)).
 
 ### Browser UI
@@ -136,7 +160,7 @@ poetry install --with ui   # installs streamlit
 poetry run pipeline-ui
 ```
 
-This starts a local web server and opens a browser session where you pick the pipeline (training or prediction), override any parameter from the matching section of `config.yaml` in a form (plus a free-form YAML box for anything not exposed), toggle individual stages, and watch live logs while the run executes.
+This starts a local web server and opens a browser session where you pick the pipeline (training, prediction or hyperparameter tuning), override any parameter from the matching section of `config.yaml` in a form (plus a free-form YAML box for anything not exposed), toggle individual stages, and watch live logs while the run executes.
 
 A run is tied to its browser session: switching pipeline, refreshing or closing the page cancels the running stage and terminates all of its child processes. Completed artifacts and per-stage logs remain in the run directory, so you can resume by re-running with only the remaining stages enabled. For long unattended runs prefer the headless CLI below inside tmux/screen.
 
@@ -173,6 +197,7 @@ The same orchestration is scriptable without a browser:
 ```bash
 poetry run pipeline-run predict --set prediction.batch_size=16 --name 2026-02-rerun
 poetry run pipeline-run train --skip download --set training.epochs=500
+poetry run pipeline-run tune --set merge.input_folder=/path/to/earlier/run/preds
 poetry run pipeline-run predict --dry-run   # print the plan without executing
 ```
 
@@ -180,7 +205,7 @@ poetry run pipeline-run predict --dry-run   # print the plan without executing
 
 ## Workflow and CLI Usage
 
-The core workflow is managed through a series of command-line scripts. All scripts read the single `config.yaml`: each resolves its own flow section (`train` or `predict`, deep-merged over `shared`) by default, and accepts `--flow train|predict` to override — e.g. `poetry run image-scanner config.yaml --flow train` to scan training imagery with the image-only scanner.
+The core workflow is managed through a series of command-line scripts. All scripts read the single `config.yaml`: each resolves its own flow section (`train`, `predict` or `tune`, deep-merged over `shared`) by default, and accepts `--flow train|predict|tune` to override — e.g. `poetry run image-scanner config.yaml --flow train` to scan training imagery with the image-only scanner.
 
 ### 1. Download Satellite Imagery
 Download GeoTIFF files from Google Drive based on the filenames specified in your configuration file. The download stage runs in both flows, so tell it which section to use:
@@ -216,17 +241,29 @@ This will generate GeoJSON files containing the coordinates of predicted tents.
 The repository includes several scripts for analyzing the results:
 
 -   `evaluate-geojson`: Compare a prediction GeoJSON against a ground truth GeoJSON to compute metrics like precision, recall, and F1-score.
--   `validate-geojson`: Perform spatial validation by comparing rasterized prediction counts against validation counts on a master grid.
+-   `validate-geojson`: Perform spatial validation by comparing rasterized prediction counts against an explicitly selected reference source on a master grid (`--reference`, plus `--reference-type/-date/-layer/-where`; see `displacement_tracker/util/reference_data.py`).
 -   `merge-geojsons`: Merge multiple prediction GeoJSONs into a single, deduplicated GeoPackage file.
+
+### 6. Tune the Merge Thresholds
+The `tune` section of `config.yaml` configures the hyperparameter tuning flow, which finds the `merge.min_adj_peak` / `merge.adjustment_factor` pair that best matches a reference dataset:
+
+```bash
+poetry run merge-geojsons config.yaml --flow tune   # unthresholded merge of the raw predictions
+poetry run scan-validation config.yaml              # scan thresholds, write tuning.best_params
+poetry run merge-tuned config.yaml                  # final merge with the tuned thresholds
+```
+
+The same three stages run end-to-end as the *Hyperparameter tuning pipeline* in the pipeline UI / `pipeline-run tune`.
 
 ---
 ## Configuration File (config.yaml)
 
-Both flows are configured through the single `config.yaml`, which has three top-level sections:
+All flows are configured through the single `config.yaml`, which has four top-level sections:
 
 - **`shared`** — the single source of truth for values used by more than one flow (boundaries, pre-war raster, tile geometry).
 - **`train`** — everything the training flow needs (annotated imagery paths, manifests, rebalancing, CNN hyperparameters).
 - **`predict`** — everything the prediction flow needs (new imagery paths, model checkpoint, selection/merge parameters).
+- **`tune`** — everything the hyperparameter tuning flow needs (predictions to tune on, master grid, reference data, search bounds and evaluation metric).
 
 When a stage runs, its flow section is deep-merged over `shared` (the flow section wins), producing a flat config. This means shared values are defined exactly once, while each flow section makes explicit which paths and parameters its stages use — e.g. `train.geotiff_dir` and `predict.geotiff_dir` are independent keys, but both flows tile imagery with the same `shared.processing.core_metres`.
 
@@ -255,6 +292,19 @@ predict:
     quality_thresholds:
       min_valid_fraction: 0.1   # loose for prediction
   prediction: { ... }
+
+tune:
+  merge:
+    input_folder: ${DATA_DIR}/results/TentNetFA/2026-02/preds
+    min_adj_peak: 0.0           # raw pass keeps everything; thresholds are tuned
+    adjustment_factor: 1.0
+  tuning:
+    master_grid: ${DATA_DIR}/data/master_grid_100m.tif
+    reference:                  # vector | unosat | raster ground truth
+      type: unosat
+      path: ${DATA_DIR}/data/reference/unosat
+      date: 2026-02-15          # explicit selection — no timestamp inference
+    metric: rms                 # optimum of this metric drives the final merge
 ```
 
 See the checked-in [`config.yaml`](./config.yaml) for the full set of keys, and the [pipeline help](displacement_tracker/pipelines/help.md) for a reference of what each key does. Flat single-flow configs (the historic `config.yaml` / `predict_config.yaml` layout, and the resolved configs the pipeline runner writes into run directories) are still accepted by every script.

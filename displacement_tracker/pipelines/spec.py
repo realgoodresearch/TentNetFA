@@ -204,4 +204,123 @@ TRAIN = Pipeline(
 )
 
 
-PIPELINES: dict[str, Pipeline] = {p.key: p for p in (PREDICT, TRAIN)}
+TUNE = Pipeline(
+    key="tune",
+    label="Hyperparameter tuning pipeline",
+    base_config="config.yaml",
+    stages=(
+        Stage(
+            "merge_raw", "Merge predictions (no thresholding)",
+            "displacement_tracker.h_merge_geojsons",
+        ),
+        Stage(
+            "scan", "Scan validation & optimise thresholds",
+            "displacement_tracker.g1_scan_validation",
+        ),
+        Stage(
+            "merge_tuned", "Re-merge with tuned thresholds",
+            "displacement_tracker.h2_merge_tuned",
+        ),
+    ),
+    params=(
+        Param(
+            "merge.input_folder", "Prediction GeoJSONs folder", "path", "Inputs",
+            help="Predictions to tune on — typically the preds/ folder of an "
+                 "earlier prediction pipeline run.",
+        ),
+        Param(
+            "tuning.master_grid", "Master grid raster", "path", "Inputs",
+            help="Grid the predictions and reference data are resolved onto.",
+        ),
+        Param(
+            "tuning.reference.type", "Reference type", "str", "Reference",
+            help="vector (point annotations: GeoJSON/GPKG/SHP), unosat "
+                 "(export file or directory + date), or raster (counts "
+                 "already on the master grid).",
+        ),
+        Param("tuning.reference.path", "Reference data path", "path", "Reference"),
+        Param(
+            "tuning.reference.date", "UNOSAT export date", "str", "Reference",
+            optional=True,
+            help="YYYY-MM-DD; picks one export when the path is a directory.",
+        ),
+        Param(
+            "tuning.reference.layer", "Layer", "str", "Reference",
+            optional=True, help="Layer to read from multi-layer files (GPKG/GDB).",
+        ),
+        Param(
+            "tuning.reference.where", "Attribute filter", "str", "Reference",
+            optional=True, help="OGR SQL filter applied to the reference features.",
+        ),
+        Param(
+            "tuning.metric", "Evaluation metric", "str", "Tuning",
+            help="The optimum of this metric becomes the tuned "
+                 "(min_adj_peak, adjustment_factor) used by the final merge. "
+                 "Choices: rms, mae, rmsle, abs_total_diff, abs_total_pdiff, "
+                 "spearman.",
+        ),
+        Param(
+            "tuning.metrics", "Metrics to track", "list", "Tuning",
+            optional=True, help="One metric per line; the evaluation metric "
+                                "is always tracked.",
+        ),
+        Param("tuning.factor_min", "Factor min", "float", "Tuning"),
+        Param("tuning.factor_max", "Factor max", "float", "Tuning"),
+        Param("tuning.cutoff_min", "Cutoff min", "float", "Tuning"),
+        Param("tuning.cutoff_max", "Cutoff max", "float", "Tuning"),
+        Param(
+            "tuning.ridge_probes", "Ridge probes", "int", "Tuning",
+            help="Number of factors at which the cutoff ridge is probed.",
+        ),
+        Param(
+            "tuning.refine_maxiter", "Refinement iterations", "int", "Tuning",
+            help="Max Nelder-Mead iterations for the 2-D refinement (0 disables).",
+        ),
+        Param(
+            "tuning.exclusion_zones", "Scan clip zones", "path", "Tuning",
+            optional=True,
+            help="Optional gpkg; predictions are clipped to its union "
+                 "before the scan.",
+        ),
+        Param("merge.min_distance_m", "Merge distance (m)", "float", "Merge"),
+        Param("merge.agreement", "Min cluster size", "int", "Merge"),
+        Param("merge.exclusion_zones_gpkg", "Exclusion zones", "path", "Merge", optional=True),
+        Param("merge.inclusion_zone", "Inclusion zone", "path", "Merge", optional=True),
+    ),
+    artifact_paths={
+        "merge.output": "merged_raw/merged_raw.gpkg",
+        "tuning.input": "merged_raw/merged_raw.gpkg",
+        "tuning.out_dir": "tuning",
+        "tuning.best_params": "tuning/best_params.yaml",
+        "tuning.final_output": "merged/merged_tuned.gpkg",
+    },
+    extra_defaults={
+        "merge": {
+            "min_distance_m": 3.0,
+            "agreement": 1,
+            # The raw pass keeps every point; thresholds are tuned downstream.
+            "min_adj_peak": 0.0,
+            "adjustment_factor": 1.0,
+            "thresholds_config": None,
+            "exclusion_zones_gpkg": None,
+            "inclusion_zone": None,
+        },
+        "tuning": {
+            "reference": {"type": "vector"},
+            "metric": "rms",
+            "metrics": ["rms", "mae", "abs_total_diff"],
+            "factor_min": 0.0,
+            "factor_max": 10.0,
+            "cutoff_min": 0.0001,
+            "cutoff_max": 0.01,
+            "ridge_probes": 5,
+            "xtol_factor": 1.0e-3,
+            "xtol_cutoff": 1.0e-6,
+            "refine_maxiter": 60,
+            "exclusion_zones": None,
+        },
+    },
+)
+
+
+PIPELINES: dict[str, Pipeline] = {p.key: p for p in (PREDICT, TRAIN, TUNE)}

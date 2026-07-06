@@ -12,6 +12,7 @@ Run directory layout (fixed names, see ``Pipeline.artifact_paths``)::
         logs/           one log file per stage
         manifests/ preds/ merged/          (predict)
         manifests/ dataset/ model/         (train)
+        merged_raw/ tuning/ merged/        (tune)
 """
 
 from __future__ import annotations
@@ -142,8 +143,8 @@ def prepare_run(
     ``overrides`` maps dotted config paths to values; artifact locations are
     then forced into the run directory regardless of base config/overrides.
 
-    The pipeline's flow section (``train``/``predict``, matching the
-    pipeline key) is resolved against ``shared`` here, so the config written
+    The pipeline's flow section (``train``/``predict``/``tune``, matching
+    the pipeline key) is resolved against ``shared`` here, so the config written
     into the run directory — and read by every stage — is already flat.
     """
     config = load_flow_config(str(base_config_path), pipeline.key)
