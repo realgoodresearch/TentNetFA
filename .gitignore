@@ -224,3 +224,9 @@ runs/
 tmp/
 *.log
 *.csv
+
+# Evaluation inputs/outputs that should not be committed
+.Rhistory
+displacement_tracker/evaluation/spatial_data/sample.tif
+displacement_tracker/evaluation/results/
+displacement_tracker/evaluation/predictions/

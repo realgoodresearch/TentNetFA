@@ -384,6 +384,34 @@ With `--process-by-date`, outputs are grouped and merged independently for each 
 
 Without `--process-by-date`, all predictions in the input directory are merged into a single combined output containing all detected tents.
 
+### Step 4: Evaluate Model Predictions
+
+The `displacement_tracker/evaluation/` package compares model predictions
+against the manually annotated tiles in
+`displacement_tracker/evaluation/manual_eval/manual_annotation_results.csv`
+and produces CSV summaries and plots of tile-level error: overall and
+hex-aggregated error (analytic and bootstrap CIs), error by municipality,
+month, building density, agriculture and destruction areas, and
+manual-vs-model correlations.
+
+Run the full suite from a JSON config:
+
+```bash
+poetry run run-evaluation --config displacement_tracker/evaluation/analysis_config.json
+```
+
+Relative paths in the config are resolved against the config file's
+directory. By default the suite evaluates the `model_column` already present
+in the annotation CSV. To evaluate a new model instead, set
+`prediction_dir` (a folder of per-date `YYYYMMDD.gpkg` files produced by
+`merge-geojsons --process-by-date`), `sample_tif` (any GeoTIFF with the
+prediction CRS) and `new_model_column` in the config; the new model's counts
+are then joined onto the annotations before the analyses run.
+
+Results are written to the config's `output_dir`
+(`displacement_tracker/evaluation/results/` by default, which is
+gitignored).
+
 ## Output
 
 -   **HDF5 Datasets**: The `coordinate-scanner` script produces HDF5 files containing `feature`, `prewar`, `label`, and `meta` datasets for training and prediction.

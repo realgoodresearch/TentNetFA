@@ -1,143 +1,109 @@
+"""Tile-level manual-vs-model Pearson correlations on linear and log scales."""
+
 import os
-import numpy as np
-import pandas as pd
+
 import matplotlib.pyplot as plt
+import numpy as np
 from scipy.stats import pearsonr
 
-# ==========================
-# CONFIGURATION
-# ==========================
+from displacement_tracker.evaluation.scripts.common import (
+    ensure_output_dir,
+    load_annotations,
+)
 
-ANNOTATION_CSV = "displacement_tracker/evaluation/manual_annotation_results.csv"
 
-OUTPUT_LINEAR = "displacement_tracker/evaluation/results/tile_prediction_correlation_linear.png"
-OUTPUT_LOG = "displacement_tracker/evaluation/results/tile_prediction_correlation_log.png"
-OUTPUT_LINEAR_NONZERO = "displacement_tracker/evaluation/results/tile_prediction_correlation_linear_nonzero.png"
-OUTPUT_LOG_NONZERO = "displacement_tracker/evaluation/results/tile_prediction_correlation_log_nonzero.png"
+def _clean_xy(x, y):
+    """Remove NaN / inf pairs from x and y."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    mask = np.isfinite(x) & np.isfinite(y)
+    return x[mask], y[mask]
 
-os.makedirs("displacement_tracker/evaluation/results", exist_ok=True)
 
-# ==========================
-# LOAD DATA
-# ==========================
+def _safe_pearsonr(x, y):
+    """Pearson correlation, or (nan, nan) with fewer than 2 valid points."""
+    x, y = _clean_xy(x, y)
+    if len(x) < 2:
+        return np.nan, np.nan
+    try:
+        r, p = pearsonr(x, y)
+        return float(r), float(p)
+    except Exception:
+        return np.nan, np.nan
 
-df = pd.read_csv(ANNOTATION_CSV)
 
-required_cols = {"manual_tent_count", "model_tent_count"}
+def _plot_scatter_with_1to1(x, y, xlabel, ylabel, title, output_path):
+    x, y = _clean_xy(x, y)
 
-if not required_cols.issubset(df.columns):
-    raise ValueError("Annotation CSV missing required columns.")
+    plt.figure(figsize=(8, 8))
+    if len(x) > 0:
+        plt.scatter(x, y, alpha=0.6)
+        max_val = max(np.max(x), np.max(y))
+        plt.plot([0, max_val], [0, max_val])
 
-x = df["manual_tent_count"].values
-y = df["model_tent_count"].values
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
 
-# ==========================
-# LINEAR CORRELATION (ALL)
-# ==========================
 
-r_linear, p_linear = pearsonr(x, y)
+def evaluate_tile_correlation(
+    annotation_csv: str,
+    output_dir: str,
+    manual_column: str = "manual_tent_count",
+    model_column: str = "model_tent_count",
+):
+    """
+    Compute and plot tile-level Pearson correlations on linear and log
+    scales, over all tiles and over tiles with a nonzero manual count.
 
-plt.figure(figsize=(8, 8))
-plt.scatter(x, y, alpha=0.6)
+    Outputs:
+        - tile_prediction_correlation_linear.png
+        - tile_prediction_correlation_log.png
+        - tile_prediction_correlation_linear_nonzero.png
+        - tile_prediction_correlation_log_nonzero.png
+    """
+    ensure_output_dir(output_dir)
 
-max_val = max(np.max(x), np.max(y))
-plt.plot([0, max_val], [0, max_val])
+    df = load_annotations(annotation_csv, manual_column, model_column)
 
-plt.xlabel("Manual Tent Count")
-plt.ylabel("Model Tent Count")
-plt.title(f"Tile-Level Prediction Correlation (Linear)\nPearson r = {r_linear:.3f}")
+    x_all = df[manual_column].to_numpy(dtype=float)
+    y_all = df[model_column].to_numpy(dtype=float)
 
-plt.tight_layout()
-plt.savefig(OUTPUT_LINEAR)
-plt.close()
+    nonzero = df[df[manual_column] > 0]
+    x_nz = nonzero[manual_column].to_numpy(dtype=float)
+    y_nz = nonzero[model_column].to_numpy(dtype=float)
 
-# ==========================
-# LOG CORRELATION (ALL)
-# ==========================
+    variants = {
+        "linear_all": (x_all, y_all, False, "Linear", "tile_prediction_correlation_linear.png"),
+        "log_all": (x_all, y_all, True, "Log Scale", "tile_prediction_correlation_log.png"),
+        "linear_nonzero": (x_nz, y_nz, False, "Linear, Manual > 0", "tile_prediction_correlation_linear_nonzero.png"),
+        "log_nonzero": (x_nz, y_nz, True, "Log, Manual > 0", "tile_prediction_correlation_log_nonzero.png"),
+    }
 
-x_log = np.log1p(x)
-y_log = np.log1p(y)
+    results = {}
+    for key, (x, y, log_scale, scale_label, filename) in variants.items():
+        if log_scale:
+            x, y = np.log1p(x), np.log1p(y)
+            xlabel = "log(1 + Manual Tent Count)"
+            ylabel = "log(1 + Model Tent Count)"
+        else:
+            xlabel = "Manual Tent Count"
+            ylabel = "Model Tent Count"
 
-r_log, p_log = pearsonr(x_log, y_log)
+        r, p = _safe_pearsonr(x, y)
+        output_path = os.path.join(output_dir, filename)
 
-plt.figure(figsize=(8, 8))
-plt.scatter(x_log, y_log, alpha=0.6)
+        _plot_scatter_with_1to1(
+            x, y, xlabel, ylabel,
+            title=(
+                f"Tile-Level Prediction Correlation ({scale_label})\n"
+                f"Pearson r = {r:.3f}"
+            ),
+            output_path=output_path,
+        )
+        results[key] = {"r": r, "p": p, "output": output_path}
 
-max_log = max(np.max(x_log), np.max(y_log))
-plt.plot([0, max_log], [0, max_log])
-
-plt.xlabel("log(1 + Manual Tent Count)")
-plt.ylabel("log(1 + Model Tent Count)")
-plt.title(f"Tile-Level Prediction Correlation (Log Scale)\nPearson r = {r_log:.3f}")
-
-plt.tight_layout()
-plt.savefig(OUTPUT_LOG)
-plt.close()
-
-# ==========================
-# FILTER: MANUAL COUNT > 0
-# ==========================
-
-df_nonzero = df[df["manual_tent_count"] > 0]
-
-x_nz = df_nonzero["manual_tent_count"].values
-y_nz = df_nonzero["model_tent_count"].values
-
-# ==========================
-# LINEAR CORRELATION (NONZERO)
-# ==========================
-
-r_linear_nz, p_linear_nz = pearsonr(x_nz, y_nz)
-
-plt.figure(figsize=(8, 8))
-plt.scatter(x_nz, y_nz, alpha=0.6)
-
-max_val_nz = max(np.max(x_nz), np.max(y_nz))
-plt.plot([0, max_val_nz], [0, max_val_nz])
-
-plt.xlabel("Manual Tent Count")
-plt.ylabel("Model Tent Count")
-plt.title(f"Tile-Level Prediction Correlation (Linear, Manual > 0)\nPearson r = {r_linear_nz:.3f}")
-
-plt.tight_layout()
-plt.savefig(OUTPUT_LINEAR_NONZERO)
-plt.close()
-
-# ==========================
-# LOG CORRELATION (NONZERO)
-# ==========================
-
-x_log_nz = np.log1p(x_nz)
-y_log_nz = np.log1p(y_nz)
-
-r_log_nz, p_log_nz = pearsonr(x_log_nz, y_log_nz)
-
-plt.figure(figsize=(8, 8))
-plt.scatter(x_log_nz, y_log_nz, alpha=0.6)
-
-max_log_nz = max(np.max(x_log_nz), np.max(y_log_nz))
-plt.plot([0, max_log_nz], [0, max_log_nz])
-
-plt.xlabel("log(1 + Manual Tent Count)")
-plt.ylabel("log(1 + Model Tent Count)")
-plt.title(f"Tile-Level Prediction Correlation (Log, Manual > 0)\nPearson r = {r_log_nz:.3f}")
-
-plt.tight_layout()
-plt.savefig(OUTPUT_LOG_NONZERO)
-plt.close()
-
-# ==========================
-# PRINT RESULTS
-# ==========================
-
-print("Saved plots:")
-print(" - Linear (all):", OUTPUT_LINEAR)
-print(" - Log (all):", OUTPUT_LOG)
-print(" - Linear (manual > 0):", OUTPUT_LINEAR_NONZERO)
-print(" - Log (manual > 0):", OUTPUT_LOG_NONZERO)
-
-print("\nCorrelations:")
-print(f"Linear (all)        r={r_linear:.4f}, p={p_linear:.4g}")
-print(f"Log (all)           r={r_log:.4f}, p={p_log:.4g}")
-print(f"Linear (manual>0)   r={r_linear_nz:.4f}, p={p_linear_nz:.4g}")
-print(f"Log (manual>0)      r={r_log_nz:.4f}, p={p_log_nz:.4g}")
+    return results
