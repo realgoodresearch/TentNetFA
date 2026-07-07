@@ -1,0 +1,76 @@
+name: Claude Thermo-Nuclear Code Review
+
+# Manual-only review to avoid unnecessary token spend:
+#   - Comment "@claude review" on a PR when it's ready for review, OR
+#   - Run the workflow manually from the Actions tab with a PR number.
+# Only PRs targeting `main` are reviewed.
+#
+# Requires the ANTHROPIC_API_KEY repository secret to be set.
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull request number to review"
+        required: true
+        type: string
+
+jobs:
+  claude-review:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue.pull_request && contains(github.event.comment.body, '@claude review'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - name: Resolve PR and check base branch
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.issue.number }}
+        run: |
+          base=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq .baseRefName)
+          echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          if [ "$base" != "main" ]; then
+            echo "PR #$PR_NUMBER targets '$base', not 'main' — skipping review."
+          fi
+
+      - name: Checkout PR merge result
+        if: steps.pr.outputs.base == 'main'
+        uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ steps.pr.outputs.number }}/merge
+          fetch-depth: 0
+
+      - name: Run thermo-nuclear code review
+        if: steps.pr.outputs.base == 'main'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          track_progress: true
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ steps.pr.outputs.number }}
+
+            Perform a thermo-nuclear code quality review of this pull request.
+
+            Read .claude/skills/thermo-nuclear-code-quality-review/SKILL.md and
+            follow it exactly — its review standards, priorities, tone, and
+            approval bar govern this review.
+
+            Use `gh pr diff` to get the full diff and read the surrounding code
+            in the checked-out repository as needed to judge structure and
+            abstractions in context.
+
+            Post specific issues as inline comments on the relevant lines, and
+            a single top-level summary comment with your prioritized findings
+            and whether the PR meets the skill's approval bar.
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
