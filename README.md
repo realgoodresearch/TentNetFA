@@ -412,6 +412,30 @@ Results are written to the config's `output_dir`
 (`displacement_tracker/evaluation/results/` by default, which is
 gitignored).
 
+#### Using the manual annotations as validation reference data
+
+The manual annotations also plug into the generic reference-data interface
+used by the validation and tuning flows (`util/reference_data.py`,
+introduced with the hyperparameter-tuning pipeline). Two options:
+
+- Reference type `manual_eval` (registered by importing
+  `displacement_tracker.evaluation.annotation_reference`): point
+  `reference.path` at the annotation CSV and set `reference.date` to pick
+  one acquisition date — each annotated tile's count lands in the
+  master-grid cell containing the tile centroid.
+- Materialize one date as a counts raster consumable by the built-in
+  `raster` reference type:
+
+```bash
+poetry run annotation-reference --date 2024-10-14 \
+  --master-grid path/to/master_grid.tif \
+  --output reference_20241014.tif
+```
+
+Note the annotations are a sparse sample of tiles: cells without an
+annotated tile read as zero reference counts, so restrict comparisons to
+annotated areas.
+
 ## Output
 
 -   **HDF5 Datasets**: The `coordinate-scanner` script produces HDF5 files containing `feature`, `prewar`, `label`, and `meta` datasets for training and prediction.
