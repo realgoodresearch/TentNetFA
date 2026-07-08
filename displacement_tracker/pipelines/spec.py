@@ -57,6 +57,9 @@ class Pipeline:
     # Config sections injected if absent from the base YAML (e.g. the merge
     # settings, which historically lived in CLI flags rather than config).
     extra_defaults: dict = field(default_factory=dict)
+    # Dotted config path -> value applied after base config and overrides,
+    # like artifact_paths: invariants the pipeline depends on, not defaults.
+    forced_values: dict = field(default_factory=dict)
 
     @property
     def subfolders(self) -> list[str]:
@@ -295,14 +298,19 @@ TUNE = Pipeline(
         "tuning.best_params": "tuning/best_params.yaml",
         "tuning.final_output": "merged/merged_tuned.gpkg",
     },
+    forced_values={
+        # The scan must see every candidate point (the thresholds are
+        # exactly what is being tuned), and per-file thresholds would
+        # shadow the tuned global threshold — the raw pass is always
+        # unthresholded, whatever the base config or overrides say.
+        "merge.min_adj_peak": 0.0,
+        "merge.adjustment_factor": 1.0,
+        "merge.thresholds_config": None,
+    },
     extra_defaults={
         "merge": {
             "min_distance_m": 3.0,
             "agreement": 1,
-            # The raw pass keeps every point; thresholds are tuned downstream.
-            "min_adj_peak": 0.0,
-            "adjustment_factor": 1.0,
-            "thresholds_config": None,
             "exclusion_zones_gpkg": None,
             "inclusion_zone": None,
         },

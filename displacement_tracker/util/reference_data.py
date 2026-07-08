@@ -30,7 +30,6 @@ Built-in source types (see ``SOURCE_TYPES``):
 
 from __future__ import annotations
 
-import inspect
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional, Tuple
@@ -77,7 +76,13 @@ class PointsSource(ReferenceSource):
 
     def counts_on_grid(self, grid_shape, transform, crs, clip_geom=None):
         gdf = self._gdf
-        if gdf.crs is not None and crs is not None:
+        if crs is not None:
+            if gdf.crs is None:
+                raise ValueError(
+                    "Reference points have no CRS — set one on the file; "
+                    "silently rasterizing them onto the master grid would "
+                    "produce wrong counts."
+                )
             gdf = gdf.to_crs(crs)
         if clip_geom is not None:
             gdf = gdf.clip(clip_geom)
@@ -220,11 +225,12 @@ def rasterize_point_counts(
     )
 
 
+# type name -> (factory, options it accepts besides `path`). The option
+# sets are the whole config contract, stated in one place.
 SOURCE_TYPES = {
-    "vector": VectorReferenceSource,
-    "geojson": VectorReferenceSource,  # alias: plain annotation files
-    "unosat": UnosatReferenceSource,
-    "raster": RasterReferenceSource,
+    "vector": (VectorReferenceSource, frozenset({"layer", "where"})),
+    "unosat": (UnosatReferenceSource, frozenset({"date", "layer", "where"})),
+    "raster": (RasterReferenceSource, frozenset({"band"})),
 }
 
 
@@ -260,7 +266,7 @@ def build_reference_source(cfg) -> ReferenceSource:
         raise ValueError("Reference config is missing required key: path")
     source_type = cfg.pop("type", None) or _infer_type(path)
     try:
-        factory = SOURCE_TYPES[source_type]
+        factory, allowed = SOURCE_TYPES[source_type]
     except KeyError:
         raise ValueError(
             f"Unknown reference type {source_type!r}; expected one of: "
@@ -269,9 +275,8 @@ def build_reference_source(cfg) -> ReferenceSource:
     # Only pass what the type understands, so options left over from
     # another type (e.g. a unosat `date` after switching to vector) don't
     # abort the run.
-    accepted_params = inspect.signature(factory.__init__).parameters
-    accepted = {k: v for k, v in cfg.items() if k in accepted_params}
-    dropped = sorted(set(cfg) - set(accepted))
+    accepted = {k: v for k, v in cfg.items() if k in allowed}
+    dropped = sorted(set(cfg) - allowed)
     if dropped:
         LOGGER.warning(
             "Reference type %r ignores option(s): %s", source_type, dropped

@@ -138,6 +138,10 @@ def prepare_run(
     for dotted, value in (overrides or {}).items():
         deep_set(config, dotted, value)
 
+    # Pipeline invariants win over base config and overrides alike.
+    for dotted, value in pipeline.forced_values.items():
+        deep_set(config, dotted, value)
+
     run_root = Path(run_root or default_run_root())
     run_name = run_name or datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = run_root / pipeline.key / run_name

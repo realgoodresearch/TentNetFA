@@ -16,7 +16,10 @@ from pathlib import Path
 import click
 import yaml
 
-from displacement_tracker.h_merge_geojsons import merge_geojsons
+from displacement_tracker.h_merge_geojsons import (
+    merge_geojsons,
+    merge_kwargs_from_config,
+)
 from displacement_tracker.util.config import flow_option, load_flow_config
 from displacement_tracker.util.logging_config import setup_logging
 
@@ -50,13 +53,10 @@ def cli(config: str, flow: str) -> None:
     merge_cfg = params.get("merge") or {}
     tuning = params.get("tuning") or {}
 
-    input_folder = merge_cfg.get("input_folder") or (
-        params.get("prediction") or {}
-    ).get("output_folder")
+    input_folder = merge_cfg.get("input_folder")
     if not input_folder:
         raise click.ClickException(
-            "Missing required config key: merge.input_folder "
-            "(or prediction.output_folder as fallback)"
+            "Missing required config key: merge.input_folder"
         )
     output = tuning.get("final_output")
     if not output:
@@ -82,18 +82,20 @@ def cli(config: str, flow: str) -> None:
         best.get("value", "?"),
     )
 
+    # The tuned pair replaces the config's thresholds; per-file
+    # thresholds_config is deliberately omitted, since per-file entries
+    # would shadow the tuned global threshold (resolve_threshold prefers
+    # them).
+    kwargs = merge_kwargs_from_config(
+        merge_cfg,
+        ("min_distance_m", "agreement", "exclusion_zones_gpkg", "inclusion_zone"),
+    )
     merge_geojsons(
         input_folder,
         output,
-        min_distance_m=float(merge_cfg.get("min_distance_m", 3.0)),
-        agreement=int(merge_cfg.get("agreement", 1)),
         min_adj_peak=float(best["min_adj_peak"]),
         adjustment_factor=float(best["adjustment_factor"]),
-        # Per-file thresholds would shadow the tuned global threshold
-        # (resolve_threshold prefers them), so they are deliberately ignored.
-        thresholds_config=None,
-        exclusion_zones_gpkg=merge_cfg.get("exclusion_zones_gpkg"),
-        inclusion_zone=merge_cfg.get("inclusion_zone"),
+        **kwargs,
     )
 
 

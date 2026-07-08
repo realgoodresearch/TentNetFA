@@ -8,7 +8,7 @@ hull.
 
 import os
 from pathlib import Path
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple
 
 import geopandas as gpd
 import numpy as np
@@ -17,10 +17,7 @@ from rasterio import features, mask
 from rasterio.transform import rowcol
 from scipy.stats import spearmanr
 
-from displacement_tracker.util.reference_data import (
-    PointsSource,
-    ReferenceSource,
-)
+from displacement_tracker.util.reference_data import ReferenceSource
 from displacement_tracker.util.thresholding import (
     passes_threshold,
     rescale_adjusted_peak,
@@ -49,18 +46,11 @@ def list_point_files(directory: str) -> List[str]:
 
 def prepare_grouped_cell_inputs(
     pred_gdf: gpd.GeoDataFrame,
-    reference: Union[ReferenceSource, gpd.GeoDataFrame],
+    reference: ReferenceSource,
     src_grid: rasterio.io.DatasetReader,
     nodata_val: float = -9999.0,
 ) -> Dict[str, object]:
-    """Build one-time geometry/grid products and per-point cell assignments.
-
-    ``reference`` is any :class:`ReferenceSource`; a plain point
-    GeoDataFrame is accepted as a convenience and wrapped on the fly.
-    """
-    if isinstance(reference, gpd.GeoDataFrame):
-        reference = PointsSource(reference)
-
+    """Build one-time geometry/grid products and per-point cell assignments."""
     prediction_extent_geom = pred_gdf.union_all().convex_hull
 
     out_image, out_transform = mask.mask(

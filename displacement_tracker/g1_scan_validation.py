@@ -28,6 +28,7 @@ validation at a single fixed (factor, cutoff), see g2_validate_geojson.py.
 """
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -330,14 +331,32 @@ def _require(cfg: dict, section: str, key: str):
     return value
 
 
-def run_scan(params: dict) -> dict:
-    """Run the threshold scan described by a resolved (flat) config.
+@dataclass(frozen=True)
+class ScanSettings:
+    """Validated inputs of one threshold scan, extracted from the config."""
 
-    Reads the ``tuning`` section (input defaults to ``merge.output``, the
-    unthresholded merge of the tune flow), writes the search trace plot,
-    ``scan_summary.csv``, best-parameter rasters and ``best_params.yaml``
-    into ``tuning.out_dir``, and returns the tuned parameters.
-    """
+    input_path: str
+    master_grid: str
+    reference: object  # config for build_reference_source
+    out_dir: str
+    best_params_path: str
+    metric: str
+    scan_metrics: List[str]
+    factor_bounds: Tuple[float, float]
+    cutoff_bounds: Tuple[float, float]
+    ridge_probes: int
+    xtol_factor: float
+    xtol_cutoff: float
+    refine_maxiter: int
+    exclusion_zones: Optional[str]
+
+    @property
+    def base_name(self) -> str:
+        return os.path.splitext(os.path.basename(self.input_path))[0]
+
+
+def _scan_settings(params: dict) -> ScanSettings:
+    """Extract and validate the scan settings from a resolved (flat) config."""
     tuning = params.get("tuning") or {}
     merge_cfg = params.get("merge") or {}
 
@@ -347,12 +366,7 @@ def run_scan(params: dict) -> dict:
             "Missing required config key: tuning.input "
             "(or merge.output as fallback)"
         )
-    master_grid = _require(tuning, "tuning", "master_grid")
-    reference_cfg = _require(tuning, "tuning", "reference")
     out_dir = tuning.get("out_dir") or "scan_results"
-    best_params_path = tuning.get("best_params") or os.path.join(
-        out_dir, "best_params.yaml"
-    )
     metric, scan_metrics = _resolve_metrics(tuning)
 
     factor_bounds = (
@@ -367,99 +381,76 @@ def run_scan(params: dict) -> dict:
         raise click.ClickException(
             "tuning.factor_min/cutoff_min must be strictly less than their max."
         )
-    ridge_probes = int(tuning.get("ridge_probes", 5))
-    xtol_factor = float(tuning.get("xtol_factor", 1e-3))
-    xtol_cutoff = float(tuning.get("xtol_cutoff", 1e-6))
-    refine_maxiter = int(tuning.get("refine_maxiter", 60))
 
-    os.makedirs(out_dir, exist_ok=True)
-    reference = build_reference_source(reference_cfg)
+    return ScanSettings(
+        input_path=input_path,
+        master_grid=_require(tuning, "tuning", "master_grid"),
+        reference=_require(tuning, "tuning", "reference"),
+        out_dir=out_dir,
+        best_params_path=tuning.get("best_params")
+        or os.path.join(out_dir, "best_params.yaml"),
+        metric=metric,
+        scan_metrics=scan_metrics,
+        factor_bounds=factor_bounds,
+        cutoff_bounds=cutoff_bounds,
+        ridge_probes=int(tuning.get("ridge_probes", 5)),
+        xtol_factor=float(tuning.get("xtol_factor", 1e-3)),
+        xtol_cutoff=float(tuning.get("xtol_cutoff", 1e-6)),
+        refine_maxiter=int(tuning.get("refine_maxiter", 60)),
+        exclusion_zones=tuning.get("exclusion_zones"),
+    )
 
-    exclusion_zones = tuning.get("exclusion_zones")
-    exclusion_geom = None
-    if exclusion_zones:
-        exclusion_geom = gpd.read_file(exclusion_zones).geometry.union_all()
 
-    base_name = os.path.splitext(os.path.basename(input_path))[0]
-    total_evals = _budget_per_metric(ridge_probes, refine_maxiter) * len(scan_metrics)
-    pbar = tqdm(total=total_evals, desc="evals", unit="eval")
-
-    with rasterio.open(master_grid) as src_grid:
-        pred_gdf = gpd.read_file(input_path).to_crs(src_grid.crs)
-        if exclusion_geom is not None:
-            pred_gdf = pred_gdf.clip(exclusion_geom)
-        if pred_gdf.empty:
-            raise click.ClickException(f"No predictions left to scan in {input_path}")
-
-        try:
-            grouped = prepare_grouped_cell_inputs(pred_gdf, reference, src_grid)
-        except Exception as exc:
-            raise click.ClickException(
-                f"Could not resolve {input_path} onto the master grid: {exc}"
-            ) from exc
-
-        bests, trace, ridges = scan_tile(
-            grouped=grouped,
-            factor_bounds=factor_bounds,
-            cutoff_bounds=cutoff_bounds,
-            scan_metrics=scan_metrics,
-            n_probes=ridge_probes,
-            xtol_factor=xtol_factor,
-            xtol_cutoff=xtol_cutoff,
-            refine_maxiter=refine_maxiter,
-            progress=lambda: pbar.update(1),
+def _load_predictions(settings: ScanSettings, raster_crs) -> gpd.GeoDataFrame:
+    """Read the merged raw predictions, optionally clipped to the scan zones."""
+    pred_gdf = gpd.read_file(settings.input_path).to_crs(raster_crs)
+    if settings.exclusion_zones:
+        exclusion_geom = gpd.read_file(settings.exclusion_zones).geometry.union_all()
+        pred_gdf = pred_gdf.clip(exclusion_geom)
+    if pred_gdf.empty:
+        raise click.ClickException(
+            f"No predictions left to scan in {settings.input_path}"
         )
-        pbar.close()
+    return pred_gdf
 
-        best_summary = " | ".join(
-            f"{m}: {bests[m]['value']:.4f} @ f={bests[m]['factor']:.3f}, c={bests[m]['cutoff']:.4f}"
-            for m in scan_metrics
-            if bests[m]["factor"] is not None
-        )
-        click.echo(f"{base_name} ({len(trace)} evals) -> {best_summary}")
 
-        plot_search_trace(
-            trace=trace, bests=bests, ridges=ridges,
-            factor_bounds=factor_bounds, cutoff_bounds=cutoff_bounds,
-            out_path=Path(out_dir) / f"{base_name}_search_trace.png",
-            title_prefix=base_name,
-        )
+def _export_best(settings: ScanSettings, grouped, chosen, src_grid) -> Dict[str, float]:
+    """Write the rasters at the chosen optimum; return its final metrics."""
+    pred_prepped = grouped["pred_prepped"]
+    processed = process_grouped_cells(
+        pred_rows=pred_prepped["row"].to_numpy(dtype=np.int32)[chosen["keep"]],
+        pred_cols=pred_prepped["col"].to_numpy(dtype=np.int32)[chosen["keep"]],
+        val_raster=grouped["val_raster"].copy(),
+        mask_array=grouped["mask_array"],
+        grid_shape=grouped["grid_shape"],
+        nodata_val=grouped["nodata_val"],
+    )
+    diff_masked = processed["diff"] * processed["mask_array"].astype(np.int32)
+    write_output_rasters(
+        out_dir=settings.out_dir,
+        base_name=settings.base_name,
+        pred_raster=processed["pred_raster"],
+        val_raster=processed["val_raster"],
+        diff_masked=diff_masked,
+        src_grid=src_grid,
+        grid_shape=grouped["grid_shape"],
+        out_transform=grouped["out_transform"],
+    )
+    return compute_metrics(
+        processed["pred_raster"],
+        processed["val_raster"],
+        processed["error_raster"],
+        processed["mask_array"],
+    )
 
-        chosen = bests[metric]
-        if chosen["factor"] is None:
-            raise click.ClickException(
-                f"The scan found no finite value for metric {metric!r}; "
-                "check the reference data and the factor/cutoff bounds."
-            )
-        pred_prepped = grouped["pred_prepped"]
-        processed = process_grouped_cells(
-            pred_rows=pred_prepped["row"].to_numpy(dtype=np.int32)[chosen["keep"]],
-            pred_cols=pred_prepped["col"].to_numpy(dtype=np.int32)[chosen["keep"]],
-            val_raster=grouped["val_raster"].copy(),
-            mask_array=grouped["mask_array"],
-            grid_shape=grouped["grid_shape"],
-            nodata_val=grouped["nodata_val"],
-        )
-        diff_masked = processed["diff"] * processed["mask_array"].astype(np.int32)
-        write_output_rasters(
-            out_dir=out_dir,
-            base_name=base_name,
-            pred_raster=processed["pred_raster"],
-            val_raster=processed["val_raster"],
-            diff_masked=diff_masked,
-            src_grid=src_grid,
-            grid_shape=grouped["grid_shape"],
-            out_transform=grouped["out_transform"],
-        )
-        final_metrics = compute_metrics(
-            processed["pred_raster"],
-            processed["val_raster"],
-            processed["error_raster"],
-            processed["mask_array"],
-        )
 
-    row = {"file": os.path.basename(input_path), "metric": metric, "n_evals": len(trace)}
-    for m in scan_metrics:
+def _write_summary_csv(settings: ScanSettings, bests, ridges, trace, final_metrics):
+    row = {
+        "file": os.path.basename(settings.input_path),
+        "metric": settings.metric,
+        "n_evals": len(trace),
+    }
+    for m in settings.scan_metrics:
         row[f"best_{m}"] = bests[m]["value"]
         row[f"best_{m}_factor"] = bests[m]["factor"]
         row[f"best_{m}_cutoff"] = bests[m]["cutoff"]
@@ -467,34 +458,105 @@ def run_scan(params: dict) -> dict:
         row[f"ridge_{m}_a"] = a
         row[f"ridge_{m}_b"] = b
     row.update({f"final_{k}": v for k, v in final_metrics.items()})
-    summary_path = os.path.join(out_dir, "scan_summary.csv")
+    summary_path = os.path.join(settings.out_dir, "scan_summary.csv")
     pd.DataFrame([row]).to_csv(summary_path, index=False)
     click.echo(f"Summary saved to: {summary_path}")
 
+
+def _write_best_params(settings: ScanSettings, bests, chosen) -> dict:
     # The merge stage names the pair (adjustment_factor, min_adj_peak);
     # h2_merge_tuned reads exactly these keys back.
     best_params = {
-        "metric": metric,
+        "metric": settings.metric,
         "value": float(chosen["value"]),
         "adjustment_factor": float(chosen["factor"]),
         "min_adj_peak": float(chosen["cutoff"]),
-        "input": str(input_path),
+        "input": str(settings.input_path),
         "bests": {
             m: {
                 "value": bests[m]["value"],
                 "adjustment_factor": bests[m]["factor"],
                 "min_adj_peak": bests[m]["cutoff"],
             }
-            for m in scan_metrics
+            for m in settings.scan_metrics
         },
     }
-    os.makedirs(os.path.dirname(best_params_path) or ".", exist_ok=True)
-    with open(best_params_path, "w", encoding="utf-8") as f:
+    path = settings.best_params_path
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
         yaml.safe_dump(best_params, f, sort_keys=False)
     click.echo(
-        f"Best parameters ({metric}={chosen['value']:.4f}) saved to: {best_params_path}"
+        f"Best parameters ({settings.metric}={chosen['value']:.4f}) saved to: {path}"
     )
     return best_params
+
+
+def run_scan(params: dict) -> dict:
+    """Run the threshold scan described by a resolved (flat) config.
+
+    Reads the ``tuning`` section (input defaults to ``merge.output``, the
+    unthresholded merge of the tune flow), writes the search trace plot,
+    ``scan_summary.csv``, best-parameter rasters and ``best_params.yaml``
+    into ``tuning.out_dir``, and returns the tuned parameters.
+    """
+    settings = _scan_settings(params)
+    os.makedirs(settings.out_dir, exist_ok=True)
+    reference = build_reference_source(settings.reference)
+
+    total_evals = (
+        _budget_per_metric(settings.ridge_probes, settings.refine_maxiter)
+        * len(settings.scan_metrics)
+    )
+    pbar = tqdm(total=total_evals, desc="evals", unit="eval")
+
+    with rasterio.open(settings.master_grid) as src_grid:
+        pred_gdf = _load_predictions(settings, src_grid.crs)
+        try:
+            grouped = prepare_grouped_cell_inputs(pred_gdf, reference, src_grid)
+        except Exception as exc:
+            raise click.ClickException(
+                f"Could not resolve {settings.input_path} onto the master "
+                f"grid: {exc}"
+            ) from exc
+
+        bests, trace, ridges = scan_tile(
+            grouped=grouped,
+            factor_bounds=settings.factor_bounds,
+            cutoff_bounds=settings.cutoff_bounds,
+            scan_metrics=settings.scan_metrics,
+            n_probes=settings.ridge_probes,
+            xtol_factor=settings.xtol_factor,
+            xtol_cutoff=settings.xtol_cutoff,
+            refine_maxiter=settings.refine_maxiter,
+            progress=lambda: pbar.update(1),
+        )
+        pbar.close()
+
+        best_summary = " | ".join(
+            f"{m}: {bests[m]['value']:.4f} @ f={bests[m]['factor']:.3f}, c={bests[m]['cutoff']:.4f}"
+            for m in settings.scan_metrics
+            if bests[m]["factor"] is not None
+        )
+        click.echo(f"{settings.base_name} ({len(trace)} evals) -> {best_summary}")
+
+        plot_search_trace(
+            trace=trace, bests=bests, ridges=ridges,
+            factor_bounds=settings.factor_bounds,
+            cutoff_bounds=settings.cutoff_bounds,
+            out_path=Path(settings.out_dir) / f"{settings.base_name}_search_trace.png",
+            title_prefix=settings.base_name,
+        )
+
+        chosen = bests[settings.metric]
+        if chosen["factor"] is None:
+            raise click.ClickException(
+                f"The scan found no finite value for metric {settings.metric!r}; "
+                "check the reference data and the factor/cutoff bounds."
+            )
+        final_metrics = _export_best(settings, grouped, chosen, src_grid)
+
+    _write_summary_csv(settings, bests, ridges, trace, final_metrics)
+    return _write_best_params(settings, bests, chosen)
 
 
 @click.command()

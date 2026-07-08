@@ -176,9 +176,11 @@ manually.
 
 ### Hyperparameter tuning pipeline
 
-The tune flow reuses the `merge` section for both merge passes (the raw pass
-forces `min_adj_peak: 0`, `adjustment_factor: 1` so the scan sees every
-candidate point) and adds a `tuning` section:
+The tune flow reuses the `merge` section for both merge passes and adds a
+`tuning` section. The runner **forces** `merge.min_adj_peak: 0`,
+`merge.adjustment_factor: 1` and `merge.thresholds_config: null` — whatever
+the base config or overrides say — so the scan always sees every candidate
+point and the tuned global threshold cannot be shadowed:
 
 | Key | Role |
 |---|---|
