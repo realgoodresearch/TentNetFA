@@ -28,7 +28,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 
 from displacement_tracker.paired_image_dataset import PairedImageDataset
-from displacement_tracker.util.env_loader import load_yaml_with_env
+from displacement_tracker.util.config import flow_option, load_flow_config
 from displacement_tracker.util.logging_config import setup_logging
 
 LOGGER = setup_logging("metadata-embedding")
@@ -202,8 +202,9 @@ def nt_xent_loss(z1: torch.Tensor, z2: torch.Tensor, temperature: float) -> torc
 
 @click.command()
 @click.argument("config", type=click.Path(exists=True))
-def cli(config: str) -> None:
-    params = load_yaml_with_env(config)
+@flow_option(default="train")
+def cli(config: str, flow: str) -> None:
+    params = load_flow_config(config, flow)
     if "metadata_embedding" not in params:
         raise click.ClickException("Missing required config key: metadata_embedding")
     manifest_path = params.get("manifest") or params.get("manifest_folder")

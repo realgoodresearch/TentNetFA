@@ -22,7 +22,7 @@ from displacement_tracker.util.annotations import (
     filter_tents_by_target_date,
     group_coords,
 )
-from displacement_tracker.util.env_loader import load_yaml_with_env
+from displacement_tracker.util.config import flow_option, load_flow_config
 from displacement_tracker.util.logging_config import setup_logging
 from displacement_tracker.util.manifest_writer import (
     ManifestWriter,
@@ -345,9 +345,10 @@ def scan_grouped_coordinates(
 
 @click.command()
 @click.argument("config", type=click.Path(exists=True, dir_okay=False))
-def cli(config):
+@flow_option(default="train")
+def cli(config, flow):
     """Run the annotated (GeoJSON + image) scan flow from a YAML config."""
-    params = load_yaml_with_env(config)
+    params = load_flow_config(config, flow)
     try:
         require_keys(params, ("geotiff_dir", "geojson", "processing"))
     except KeyError as e:
@@ -366,7 +367,7 @@ def cli(config):
     if not manifest_folder:
         raise click.ClickException("Missing required config key: manifest_folder")
 
-    tif_files = collect_tif_files(params["geotiff_dir"], config)
+    tif_files = collect_tif_files(params["geotiff_dir"], params)
     if not tif_files:
         raise click.ClickException(f"No .tif files found in {params['geotiff_dir']}")
 

@@ -83,7 +83,7 @@ Both pipelines include an optional (default-off) download stage that fetches new
 
 ### Pipeline stages
 
-Training pipeline (`config.yaml`):
+Training pipeline (the `train` section of `config.yaml`):
 
 ```mermaid
 flowchart TB
@@ -105,7 +105,7 @@ flowchart TB
     train --> model
 ```
 
-Prediction pipeline (`predict_config.yaml`):
+Prediction pipeline (the `predict` section of `config.yaml`):
 
 ```mermaid
 flowchart TB
@@ -136,7 +136,7 @@ poetry install --with ui   # installs streamlit
 poetry run pipeline-ui
 ```
 
-This starts a local web server and opens a browser session where you pick the pipeline (training or prediction), override any parameter from `config.yaml` / `predict_config.yaml` in a form (plus a free-form YAML box for anything not exposed), toggle individual stages, and watch live logs while the run executes.
+This starts a local web server and opens a browser session where you pick the pipeline (training or prediction), override any parameter from the matching section of `config.yaml` in a form (plus a free-form YAML box for anything not exposed), toggle individual stages, and watch live logs while the run executes.
 
 A run is tied to its browser session: switching pipeline, refreshing or closing the page cancels the running stage and terminates all of its child processes. Completed artifacts and per-stage logs remain in the run directory, so you can resume by re-running with only the remaining stages enabled. For long unattended runs prefer the headless CLI below inside tmux/screen.
 
@@ -180,24 +180,24 @@ poetry run pipeline-run predict --dry-run   # print the plan without executing
 
 ## Workflow and CLI Usage
 
-The core workflow is managed through a series of command-line scripts. Most scripts require a `config.yaml` file to specify paths and parameters.
+The core workflow is managed through a series of command-line scripts. All scripts read the single `config.yaml`: each resolves its own flow section (`train` or `predict`, deep-merged over `shared`) by default, and accepts `--flow train|predict` to override — e.g. `poetry run image-scanner config.yaml --flow train` to scan training imagery with the image-only scanner.
 
 ### 1. Download Satellite Imagery
-Download GeoTIFF files from Google Drive based on the filenames specified in your configuration file.
+Download GeoTIFF files from Google Drive based on the filenames specified in your configuration file. The download stage runs in both flows, so tell it which section to use:
 
 ```bash
-poetry run tif-loader config.yaml
+poetry run tif-loader config.yaml --flow train    # or --flow predict
 ```
 
 ### 2. Prepare Training Data
-Scan the downloaded GeoTIFFs and corresponding GeoJSON labels to create an HDF5 dataset for training.
+Scan the downloaded GeoTIFFs and corresponding GeoJSON labels (from the `train` section) to build per-image tile manifests for training.
 
 ```bash
-poetry run coordinate-scanner config.yaml
+poetry run annotated-scanner config.yaml
 ```
 
 ### 3. Train the Model
-Train the CNN using the generated HDF5 dataset.
+Train the CNN using the generated manifests.
 
 ```bash
 poetry run train-cnn config.yaml
@@ -205,10 +205,10 @@ poetry run train-cnn config.yaml
 Model checkpoints and training logs will be saved to a timestamped directory inside `runs/`.
 
 ### 4. Predict on New Imagery
-Use a trained model to predict tent locations on new satellite images. This script typically uses a separate `predict_config.yaml`.
+Use a trained model to predict tent locations on new satellite images, configured by the `predict` section of `config.yaml`.
 
 ```bash
-poetry run predict-json predict_config.yaml
+poetry run predict-json config.yaml
 ```
 This will generate GeoJSON files containing the coordinates of predicted tents.
 
@@ -222,59 +222,42 @@ The repository includes several scripts for analyzing the results:
 ---
 ## Configuration File (config.yaml)
 
-The pipeline is primarily configured via YAML files (`config.yaml`, `predict_config.yaml`). Below is a typical structure for `config.yaml`.
+Both flows are configured through the single `config.yaml`, which has three top-level sections:
+
+- **`shared`** — the single source of truth for values used by more than one flow (boundaries, pre-war raster, tile geometry).
+- **`train`** — everything the training flow needs (annotated imagery paths, manifests, rebalancing, CNN hyperparameters).
+- **`predict`** — everything the prediction flow needs (new imagery paths, model checkpoint, selection/merge parameters).
+
+When a stage runs, its flow section is deep-merged over `shared` (the flow section wins), producing a flat config. This means shared values are defined exactly once, while each flow section makes explicit which paths and parameters its stages use — e.g. `train.geotiff_dir` and `predict.geotiff_dir` are independent keys, but both flows tile imagery with the same `shared.processing.core_metres`.
 
 ```yaml
-# --- Paths ---
-geotiff_dir: ${DATA_DIR}/results/TentNetFA/2026-02/tiffs
-boundaries: gaza_boundaries/GazaStrip_MunicipalBoundaries.shp
-prewar_gaza: ${DATA_DIR}/results/TentNetFA/2026-02/prewar_gaza.tif
-geojson: ${DATA_DIR}/results/TentNetFA/2026-02
-hdf5: train_data_labelling_balanced.h5
-artifact_dir: runs
+shared:
+  boundaries: gaza_boundaries/GazaStrip_MunicipalBoundaries.shp
+  prewar_gaza: ${DATA_DIR}/data/prewar_gaza.tif
+  processing:
+    core_metres: 70     # tile geometry must match between training and prediction
+    margin_metres: 15
 
-# --- Data Loading ---
-loading:
-  files:
-    - deir_el_balah_20250315_121122_ssc10_u0002_visual_clip_file_format.tif
-    - khan_yunis_20250315_065509_ssc13_u0001_visual_file_format.tif
-processing:
-  individual: false # when true, ignore hdf5 and write one HDF5 per TIFF into hdf5_folder
-  step: 0.0005 # step size for each tile in degress lat and long
-  quality_thresholds:
-    min_valid_fraction: 0.9  # minimum fraction of the image that needs to be not black / NaN
-training:
-  checkpoint: null  # checkpoint to restart from, e.g. path/to/model.pth
-  epochs: 10000
-  batch_size: 8
-  learning_rate: 0.0005
-  training_frac: 0.7
-  validation_frac: 0.15
+train:
+  geotiff_dir: ${DATA_DIR}/data/training_data/tif_files
+  geojson: ${DATA_DIR}/data/training_data/annotations.geojson
+  manifest_folder: ${DATA_DIR}/data/training_data/manifests
+  processing:
+    quality_thresholds:
+      min_valid_fraction: 0.9   # strict for training
+  rebalancing: { ... }
+  training: { ... }
 
-# --- Data Processing ---
-processing:
-  prediction_only: false
-  step: 0.0005 # Step size for tiling in degrees latitude/longitude
-  quality_thresholds:
-    start_threshold: 0.2
-    max_missing_end: 1.0
-    min_valid_fraction: 0.9
-  complete: # List of TIFFs to process entirely, ignoring quality gates
-    - deir_el_balah_20250315_121122_ssc10_u0002_visual_clip_file_format.tif
-
-# --- Training ---
-training:
-  checkpoint: v1.0.pth # Optional path to a model checkpoint to resume training
-  device: cuda
-  epochs: 10000
-  batch_size: 32
-  learning_rate: 0.005
-  training_frac: 0.4
-  validation_frac: 0.1
-  memory: True # Cache dataset in RAM for faster training
-  model_kwargs:
-    kernel_size: 3
+predict:
+  geotiff_dir: ${DATA_DIR}/results/TentNetFA/2026-02/tiffs
+  manifest_folder: ${DATA_DIR}/results/TentNetFA/2026-02/manifests
+  processing:
+    quality_thresholds:
+      min_valid_fraction: 0.1   # loose for prediction
+  prediction: { ... }
 ```
+
+See the checked-in [`config.yaml`](./config.yaml) for the full set of keys, and the [pipeline help](displacement_tracker/pipelines/help.md) for a reference of what each key does. Flat single-flow configs (the historic `config.yaml` / `predict_config.yaml` layout, and the resolved configs the pipeline runner writes into run directories) are still accepted by every script.
 
 ## Prediction Pipeline
 
@@ -304,10 +287,10 @@ The GeoTIFF files can be stored in any folder structure, provided the correct pa
 2. Store them anywhere within or outside the repository.
 3. Update `config.yaml` with:
 
-   * `geotiff_dir`: directory containing the GeoTIFF files
-   * `manifest_folder`: directory where manifests should be written
-   * `boundaries`: path to `GazaStrip_MunicipalBoundaries.shp`
-   * `prewar_gaza`: path to `prewar_gaza.tif`
+   * `predict.geotiff_dir`: directory containing the GeoTIFF files
+   * `predict.manifest_folder`: directory where manifests should be written
+   * `shared.boundaries`: path to `GazaStrip_MunicipalBoundaries.shp`
+   * `shared.prewar_gaza`: path to `prewar_gaza.tif`
 
 Run:
 
@@ -321,26 +304,27 @@ This command scans all GeoTIFFs in `geotiff_dir` and generates manifests for fil
 
 ### Step 2: Run Predictions
 
-Update `predict_config.yaml` with the correct paths:
+Update the `predict` section of `config.yaml` with the correct paths:
 
 * `geotiff_dir`
-* `input_folder`
-* `output_folder`
+* `prediction.input_folder`
+* `prediction.output_folder`
 
 Recommended selection parameters:
 
 ```yaml
-selection:
-  threshold: 0.0001
-  factor: 1.0
-  nms_kernel_size: 7
-  min_distance_m: 3.0
+prediction:
+  selection:
+    threshold: 0.0001
+    factor: 1.0
+    nms_kernel_size: 7
+    min_distance_m: 3.0
 ```
 
 Run:
 
 ```bash
-poetry run python -m displacement_tracker.e_predict_json predict_config.yaml
+poetry run python -m displacement_tracker.e_predict_json config.yaml
 ```
 
 This command runs inference on all imagery that has a manifest available in the configured manifest folder.
@@ -351,38 +335,25 @@ Output files are written as GeoJSON/JSON prediction files in the configured outp
 
 ### Step 3: Merge Prediction Outputs
 
-Predictions are generated as overlapping tiles and must be merged before analysis.
+Predictions are generated as overlapping tiles and must be merged before analysis. Like every other stage, the merge is configured through `config.yaml` — via the `merge` subsection of the `predict` section:
+
+```yaml
+predict:
+  merge:
+    # input_folder: null  # defaults to prediction.output_folder
+    output: ${DATA_DIR}/results/TentNetFA/2026-02/merged/merged.gpkg
+    min_distance_m: 3.0
+    min_adj_peak: 0.003
+    adjustment_factor: 10
+```
 
 Run:
 
 ```bash
-poetry run -m displacement_tracker.h_merge_geojsons tif_files/historic/predictions merged.gpkg \
-  --min-adj-peak 0.003 \
-  --adjustment-factor 10
+poetry run python -m displacement_tracker.h_merge_geojsons config.yaml
 ```
 
-This deduplicates overlapping predictions and produces a consolidated output. Note: This will merge everything in the input folder into a single gpkg file. Only do this if the predictions in the input folder are intended to be merged and dedeuplicated into one file. To merge by date instead, see below.
-
-#### Group predictions by date
-
-To merge predictions separately for each acquisition date, add:
-
-```bash
---process-by-date
-```
-
-Example:
-
-```bash
-poetry run -m displacement_tracker.h_merge_geojsons tif_files/historic/predictions ignored.gpkg \
-  --process-by-date \
-  --min-adj-peak 0.003 \
-  --adjustment-factor 10
-```
-
-With `--process-by-date`, outputs are grouped and merged independently for each date.
-
-Without `--process-by-date`, all predictions in the input directory are merged into a single combined output containing all detected tents.
+This deduplicates overlapping predictions and produces a consolidated output. Note: this merges everything in the input folder into a single gpkg file. Only do this if the predictions in the input folder are intended to be merged and deduplicated into one file.
 
 ## Output
 
