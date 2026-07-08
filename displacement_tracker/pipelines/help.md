@@ -164,7 +164,7 @@ manually.
 | `prediction.selection.min_area` | Minimum blob area in pixels (`centroid` method only; setting it with `nms` aborts the run). |
 | `prediction.selection.nms_kernel_size` | Max-pool kernel size in pixels for NMS peak picking (`nms` method only). |
 | `prediction.selection.min_distance_m` | Minimum distance between extracted points. |
-| `prediction.input_folder`, `output_folder` | Manifest input / GeoJSON output. **Runner-managed** → `manifests/`, `preds/`. |
+| `prediction.input_folder`, `output_folder` | Manifest input (defaults to `manifest_folder`) / GeoJSON output. **Runner-managed** → `manifests/`, `preds/`. |
 | `merge.min_distance_m` | Points closer than this (m) are merged into one tent. |
 | `merge.agreement` | Minimum cluster size to keep after merging (overlapping tiles vote). |
 | `merge.min_adj_peak` | Global adjusted-peak threshold applied before merging. |

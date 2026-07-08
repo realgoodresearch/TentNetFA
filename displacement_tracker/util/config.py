@@ -27,6 +27,29 @@ FLOWS = ("train", "predict", "tune")
 _SECTION_KEYS = ("shared", *FLOWS)
 
 
+def deep_get(cfg: dict, dotted: str, default=None):
+    """Look up a dotted path (``"a.b.c"``) in nested dicts."""
+    node = cfg
+    for part in dotted.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return default
+        node = node[part]
+    return node
+
+
+def deep_set(cfg: dict, dotted: str, value) -> None:
+    """Set a dotted path in nested dicts, creating intermediate dicts."""
+    parts = dotted.split(".")
+    node = cfg
+    for part in parts[:-1]:
+        child = node.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            node[part] = child
+        node = child
+    node[parts[-1]] = value
+
+
 def deep_merge(base: dict, extra: dict) -> dict:
     """Recursively merge ``extra`` into ``base`` (extra wins). Returns base."""
     for key, value in extra.items():
@@ -48,12 +71,20 @@ def resolve_flow_config(config: dict, flow: str | None) -> dict:
     Sectioned configs resolve to ``deep_merge(shared, config[flow])`` on
     deep copies; legacy flat configs are returned unchanged.
 
-    Raises:
-        click.UsageError: sectioned config but ``flow`` is missing/unknown.
-        KeyError: the requested flow section is absent from the config.
+    Raises click.UsageError whenever the flow cannot be resolved: no flow
+    given for a sectioned config, an unknown flow name, a missing flow
+    section, or a half-migrated config mixing sections with stray
+    top-level keys (which would otherwise be silently dropped).
     """
     if not is_sectioned_config(config):
         return config
+    stray = sorted(set(config) - set(_SECTION_KEYS))
+    if stray:
+        raise click.UsageError(
+            f"Config mixes {'/'.join(_SECTION_KEYS)} sections with other "
+            f"top-level keys: {', '.join(stray)}. Move them into shared "
+            "or the relevant flow section."
+        )
     if flow is None:
         raise click.UsageError(
             "This config uses shared/per-flow sections; pass "
@@ -64,7 +95,7 @@ def resolve_flow_config(config: dict, flow: str | None) -> dict:
             f"Unknown flow '{flow}' (expected one of: {', '.join(FLOWS)})."
         )
     if flow not in config:
-        raise KeyError(f"Config has no '{flow}' section.")
+        raise click.UsageError(f"Config has no '{flow}' section.")
     resolved = copy.deepcopy(config.get("shared") or {})
     deep_merge(resolved, copy.deepcopy(config[flow] or {}))
     return resolved
