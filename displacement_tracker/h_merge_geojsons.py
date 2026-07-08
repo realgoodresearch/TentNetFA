@@ -196,17 +196,22 @@ def cli(config: str, flow: str) -> None:
     if not output_gpkg:
         raise click.ClickException("Missing required config key: merge.output")
 
-    merge_geojsons(
-        input_folder,
-        output_gpkg,
-        min_distance_m=float(merge_cfg.get("min_distance_m", 3.0)),
-        agreement=int(merge_cfg.get("agreement", 1)),
-        min_adj_peak=float(merge_cfg.get("min_adj_peak", 0.0)),
-        adjustment_factor=float(merge_cfg.get("adjustment_factor", 1.0)),
-        thresholds_config=merge_cfg.get("thresholds_config"),
-        exclusion_zones_gpkg=merge_cfg.get("exclusion_zones_gpkg"),
-        inclusion_zone=merge_cfg.get("inclusion_zone"),
-    )
+    # only pass keys the config actually sets — merge_geojsons() signature
+    # defaults are the single source of truth for the rest
+    kwargs = {
+        key: merge_cfg[key]
+        for key in (
+            "min_distance_m",
+            "agreement",
+            "min_adj_peak",
+            "adjustment_factor",
+            "thresholds_config",
+            "exclusion_zones_gpkg",
+            "inclusion_zone",
+        )
+        if merge_cfg.get(key) is not None
+    }
+    merge_geojsons(input_folder, output_gpkg, **kwargs)
 
 
 def merge_geojsons(

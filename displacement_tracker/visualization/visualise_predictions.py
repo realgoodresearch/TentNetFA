@@ -1,10 +1,9 @@
 import h5py
 import numpy as np
 import matplotlib.pyplot as plt
-import yaml
 import click
 
-from displacement_tracker.util.config import flow_option, resolve_flow_config
+from displacement_tracker.util.config import flow_option, load_flow_config
 
 plt.ion()  # enable interactive mode
 
@@ -80,9 +79,7 @@ class TileViewer:
 @click.argument("config", type=click.Path(exists=True))
 @flow_option(default="predict")
 def cli(config, flow):
-    with open(config, "r") as f:
-        cfg = yaml.safe_load(f)
-    cfg = resolve_flow_config(cfg, flow)
+    cfg = load_flow_config(config, flow)
     pred_cfg = cfg.get("prediction", {})
     processed_path = pred_cfg.get("input")
     predictions_path = pred_cfg.get("output")

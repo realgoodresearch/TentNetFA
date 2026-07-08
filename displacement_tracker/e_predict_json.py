@@ -447,6 +447,9 @@ def cli(config, flow) -> None:
         raise click.ClickException("Missing required config key: prediction")
 
     pred_cfg = params["prediction"]
+    # chain onto the scan output unless explicitly overridden
+    if not pred_cfg.get("input") and not pred_cfg.get("input_folder"):
+        pred_cfg["input_folder"] = params.get("manifest_folder")
     sample_cfg = pred_cfg.get("sample", {})
     selection_cfg = pred_cfg.get("selection", {})
     device = pred_cfg.get("device", None)

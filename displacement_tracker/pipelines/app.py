@@ -17,12 +17,13 @@ import time
 from collections import deque
 from pathlib import Path
 
+import click
 import streamlit as st
 import yaml
 
 from displacement_tracker.pipelines import runner
 from displacement_tracker.pipelines.spec import PIPELINES, Param
-from displacement_tracker.util.config import load_flow_config
+from displacement_tracker.util.config import deep_get, deep_merge, load_flow_config
 
 # The load bar is an st.iframe (srcdoc) rather than st.markdown: the
 # same-origin script pins the frame to the viewport bottom, aligns its left
@@ -366,7 +367,7 @@ def main() -> None:
         # resolve the pipeline's flow section so widget defaults match the
         # flat config the runner will execute with
         base_config = load_flow_config(base_config_path, pipeline.key)
-    except (FileNotFoundError, KeyError) as exc:
+    except (FileNotFoundError, KeyError, click.UsageError) as exc:
         st.error(f"Could not load base config: {exc}")
         st.stop()
 
@@ -374,7 +375,7 @@ def main() -> None:
     for section, defaults in pipeline.extra_defaults.items():
         merged = dict(defaults)
         if isinstance(base_config.get(section), dict):
-            runner.deep_merge(merged, base_config[section])
+            deep_merge(merged, base_config[section])
         base_config[section] = merged
 
     config_tab, logs_tab, help_tab = st.tabs(["Configuration", "Run logs", "Help"])
@@ -399,7 +400,7 @@ def main() -> None:
                 cols = st.columns(2)
                 for i, param in enumerate(params):
                     with cols[i % 2]:
-                        default = runner.deep_get(base_config, param.path)
+                        default = deep_get(base_config, param.path)
                         overrides[param.path] = _widget(
                             param, default, key=f"{pipeline.key}:{param.path}"
                         )
@@ -441,7 +442,7 @@ def main() -> None:
         run_root=run_root,
     )
     if extra:
-        runner.deep_merge(ctx.config, extra)
+        deep_merge(ctx.config, extra)
         with open(ctx.config_path, "w") as f:
             yaml.safe_dump(ctx.config, f, sort_keys=False)
 

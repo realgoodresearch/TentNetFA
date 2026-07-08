@@ -30,7 +30,7 @@ from typing import Iterator
 import yaml
 from dotenv import load_dotenv
 
-from displacement_tracker.util.config import deep_merge, load_flow_config
+from displacement_tracker.util.config import deep_merge, deep_set, load_flow_config
 from displacement_tracker.pipelines.spec import Pipeline, Stage
 
 
@@ -42,27 +42,6 @@ class StageFailedError(RuntimeError):
         super().__init__(
             f"Stage '{stage.key}' failed with exit code {returncode} (log: {log_path})"
         )
-
-
-def deep_get(cfg: dict, dotted: str, default=None):
-    node = cfg
-    for part in dotted.split("."):
-        if not isinstance(node, dict) or part not in node:
-            return default
-        node = node[part]
-    return node
-
-
-def deep_set(cfg: dict, dotted: str, value) -> None:
-    parts = dotted.split(".")
-    node = cfg
-    for part in parts[:-1]:
-        child = node.get(part)
-        if not isinstance(child, dict):
-            child = {}
-            node[part] = child
-        node = child
-    node[parts[-1]] = value
 
 
 def default_run_root() -> str:

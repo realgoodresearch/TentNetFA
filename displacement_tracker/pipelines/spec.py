@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from displacement_tracker.util.config import FLOWS
+
 
 @dataclass(frozen=True)
 class Param:
@@ -44,9 +46,8 @@ class Stage:
 class Pipeline:
     key: str
     label: str
-    # Default base YAML, relative to the repo root. The single config.yaml
-    # holds shared/train/predict sections; the runner resolves the section
-    # matching the pipeline key (deep-merged over `shared`) before use.
+    # Default base YAML, relative to the repo root. The pipeline's flow
+    # section (named by its key) is resolved from it before use.
     base_config: str
     stages: tuple[Stage, ...]
     params: tuple[Param, ...]
@@ -205,3 +206,6 @@ TRAIN = Pipeline(
 
 
 PIPELINES: dict[str, Pipeline] = {p.key: p for p in (PREDICT, TRAIN)}
+
+# The runner and UI resolve each pipeline's config section by its key.
+assert set(PIPELINES) <= set(FLOWS), "pipeline keys must be config flow names"

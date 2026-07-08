@@ -105,7 +105,7 @@ predict:
       min_valid_fraction: 0.1
   prediction:
     save_bounds: true
-    input_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/manifests
+    # input_folder: null  # defaults to manifest_folder above
     output_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/preds
     model: /home/karim/TentNetFA/runs/v2.0/best_model.pth
     batch_size: 8
