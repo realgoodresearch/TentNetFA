@@ -20,8 +20,11 @@ Built-in source types (see ``SOURCE_TYPES``):
     ``where`` (OGR SQL) narrow the selection.
 ``unosat``
     A UNOSAT shelter export. Like ``vector``, but ``path`` may also be a
-    directory of exports, in which case an explicit ``date`` picks exactly
-    one file — the reference is never inferred from prediction timestamps.
+    directory of exports (child directories are searched too). An explicit
+    ``date`` picks exactly one file; without one, the export whose
+    timestamp is closest to the date stamped on the prediction files is
+    auto-discovered — and a warning is logged, so implicit pairing never
+    goes unnoticed.
 ``raster``
     Counts already resolved on the master grid (a single-band raster
     aligned with it; anything not aligned is warped cell-to-cell, which
@@ -30,9 +33,11 @@ Built-in source types (see ``SOURCE_TYPES``):
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
+from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Iterable, Optional, Tuple, Union
 
 import geopandas as gpd
 import numpy as np
@@ -47,6 +52,33 @@ LOGGER = setup_logging("reference_data")
 
 VECTOR_SUFFIXES = (".geojson", ".json", ".gpkg", ".shp", ".fgb", ".gdb")
 RASTER_SUFFIXES = (".tif", ".tiff", ".vrt")
+
+_DATE_PATTERN = re.compile(r"(\d{4}-\d{2}-\d{2})|(\d{8})")
+
+
+def extract_date_from_filename(path) -> Optional[datetime]:
+    """Match YYYY-MM-DD or YYYYMMDD in a file name (None if absent/invalid)."""
+    match = _DATE_PATTERN.search(Path(path).name)
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group(0).replace("-", ""), "%Y%m%d")
+    except ValueError:
+        return None
+
+
+def infer_target_date(paths: Iterable) -> Optional[datetime]:
+    """Median of the dates stamped on the given file names (None if none parse).
+
+    Used to auto-discover a reference export near the prediction dates; the
+    median keeps one oddly-named file from dragging the target date around.
+    """
+    dates = sorted(
+        d for d in (extract_date_from_filename(p) for p in paths) if d is not None
+    )
+    if not dates:
+        return None
+    return dates[len(dates) // 2]
 
 
 class ReferenceSource(ABC):
@@ -122,51 +154,102 @@ class VectorReferenceSource(PointsSource):
 
 
 class UnosatReferenceSource(VectorReferenceSource):
-    """A UNOSAT shelter export, selected explicitly.
+    """A UNOSAT shelter export.
 
-    ``path`` is either a single export or a directory of exports; a
-    directory additionally requires ``date`` (``YYYY-MM-DD`` or
-    ``YYYYMMDD``) naming which export to use.
+    ``path`` is either a single export or a directory of exports (child
+    directories are searched too). A directory is resolved by an explicit
+    ``date`` (``YYYY-MM-DD`` or ``YYYYMMDD``), or — when the caller
+    supplies ``nearest_to``, the date of the predictions being validated —
+    by picking the export with the closest timestamp, which logs a
+    warning so the implicit choice never goes unnoticed.
     """
 
     def __init__(
         self,
         path: str,
         date: Optional[str] = None,
+        nearest_to: Optional[Union[str, datetime]] = None,
         layer: Optional[str] = None,
         where: Optional[str] = None,
     ):
-        super().__init__(_select_export(path, date), layer=layer, where=where)
+        super().__init__(
+            _select_export(path, date, nearest_to), layer=layer, where=where
+        )
 
 
-def _select_export(path: str, date: Optional[str]) -> str:
-    """Resolve a UNOSAT export path, requiring an explicit date for directories."""
+def _list_exports(source_dir: Path) -> list:
+    """All vector exports under a directory, child directories included."""
+    return sorted(
+        p
+        for p in source_dir.rglob("*")
+        if p.is_file() and p.suffix.lower() in VECTOR_SUFFIXES
+    )
+
+
+def _select_export(
+    path: str,
+    date: Optional[str],
+    nearest_to: Optional[Union[str, datetime]] = None,
+) -> str:
+    """Resolve a UNOSAT export path.
+
+    Directories resolve via the explicit ``date`` when given; otherwise via
+    the export dated closest to ``nearest_to`` (warned about, so the
+    fallback is visible in every log).
+    """
     source_path = Path(path)
     if not source_path.is_dir():
         return str(source_path)
-    if not date:
-        raise ValueError(
-            f"Reference path {source_path} is a directory of exports; "
-            "set reference.date (YYYY-MM-DD) to pick one explicitly."
+    exports = _list_exports(source_path)
+
+    if date:
+        wanted = str(date).replace("-", "")
+        matches = [p for p in exports if wanted in p.name.replace("-", "")]
+        if len(matches) != 1:
+            raise ValueError(
+                f"Expected exactly one export dated {date} under {source_path}, "
+                f"found {len(matches)}. Available: {[p.name for p in exports]}"
+            )
+        return str(matches[0])
+
+    if nearest_to is not None:
+        if isinstance(nearest_to, str):
+            target = extract_date_from_filename(nearest_to) or None
+            if target is None:
+                raise ValueError(
+                    f"Cannot parse a date from reference.nearest_to={nearest_to!r} "
+                    "(expected YYYY-MM-DD or YYYYMMDD)."
+                )
+            nearest_to = target
+        dated = [
+            (p, d)
+            for p, d in ((p, extract_date_from_filename(p)) for p in exports)
+            if d is not None
+        ]
+        if not dated:
+            raise ValueError(
+                f"No date-stamped exports found under {source_path}; "
+                "set reference.date to pin one explicitly."
+            )
+        chosen, chosen_date = min(
+            dated, key=lambda pd: (abs(pd[1] - nearest_to), pd[0].name)
         )
-    wanted = str(date).replace("-", "")
-    matches = sorted(
-        p
-        for p in source_path.iterdir()
-        if p.suffix.lower() in VECTOR_SUFFIXES
-        and wanted in p.name.replace("-", "")
+        LOGGER.warning(
+            "UNOSAT export auto-discovered by timestamp: %s (dated %s, closest "
+            "to prediction date %s). Set reference.date to pin the reference "
+            "explicitly.",
+            chosen,
+            chosen_date.date(),
+            nearest_to.date(),
+        )
+        return str(chosen)
+
+    raise ValueError(
+        f"Reference path {source_path} is a directory of exports; set "
+        "reference.date (YYYY-MM-DD) to pick one explicitly — or leave it "
+        "unset with date-stamped prediction files, and the closest export "
+        "is auto-discovered (with a warning)."
     )
-    if len(matches) != 1:
-        available = sorted(
-            p.name
-            for p in source_path.iterdir()
-            if p.suffix.lower() in VECTOR_SUFFIXES
-        )
-        raise ValueError(
-            f"Expected exactly one export dated {date} in {source_path}, "
-            f"found {len(matches)}. Available: {available}"
-        )
-    return str(matches[0])
 
 
 class RasterReferenceSource(ReferenceSource):
@@ -229,7 +312,10 @@ def rasterize_point_counts(
 # sets are the whole config contract, stated in one place.
 SOURCE_TYPES = {
     "vector": (VectorReferenceSource, frozenset({"layer", "where"})),
-    "unosat": (UnosatReferenceSource, frozenset({"date", "layer", "where"})),
+    "unosat": (
+        UnosatReferenceSource,
+        frozenset({"date", "nearest_to", "layer", "where"}),
+    ),
     "raster": (RasterReferenceSource, frozenset({"band"})),
 }
 
@@ -246,13 +332,18 @@ def _infer_type(path: str) -> str:
     )
 
 
-def build_reference_source(cfg) -> ReferenceSource:
+def build_reference_source(cfg, nearest_to: Optional[datetime] = None) -> ReferenceSource:
     """Build a :class:`ReferenceSource` from config.
 
     ``cfg`` is either a bare path (type inferred from the suffix) or a
     mapping with ``path``, optional ``type`` and any type-specific keys
     (``date``, ``layer``, ``where``, ``band``). ``None`` values are treated
     as unset so optional keys can be left as ``null`` in YAML.
+
+    ``nearest_to`` is runtime context from the caller — the date stamped on
+    the prediction files being validated. Source types that accept it
+    (``unosat`` directories without an explicit ``date``) use it to
+    auto-discover the closest export, logging a warning.
     """
     if isinstance(cfg, (str, Path)):
         cfg = {"path": str(cfg)}
@@ -281,4 +372,6 @@ def build_reference_source(cfg) -> ReferenceSource:
         LOGGER.warning(
             "Reference type %r ignores option(s): %s", source_type, dropped
         )
+    if nearest_to is not None and "nearest_to" in allowed:
+        accepted.setdefault("nearest_to", nearest_to)
     return factory(path, **accepted)

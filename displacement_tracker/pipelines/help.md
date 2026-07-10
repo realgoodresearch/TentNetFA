@@ -190,7 +190,7 @@ point and the tuned global threshold cannot be shadowed:
 | `tuning.master_grid` | Grid raster the predictions and the reference data are resolved onto. |
 | `tuning.reference.type` | Reference source: `vector` (point annotations in any OGR-readable file), `unosat` (an export file, or a directory of exports + explicit `date`), or `raster` (counts already resolved on the master grid). |
 | `tuning.reference.path` | The annotation file / export / directory / raster. |
-| `tuning.reference.date` | Picks one export when the path is a directory (`unosat`); the reference is always selected explicitly, never inferred from prediction timestamps. |
+| `tuning.reference.date` | Pins one export when the path is a directory (`unosat`; child directories are searched). Unset: the export dated closest to the dates stamped on the pre-merge prediction files is auto-discovered — logged with a warning so the implicit choice is visible. |
 | `tuning.reference.layer`, `where` | Optional layer name and OGR SQL attribute filter for vector sources. |
 | `tuning.metric` | Evaluation metric whose optimum becomes the tuned `(min_adj_peak, adjustment_factor)`: `rms`, `mae`, `rmsle`, `abs_total_diff`, `abs_total_pdiff` or `spearman`. |
 | `tuning.metrics` | Metrics tracked during the scan (the evaluation metric is always included). |

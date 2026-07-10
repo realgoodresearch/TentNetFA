@@ -43,13 +43,17 @@ from scipy.optimize import minimize, minimize_scalar
 from tqdm import tqdm
 
 from displacement_tracker.util.config import flow_option, load_flow_config
-from displacement_tracker.util.reference_data import build_reference_source
+from displacement_tracker.util.reference_data import (
+    build_reference_source,
+    infer_target_date,
+)
 from displacement_tracker.util.validation_core import (
     METRIC_DIRECTIONS,
     compute_metrics,
     initial_best_value,
     is_better,
     keep_mask_from_params,
+    list_point_files,
     prepare_grouped_cell_inputs,
     process_grouped_cells,
     write_output_rasters,
@@ -336,6 +340,7 @@ class ScanSettings:
     """Validated inputs of one threshold scan, extracted from the config."""
 
     input_path: str
+    pred_folder: Optional[str]  # pre-merge prediction files (date-stamped)
     master_grid: str
     reference: object  # config for build_reference_source
     out_dir: str
@@ -384,6 +389,7 @@ def _scan_settings(params: dict) -> ScanSettings:
 
     return ScanSettings(
         input_path=input_path,
+        pred_folder=merge_cfg.get("input_folder"),
         master_grid=_require(tuning, "tuning", "master_grid"),
         reference=_require(tuning, "tuning", "reference"),
         out_dir=out_dir,
@@ -399,6 +405,17 @@ def _scan_settings(params: dict) -> ScanSettings:
         refine_maxiter=int(tuning.get("refine_maxiter", 60)),
         exclusion_zones=tuning.get("exclusion_zones"),
     )
+
+
+def _prediction_date(settings: ScanSettings):
+    """Median date stamped on the pre-merge prediction files (None if unknown).
+
+    Feeds unosat auto-discovery when reference.date is not set; the merged
+    scan input itself carries no meaningful date.
+    """
+    if not settings.pred_folder or not os.path.isdir(settings.pred_folder):
+        return None
+    return infer_target_date(list_point_files(settings.pred_folder))
 
 
 def _load_predictions(settings: ScanSettings, raster_crs) -> gpd.GeoDataFrame:
@@ -501,7 +518,9 @@ def run_scan(params: dict) -> dict:
     """
     settings = _scan_settings(params)
     os.makedirs(settings.out_dir, exist_ok=True)
-    reference = build_reference_source(settings.reference)
+    reference = build_reference_source(
+        settings.reference, nearest_to=_prediction_date(settings)
+    )
 
     total_evals = (
         _budget_per_metric(settings.ridge_probes, settings.refine_maxiter)

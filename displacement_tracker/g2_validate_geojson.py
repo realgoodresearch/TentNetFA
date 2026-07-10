@@ -21,6 +21,7 @@ from displacement_tracker.util.reference_data import (
     SOURCE_TYPES,
     ReferenceSource,
     build_reference_source,
+    infer_target_date,
 )
 from displacement_tracker.util.validation_core import (
     compute_metrics,
@@ -81,7 +82,9 @@ def validate_one_tile(
 @click.option(
     "--reference-date",
     default=None,
-    help="Selects one export when --reference is a directory (unosat type).",
+    help="Selects one export when --reference is a directory (unosat type). "
+    "If omitted, the export closest to the dates stamped on the "
+    "prediction files is auto-discovered (with a warning).",
 )
 @click.option(
     "--reference-layer",
@@ -131,6 +134,10 @@ def cli(
     """Validate predictions against reference data at a fixed (factor, cutoff)."""
     os.makedirs(out_dir, exist_ok=True)
 
+    pred_paths = list_point_files(pred_dir)
+    if not pred_paths:
+        raise click.ClickException(f"No prediction files found in {pred_dir}")
+
     reference = build_reference_source(
         {
             "path": reference_path,
@@ -138,16 +145,14 @@ def cli(
             "date": reference_date,
             "layer": reference_layer,
             "where": reference_where,
-        }
+        },
+        nearest_to=infer_target_date(pred_paths),
     )
 
     exclusion_geom = None
     if exclusion_zones:
         exclusion_geom = gpd.read_file(exclusion_zones).geometry.union_all()
 
-    pred_paths = list_point_files(pred_dir)
-    if not pred_paths:
-        raise click.ClickException(f"No prediction files found in {pred_dir}")
     results = []
 
     with rasterio.open(master_grid) as src_grid:

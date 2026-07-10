@@ -157,12 +157,16 @@ tune:
     master_grid: ${DATA_DIR}/data/master_grid_100m.tif
     # Ground-truth reference (see displacement_tracker/util/reference_data.py):
     #   vector  point annotations in any OGR-readable file (GeoJSON/GPKG/SHP)
-    #   unosat  a UNOSAT export — a file, or a directory + explicit date
+    #   unosat  a UNOSAT export — a file, or a directory (pin with date, or
+    #           auto-discover the export nearest the prediction dates)
     #   raster  counts already resolved on the master grid
     reference:
       type: unosat
       path: ${DATA_DIR}/data/reference/unosat
-      date: 2026-02-15        # required when path is a directory of exports
+      # Pins one export when path is a directory (searched recursively).
+      # Leave unset to auto-discover the export closest to the dates
+      # stamped on the prediction files — logged with a warning.
+      date: 2026-02-15
       # layer: null           # layer in multi-layer files (GPKG/GDB)
       # where: null           # OGR SQL attribute filter
     metric: rms               # optimum of this metric drives the final merge

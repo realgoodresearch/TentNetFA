@@ -149,7 +149,7 @@ flowchart TB
     merge_tuned --> out
 ```
 
-The reference data is declared explicitly through a generic interface (`displacement_tracker/util/reference_data.py`): `vector` point annotations in any OGR-readable file (GeoJSON, GPKG, SHP, ...), a `unosat` export (a file, or a directory of exports with an explicit `date` — no pairing by timestamp), or a `raster` of counts already resolved on the master grid. Any other source of master-grid-resolved ground truth can be added by implementing a `ReferenceSource`.
+The reference data is declared through a generic interface (`displacement_tracker/util/reference_data.py`): `vector` point annotations in any OGR-readable file (GeoJSON, GPKG, SHP, ...), a `unosat` export (a file, or a directory of exports — pinned by an explicit `date`, or auto-discovered as the export closest to the dates stamped on the prediction files, which logs a warning), or a `raster` of counts already resolved on the master grid. Any other source of master-grid-resolved ground truth can be added by implementing a `ReferenceSource`.
 
 The same diagrams, together with a full reference of every config key, are available in the UI's **Help** tab (sourced from [`displacement_tracker/pipelines/help.md`](displacement_tracker/pipelines/help.md)).
 

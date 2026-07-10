@@ -246,7 +246,9 @@ TUNE = Pipeline(
         Param(
             "tuning.reference.date", "UNOSAT export date", "str", "Reference",
             optional=True,
-            help="YYYY-MM-DD; picks one export when the path is a directory.",
+            help="YYYY-MM-DD; pins one export when the path is a directory. "
+                 "Empty: the export closest to the dates stamped on the "
+                 "prediction files is auto-discovered (with a warning).",
         ),
         Param(
             "tuning.reference.layer", "Layer", "str", "Reference",
