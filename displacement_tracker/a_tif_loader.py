@@ -4,7 +4,8 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 import click
 
-from displacement_tracker.util.env_loader import load_yaml_with_env, require_env_file
+from displacement_tracker.util.config import flow_option, load_flow_config
+from displacement_tracker.util.env_loader import require_env_file
 
 
 def download_tif_files_from_public_folder(search_string: str, download_dir="."):
@@ -100,8 +101,9 @@ def download_tif_files_from_public_folder(search_string: str, download_dir="."):
     type=click.Path(file_okay=False, dir_okay=True, writable=True),
     help="Directory to save files (overrides config)",
 )
+@flow_option(default=None)
 @require_env_file(["GOOGLE_API_KEY", "GDRIVE_ID"])
-def tif_loader(config: str, download_dir: str | None) -> None:
+def tif_loader(config: str, download_dir: str | None, flow: str | None) -> None:
     """
     Download .tif files from a public Google Drive folder for each search string in a YAML config file.
     The YAML file must have a section:
@@ -111,7 +113,7 @@ def tif_loader(config: str, download_dir: str | None) -> None:
         - search_string_2
     Optionally, you can specify download_dir in the config or via --download-dir.
     """
-    cfg = load_yaml_with_env(config)
+    cfg = load_flow_config(config, flow)
     search_strings = cfg.get("loading", {}).get("files", [])
     if not search_strings:
         print("No search strings found in config under loading/files.")

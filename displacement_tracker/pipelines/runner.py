@@ -25,12 +25,12 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import Iterator
 
 import yaml
 from dotenv import load_dotenv
 
-from displacement_tracker.util.env_loader import load_yaml_with_env
+from displacement_tracker.util.config import deep_merge, deep_set, load_flow_config
 from displacement_tracker.pipelines.spec import Pipeline, Stage
 
 
@@ -42,37 +42,6 @@ class StageFailedError(RuntimeError):
         super().__init__(
             f"Stage '{stage.key}' failed with exit code {returncode} (log: {log_path})"
         )
-
-
-def deep_get(cfg: dict, dotted: str, default=None):
-    node = cfg
-    for part in dotted.split("."):
-        if not isinstance(node, dict) or part not in node:
-            return default
-        node = node[part]
-    return node
-
-
-def deep_set(cfg: dict, dotted: str, value) -> None:
-    parts = dotted.split(".")
-    node = cfg
-    for part in parts[:-1]:
-        child = node.get(part)
-        if not isinstance(child, dict):
-            child = {}
-            node[part] = child
-        node = child
-    node[parts[-1]] = value
-
-
-def deep_merge(base: dict, extra: dict) -> dict:
-    """Recursively merge ``extra`` into ``base`` (extra wins). Returns base."""
-    for key, value in extra.items():
-        if isinstance(value, dict) and isinstance(base.get(key), dict):
-            deep_merge(base[key], value)
-        else:
-            base[key] = value
-    return base
 
 
 def default_run_root() -> str:
@@ -151,8 +120,12 @@ def prepare_run(
 
     ``overrides`` maps dotted config paths to values; artifact locations are
     then forced into the run directory regardless of base config/overrides.
+
+    The pipeline's flow section (``train``/``predict``, matching the
+    pipeline key) is resolved against ``shared`` here, so the config written
+    into the run directory — and read by every stage — is already flat.
     """
-    config = load_yaml_with_env(str(base_config_path))
+    config = load_flow_config(str(base_config_path), pipeline.key)
 
     for section, defaults in pipeline.extra_defaults.items():
         existing = config.get(section)
@@ -181,40 +154,8 @@ def prepare_run(
     return RunContext(pipeline=pipeline, run_dir=run_dir, config_path=config_path, config=config)
 
 
-def _default_argv(ctx: RunContext, stage: Stage) -> list[str]:
-    return [sys.executable, "-m", stage.module, str(ctx.config_path)]
-
-
-def _merge_argv(ctx: RunContext, stage: Stage) -> list[str]:
-    """h_merge_geojsons takes positional/flag args instead of a config file."""
-    merge_cfg = ctx.config.get("merge", {})
-    input_folder = deep_get(ctx.config, "prediction.output_folder")
-    output = merge_cfg.get("output", str(ctx.run_dir / "merged" / "merged.gpkg"))
-    argv = [
-        sys.executable, "-m", stage.module,
-        str(input_folder), str(output),
-        "--min-distance-m", str(merge_cfg.get("min_distance_m", 3.0)),
-        "--agreement", str(merge_cfg.get("agreement", 1)),
-        "--min-adj-peak", str(merge_cfg.get("min_adj_peak", 0.0)),
-        "--adjustment-factor", str(merge_cfg.get("adjustment_factor", 1.0)),
-    ]
-    for key, flag in (
-        ("thresholds_config", "--thresholds-config"),
-        ("exclusion_zones_gpkg", "--exclusion-zones-gpkg"),
-        ("inclusion_zone", "--inclusion-zone"),
-    ):
-        if merge_cfg.get(key):
-            argv += [flag, str(merge_cfg[key])]
-    return argv
-
-
-ARGV_BUILDERS: dict[str, Callable[[RunContext, Stage], list[str]]] = {
-    "merge": _merge_argv,
-}
-
-
 def stage_argv(ctx: RunContext, stage: Stage) -> list[str]:
-    return ARGV_BUILDERS.get(stage.key, _default_argv)(ctx, stage)
+    return [sys.executable, "-m", stage.module, str(ctx.config_path)]
 
 
 def _terminate_group(proc: subprocess.Popen) -> None:

@@ -7,7 +7,6 @@ from typing import Any, Callable
 
 import rasterio
 
-from displacement_tracker.util.env_loader import load_yaml_with_env
 from displacement_tracker.util.logging_config import setup_logging
 from displacement_tracker.util.manifest_writer import ManifestWriter
 
@@ -16,17 +15,16 @@ LOGGER = setup_logging("scan_orchestrator")
 ScanCallback = Callable[[str, ManifestWriter], None]
 
 
-def collect_tif_files(geotiff_dir: str, config: str | None = None) -> list[str]:
-    if config:
-        cfg = load_yaml_with_env(config)
-        search_files = cfg.get("loading", {}).get("files", [])
-        if search_files:
-            all_tifs = glob.glob(os.path.join(geotiff_dir, "*.tif"))
-            return [
-                p
-                for p in all_tifs
-                if any(s in os.path.basename(p) for s in search_files)
-            ]
+def collect_tif_files(geotiff_dir: str, params: dict | None = None) -> list[str]:
+    """List .tif files in ``geotiff_dir``, filtered by ``loading.files`` if set."""
+    search_files = ((params or {}).get("loading") or {}).get("files") or []
+    if search_files:
+        all_tifs = glob.glob(os.path.join(geotiff_dir, "*.tif"))
+        return [
+            p
+            for p in all_tifs
+            if any(s in os.path.basename(p) for s in search_files)
+        ]
     return glob.glob(os.path.join(geotiff_dir, "*.tif"))
 
 

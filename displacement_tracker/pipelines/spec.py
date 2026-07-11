@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from displacement_tracker.util.config import FLOWS
+
 
 @dataclass(frozen=True)
 class Param:
@@ -31,9 +33,7 @@ class Param:
 class Stage:
     """One executable step of a pipeline.
 
-    By default a stage is run as ``python -m <module> <resolved_config>``.
-    Stages with a different CLI surface (e.g. h_merge_geojsons) get a
-    custom argv builder in ``runner.py``, keyed by ``key``.
+    Every stage is run as ``python -m <module> <resolved_config>``.
     """
 
     key: str
@@ -46,7 +46,9 @@ class Stage:
 class Pipeline:
     key: str
     label: str
-    base_config: str  # default base YAML, relative to the repo root
+    # Default base YAML, relative to the repo root. The pipeline's flow
+    # section (named by its key) is resolved from it before use.
+    base_config: str
     stages: tuple[Stage, ...]
     params: tuple[Param, ...]
     # Dotted config path -> path relative to the run directory. These are
@@ -70,7 +72,7 @@ class Pipeline:
 PREDICT = Pipeline(
     key="predict",
     label="Prediction pipeline",
-    base_config="predict_config.yaml",
+    base_config="config.yaml",
     stages=(
         Stage(
             "download", "Download GeoTIFFs from Drive", "displacement_tracker.a_tif_loader",
@@ -204,3 +206,6 @@ TRAIN = Pipeline(
 
 
 PIPELINES: dict[str, Pipeline] = {p.key: p for p in (PREDICT, TRAIN)}
+
+# The runner and UI resolve each pipeline's config section by its key.
+assert set(PIPELINES) <= set(FLOWS), "pipeline keys must be config flow names"

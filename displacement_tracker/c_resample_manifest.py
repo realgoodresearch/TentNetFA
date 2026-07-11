@@ -19,15 +19,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from tqdm import tqdm
 
-from displacement_tracker.util.env_loader import load_yaml_with_env
+from displacement_tracker.util.config import flow_option, load_flow_config
 from displacement_tracker.util.logging_config import setup_logging
 from displacement_tracker.util.manifest_writer import MANIFEST_STATS_KEY
 
 LOGGER = setup_logging("resample-manifest")
 
 
-def resample_and_merge(config_path: str) -> None:
-    config = load_yaml_with_env(config_path)
+def resample_and_merge(config_path: str, flow: str | None = "train") -> None:
+    config = load_flow_config(config_path, flow)
 
     loading_files = config.get("loading", {}).get("files", []) or []
     rebal_config = config.get("rebalancing") or {}
@@ -132,8 +132,9 @@ def resample_and_merge(config_path: str) -> None:
 
 @click.command()
 @click.argument("config_path", type=click.Path(exists=True))
-def cli(config_path: str) -> None:
-    resample_and_merge(config_path)
+@flow_option(default="train")
+def cli(config_path: str, flow: str) -> None:
+    resample_and_merge(config_path, flow)
 
 
 if __name__ == "__main__":
