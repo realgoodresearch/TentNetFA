@@ -12,6 +12,7 @@ Usage:
 import json
 import re
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 import click
@@ -25,7 +26,27 @@ from displacement_tracker.util.thresholding import filter_points_by_adjusted_pea
 
 LOGGER = setup_logging("merge_geojsons")
 
-DATE_PATTERN = re.compile(r"_(\d{8})_")
+DATE_PATTERN = re.compile(r"_(\d{8})(?=[_.])")
+
+GEOJSON_SUFFIXES = {".json", ".geojson"}
+
+
+def parse_compact_date(date_str: str) -> bool:
+    """True when date_str is a real YYYYMMDD calendar date."""
+    try:
+        datetime.strptime(date_str, "%Y%m%d")
+        return True
+    except ValueError:
+        return False
+
+
+def list_geojson_files(directory: Path) -> list[Path]:
+    """Sorted GeoJSON/JSON files in a directory, case-insensitive on suffix."""
+    return sorted(
+        p
+        for p in directory.iterdir()
+        if p.is_file() and p.suffix.lower() in GEOJSON_SUFFIXES
+    )
 
 
 def load_thresholds(thresholds_config: str | None) -> dict[str, float]:
@@ -158,6 +179,10 @@ def save_merged_gpkg(points: list[tuple], out_path: Path) -> None:
     if out_path.exists():
         out_path.unlink()
 
+    if not points:
+        LOGGER.warning("No points to write; skipping %s", out_path)
+        return
+
     rows = [
         {
             "geometry": Point(lon, lat),
@@ -187,9 +212,10 @@ def process_geojson_folder(
 ) -> bool:
     """Merge all GeoJSON/JSON files in one folder into one GPKG.
 
-    Returns False when the folder contains no GeoJSON files.
+    Returns False when the folder contains no GeoJSON files. Files that
+    cannot be parsed are logged and skipped; if every file fails, raises.
     """
-    geojson_files = sorted(input_dir.glob("*.geojson")) + sorted(input_dir.glob("*.json"))
+    geojson_files = list_geojson_files(input_dir)
 
     if not geojson_files:
         LOGGER.warning("No GeoJSON files found in %s", input_dir)
@@ -198,8 +224,14 @@ def process_geojson_folder(
     LOGGER.info("Found %d GeoJSON files in %s", len(geojson_files), input_dir)
 
     flat: list[tuple] = []
+    unreadable = 0
     for path in geojson_files:
-        pts = load_points_from_geojson(path)
+        try:
+            pts = load_points_from_geojson(path)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            LOGGER.error("Skipping unreadable GeoJSON %s: %s", path, exc)
+            unreadable += 1
+            continue
         threshold = resolve_threshold(path.name, thresholds_data, min_adj_peak)
         loaded = len(pts)
         pts = filter_points_by_adjusted_peak(pts, threshold, adjustment_factor)
@@ -240,6 +272,11 @@ def process_geojson_folder(
 
         flat.extend(pts)
 
+    if unreadable == len(geojson_files):
+        raise ValueError(
+            f"All {unreadable} GeoJSON files in {input_dir} failed to load."
+        )
+
     LOGGER.info("Total points before merge: %d", len(flat))
 
     merged = merge_close_points_global(
@@ -263,21 +300,33 @@ def sort_preds_by_date(base_dir: Path) -> list[Path]:
     """
     touched_dates: set[Path] = set()
 
-    for path in base_dir.iterdir():
-        if not path.is_file():
-            continue
-        if path.suffix.lower() not in {".json", ".geojson"}:
-            continue
-
+    for path in list_geojson_files(base_dir):
         match = DATE_PATTERN.search(path.name)
         if not match:
             LOGGER.warning("Skipping file without date pattern: %s", path.name)
             continue
 
-        date_folder = base_dir / match.group(1)
+        date_str = match.group(1)
+        if not parse_compact_date(date_str):
+            LOGGER.warning(
+                "Skipping file with invalid date %s: %s", date_str, path.name
+            )
+            continue
+
+        date_folder = base_dir / date_str
         date_folder.mkdir(parents=True, exist_ok=True)
 
-        shutil.move(str(path), str(date_folder / path.name))
+        destination = date_folder / path.name
+        if destination.exists():
+            LOGGER.warning(
+                "Not moving %s: %s already exists; the root-level copy is "
+                "left in place and will NOT be merged.",
+                path.name,
+                destination,
+            )
+            continue
+
+        shutil.move(str(path), str(destination))
         touched_dates.add(date_folder)
 
         LOGGER.info("Moved: %s -> %s", path.name, date_folder)
@@ -286,9 +335,11 @@ def sort_preds_by_date(base_dir: Path) -> list[Path]:
 
 
 def iter_date_folders(base_dir: Path) -> list[Path]:
-    """Return only YYYYMMDD subfolders under base_dir."""
+    """Return only valid-YYYYMMDD subfolders under base_dir."""
     return sorted(
-        p for p in base_dir.iterdir() if p.is_dir() and re.fullmatch(r"\d{8}", p.name)
+        p
+        for p in base_dir.iterdir()
+        if p.is_dir() and re.fullmatch(r"\d{8}", p.name) and parse_compact_date(p.name)
     )
 
 
@@ -390,10 +441,21 @@ def cli(
                 f"No date folders found in {input_dir} after sorting."
             )
 
+        failed: list[str] = []
         for date_dir in date_folders:
             out_path = input_dir / f"{date_dir.name}.gpkg"
             LOGGER.info("Processing date folder %s -> %s", date_dir, out_path)
-            process_geojson_folder(date_dir, out_path, **merge_kwargs)
+            try:
+                process_geojson_folder(date_dir, out_path, **merge_kwargs)
+            except Exception:
+                LOGGER.exception("Failed to process date folder %s", date_dir)
+                failed.append(date_dir.name)
+
+        if failed:
+            raise click.ClickException(
+                f"Failed to process {len(failed)} of {len(date_folders)} "
+                f"date folder(s): {', '.join(failed)}"
+            )
         return
 
     if not output_gpkg:
