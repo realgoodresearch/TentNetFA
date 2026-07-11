@@ -37,7 +37,7 @@ import re
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Optional, Tuple, Union
+from typing import Iterable, List, Optional, Tuple, Union
 
 import geopandas as gpd
 import numpy as np
@@ -67,7 +67,7 @@ def extract_date_from_filename(path) -> Optional[datetime]:
         return None
 
 
-def infer_target_date(paths: Iterable) -> Optional[datetime]:
+def infer_target_date(paths: Iterable[Union[str, Path]]) -> Optional[datetime]:
     """Median of the dates stamped on the given file names (None if none parse).
 
     Used to auto-discover a reference export near the prediction dates; the
@@ -158,17 +158,18 @@ class UnosatReferenceSource(VectorReferenceSource):
 
     ``path`` is either a single export or a directory of exports (child
     directories are searched too). A directory is resolved by an explicit
-    ``date`` (``YYYY-MM-DD`` or ``YYYYMMDD``), or — when the caller
+    ``date`` (``YYYY-MM-DD`` or ``YYYYMMDD``), or — when the calling code
     supplies ``nearest_to``, the date of the predictions being validated —
     by picking the export with the closest timestamp, which logs a
-    warning so the implicit choice never goes unnoticed.
+    warning so the implicit choice never goes unnoticed. ``nearest_to``
+    is runtime context, not a config key.
     """
 
     def __init__(
         self,
         path: str,
         date: Optional[str] = None,
-        nearest_to: Optional[Union[str, datetime]] = None,
+        nearest_to: Optional[datetime] = None,
         layer: Optional[str] = None,
         where: Optional[str] = None,
     ):
@@ -177,19 +178,25 @@ class UnosatReferenceSource(VectorReferenceSource):
         )
 
 
-def _list_exports(source_dir: Path) -> list:
-    """All vector exports under a directory, child directories included."""
+def _list_exports(source_dir: Path) -> List[Path]:
+    """All vector exports under a directory, child directories included.
+
+    ``.gdb`` exports are directories on disk, so they are matched by
+    suffix rather than ``is_file`` (descending into them is harmless —
+    their internals match no vector suffix).
+    """
     return sorted(
         p
         for p in source_dir.rglob("*")
-        if p.is_file() and p.suffix.lower() in VECTOR_SUFFIXES
+        if p.suffix.lower() in VECTOR_SUFFIXES
+        and (p.is_file() or p.suffix.lower() == ".gdb")
     )
 
 
 def _select_export(
     path: str,
     date: Optional[str],
-    nearest_to: Optional[Union[str, datetime]] = None,
+    nearest_to: Optional[datetime] = None,
 ) -> str:
     """Resolve a UNOSAT export path.
 
@@ -213,14 +220,6 @@ def _select_export(
         return str(matches[0])
 
     if nearest_to is not None:
-        if isinstance(nearest_to, str):
-            target = extract_date_from_filename(nearest_to) or None
-            if target is None:
-                raise ValueError(
-                    f"Cannot parse a date from reference.nearest_to={nearest_to!r} "
-                    "(expected YYYY-MM-DD or YYYYMMDD)."
-                )
-            nearest_to = target
         dated = [
             (p, d)
             for p, d in ((p, extract_date_from_filename(p)) for p in exports)
@@ -232,7 +231,7 @@ def _select_export(
                 "set reference.date to pin one explicitly."
             )
         chosen, chosen_date = min(
-            dated, key=lambda pd: (abs(pd[1] - nearest_to), pd[0].name)
+            dated, key=lambda entry: (abs(entry[1] - nearest_to), entry[0].name)
         )
         LOGGER.warning(
             "UNOSAT export auto-discovered by timestamp: %s (dated %s, closest "
@@ -312,10 +311,7 @@ def rasterize_point_counts(
 # sets are the whole config contract, stated in one place.
 SOURCE_TYPES = {
     "vector": (VectorReferenceSource, frozenset({"layer", "where"})),
-    "unosat": (
-        UnosatReferenceSource,
-        frozenset({"date", "nearest_to", "layer", "where"}),
-    ),
+    "unosat": (UnosatReferenceSource, frozenset({"date", "layer", "where"})),
     "raster": (RasterReferenceSource, frozenset({"band"})),
 }
 
@@ -340,10 +336,10 @@ def build_reference_source(cfg, nearest_to: Optional[datetime] = None) -> Refere
     (``date``, ``layer``, ``where``, ``band``). ``None`` values are treated
     as unset so optional keys can be left as ``null`` in YAML.
 
-    ``nearest_to`` is runtime context from the caller — the date stamped on
-    the prediction files being validated. Source types that accept it
-    (``unosat`` directories without an explicit ``date``) use it to
-    auto-discover the closest export, logging a warning.
+    ``nearest_to`` is runtime context from the calling code — the date
+    stamped on the prediction files being validated; it is never read from
+    ``cfg``. A ``unosat`` directory source without an explicit ``date``
+    uses it to auto-discover the closest export, logging a warning.
     """
     if isinstance(cfg, (str, Path)):
         cfg = {"path": str(cfg)}
@@ -372,6 +368,6 @@ def build_reference_source(cfg, nearest_to: Optional[datetime] = None) -> Refere
         LOGGER.warning(
             "Reference type %r ignores option(s): %s", source_type, dropped
         )
-    if nearest_to is not None and "nearest_to" in allowed:
-        accepted.setdefault("nearest_to", nearest_to)
+    if nearest_to is not None and factory is UnosatReferenceSource:
+        accepted["nearest_to"] = nearest_to
     return factory(path, **accepted)
