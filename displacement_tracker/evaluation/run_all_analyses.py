@@ -101,6 +101,26 @@ def cli(config_path: Path) -> None:
     manual_column = cfg.get("manual_column", "manual_tent_count")
     hex_size_m = float(cfg.get("hex_size_m", 1000.0))
 
+    missing = [
+        p
+        for p in (
+            annotation_csv,
+            boundary_shp,
+            agriculture_geojson,
+            h3_geojson,
+            destruction_geojson,
+        )
+        if not Path(p).exists()
+    ]
+    if missing:
+        raise click.ClickException(
+            "Missing input file(s):\n  "
+            + "\n  ".join(missing)
+            + "\nThe spatial context layers are not committed to the "
+            "repository; see the 'Evaluate Model Predictions' section of the "
+            "README for how to obtain them."
+        )
+
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     if any(cfg.get(key) for key in NEW_MODEL_KEYS):

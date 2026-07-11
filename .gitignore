@@ -230,3 +230,4 @@ tmp/
 displacement_tracker/evaluation/spatial_data/sample.tif
 displacement_tracker/evaluation/results/
 displacement_tracker/evaluation/predictions/
+displacement_tracker/evaluation/spatial_data/layers/

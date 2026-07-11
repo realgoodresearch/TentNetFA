@@ -401,7 +401,25 @@ poetry run run-evaluation --config displacement_tracker/evaluation/analysis_conf
 ```
 
 Relative paths in the config are resolved against the config file's
-directory. By default the suite evaluates the `model_column` already present
+directory.
+
+The three spatial context layers the analyses read (`agriculture.json`,
+`h3_density.json`, `destruction.json`) are deliberately **not committed**
+(~20 MB even minified). Obtain them from the team data share — or from the
+original evaluation branch, which still carries them:
+
+```bash
+git checkout origin/eval-postprocessing-pipeline -- \
+  displacement_tracker/evaluation/spatial_data/layers/agriculture.json \
+  displacement_tracker/evaluation/spatial_data/layers/h3_density.json \
+  displacement_tracker/evaluation/spatial_data/layers/destruction.json
+git restore --staged displacement_tracker/evaluation/spatial_data/layers/
+```
+
+The directory is gitignored, so the files stay local. `run-evaluation`
+checks for them up front and lists anything missing.
+
+By default the suite evaluates the `model_column` already present
 in the annotation CSV. To evaluate a new model instead, set
 `prediction_dir` (a folder of per-date `YYYYMMDD.gpkg` files produced by
 `merge-geojsons --process-by-date`), `sample_tif` (any GeoTIFF with the
