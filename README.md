@@ -374,6 +374,12 @@ poetry run run-evaluation --config displacement_tracker/evaluation/analysis_conf
 Relative paths in the config are resolved against the config file's
 directory.
 
+The evaluation suite deliberately uses its own JSON config rather than the
+pipeline `config.yaml`: it is a standalone analysis layer rather than a
+pipeline stage — typically run with several parallel configs (one per
+evaluated model), against assets that live next to the config instead of
+under `${DATA_DIR}`.
+
 The three spatial context layers the analyses read (`agriculture.json`,
 `h3_density.json`, `destruction.json`) are deliberately **not committed**
 (~20 MB even minified). Obtain them from the team data share — or from the
@@ -420,6 +426,10 @@ poetry run annotation-reference --date 2024-10-14 \
   --master-grid path/to/master_grid.tif \
   --output reference_20241014.tif
 ```
+
+The raster export works on any checkout. The `manual_eval` reference type
+additionally requires `util/reference_data.py` (the tuning pipeline) to be
+present, and registers when this module is imported.
 
 Note the annotations are a sparse sample of tiles: cells without an
 annotated tile read as zero reference counts, so restrict comparisons to

@@ -13,6 +13,8 @@ import pandas as pd
 import rasterio
 from shapely.geometry import box
 
+from displacement_tracker.evaluation.scripts.common import LOGGER
+
 TILE_SIZE_METERS = 100
 
 
@@ -35,12 +37,12 @@ def _count_predictions_for_date(
 ) -> pd.Series:
     """Count predicted points inside each annotated tile of one date."""
     if not os.path.exists(gpkg_path):
-        print(f"WARNING: Missing prediction file: {gpkg_path}")
+        LOGGER.warning("Missing prediction file: %s", gpkg_path)
         return pd.Series(pd.NA, index=group.index)
 
     preds = gpd.read_file(gpkg_path)
     if preds.empty:
-        print(f"WARNING: Empty prediction file: {gpkg_path}")
+        LOGGER.warning("Empty prediction file: %s", gpkg_path)
         return pd.Series(pd.NA, index=group.index)
 
     if preds.crs is None:
@@ -99,13 +101,12 @@ def add_new_model_results(
     for date_str, group in df.groupby("date"):
         date_compact = pd.to_datetime(date_str).strftime("%Y%m%d")
         gpkg_path = os.path.join(prediction_dir, f"{date_compact}.gpkg")
-        print(f"Counting predictions for {date_compact} ({len(group)} tiles)")
+        LOGGER.info("Counting predictions for %s (%d tiles)", date_compact, len(group))
         df.loc[group.index, actual_column_name] = _count_predictions_for_date(
             group, gpkg_path, raster_crs, tile_size_meters
         )
 
     df.to_csv(output_csv, index=False)
-    print(f"Saved updated CSV to: {output_csv}")
-    print(f"Added column: {actual_column_name}")
+    LOGGER.info("Saved updated CSV to %s (added column %s)", output_csv, actual_column_name)
 
     return output_csv, actual_column_name

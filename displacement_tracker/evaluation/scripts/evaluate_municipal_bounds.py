@@ -7,12 +7,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from displacement_tracker.evaluation.scripts.common import (
+    LOGGER,
     Z_95,
     ensure_output_dir,
     group_error_summary,
     load_annotation_points,
-    plot_error_bars,
+    load_layer,
 )
+from displacement_tracker.evaluation.scripts.plots import plot_error_bars
 
 
 def evaluate_municipal_bounds(
@@ -36,11 +38,7 @@ def evaluate_municipal_bounds(
 
     tiles_gdf = load_annotation_points(annotation_csv, manual_column, model_column)
 
-    municipal_gdf = gpd.read_file(boundary_shp)
-    if name_column not in municipal_gdf.columns:
-        raise ValueError(f"{name_column} not found in boundary shapefile.")
-    if municipal_gdf.crs != tiles_gdf.crs:
-        municipal_gdf = municipal_gdf.to_crs(tiles_gdf.crs)
+    municipal_gdf = load_layer(boundary_shp, tiles_gdf.crs, (name_column,))
 
     joined = gpd.sjoin(
         tiles_gdf,
@@ -52,12 +50,11 @@ def evaluate_municipal_bounds(
     results_df = group_error_summary(joined, name_column)
 
     if not results_df.empty:
-        # Derive per-region spread and extrapolated totals from the CI summary.
+        # Extrapolate per-region totals from the per-tile mean and std that
+        # group_error_summary computed.
         n = results_df["num_tiles"]
-        se = (results_df["mean_tile_error"] - results_df["ci_lower"]) / Z_95
-        results_df["std_tile_error"] = (se * np.sqrt(n)).where(n > 1, 0.0)
+        se = results_df["std_tile_error"] / np.sqrt(n)
         results_df["se_tile_error"] = se
-        results_df["s_tile_error"] = results_df["std_tile_error"]
         results_df["total_regional_error"] = n * results_df["mean_tile_error"]
         results_df["total_regional_se"] = n * se
         results_df["total_regional_ci_lower"] = (
@@ -96,7 +93,7 @@ def _plot_municipal_map(municipal_gdf, results_df, name_column, output_map):
     map_gdf = municipal_gdf.merge(results_df, on=name_column, how="left")
 
     if "mean_tile_error" not in map_gdf.columns or not map_gdf["mean_tile_error"].notna().any():
-        print("WARNING: No valid regional error values available for map plot.")
+        LOGGER.warning("No valid regional error values available for map plot.")
         return
 
     vmax = np.nanmax(np.abs(map_gdf["mean_tile_error"].values))
@@ -121,7 +118,7 @@ def _plot_municipal_scatter(joined, name_column, manual_column, model_column, ou
     """Per-municipality manual-vs-model scatter subplots with a 1:1 line."""
     unique_regions = sorted(joined[name_column].dropna().unique())
     if not unique_regions:
-        print("WARNING: No regions available for scatter subplots.")
+        LOGGER.warning("No regions available for scatter subplots.")
         return
 
     n_cols = 3

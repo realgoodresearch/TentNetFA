@@ -149,32 +149,18 @@ def load_zone_geometry(zones_path: str | None, label: str):
     return geom
 
 
-def filter_points_by_exclusion(points: list[tuple], exclusion_geom) -> list[tuple]:
-    """Drop points that lie inside exclusion geometry."""
-    if exclusion_geom is None:
+def filter_points_by_zone(
+    points: list[tuple], zone_geom, keep_inside: bool
+) -> list[tuple]:
+    """Keep only points inside (keep_inside) or outside the zone geometry."""
+    if zone_geom is None:
         return points
 
-    kept = []
-    for lat, lon, peak, adj_peak in points:
-        pt = Point(lon, lat)
-        if exclusion_geom.contains(pt):
-            continue
-        kept.append((lat, lon, peak, adj_peak))
-    return kept
-
-
-def filter_points_by_inclusion(points: list[tuple], inclusion_geom) -> list[tuple]:
-    """Drop points that lie outside inclusion geometry."""
-    if inclusion_geom is None:
-        return points
-
-    kept = []
-    for lat, lon, peak, adj_peak in points:
-        pt = Point(lon, lat)
-        if not inclusion_geom.contains(pt):
-            continue
-        kept.append((lat, lon, peak, adj_peak))
-    return kept
+    return [
+        (lat, lon, peak, adj_peak)
+        for lat, lon, peak, adj_peak in points
+        if zone_geom.contains(Point(lon, lat)) == keep_inside
+    ]
 
 
 def save_merged_gpkg(points: list[tuple], out_path: Path) -> None:
@@ -245,35 +231,21 @@ def process_geojson_folder(
             path.name, loaded, len(pts), threshold,
         )
 
-        if exclusion_geom is not None:
-            before_exclusion = len(pts)
-            pts = filter_points_by_exclusion(pts, exclusion_geom)
+        for label, zone_geom, keep_inside in (
+            ("exclusion", exclusion_geom, False),
+            ("inclusion", inclusion_geom, True),
+        ):
+            if zone_geom is None:
+                continue
+            before = len(pts)
+            pts = filter_points_by_zone(pts, zone_geom, keep_inside)
             LOGGER.info(
-                "  %s: %d kept after exclusion filtering",
+                "  %s: %d kept after %s filtering (%d removed)",
                 path.name,
                 len(pts),
+                label,
+                before - len(pts),
             )
-            if before_exclusion != len(pts):
-                LOGGER.info(
-                    "  %s: %d points removed by exclusion zones",
-                    path.name,
-                    before_exclusion - len(pts),
-                )
-
-        if inclusion_geom is not None:
-            before_inclusion = len(pts)
-            pts = filter_points_by_inclusion(pts, inclusion_geom)
-            LOGGER.info(
-                "  %s: %d kept after inclusion filtering",
-                path.name,
-                len(pts),
-            )
-            if before_inclusion != len(pts):
-                LOGGER.info(
-                    "  %s: %d points removed outside inclusion zone",
-                    path.name,
-                    before_inclusion - len(pts),
-                )
 
         flat.extend(pts)
 
@@ -293,7 +265,7 @@ def process_geojson_folder(
     return True
 
 
-def sort_preds_by_date(base_dir: Path) -> list[Path]:
+def sort_preds_by_date(base_dir: Path) -> None:
     """
     Move root-level JSON/GeoJSON files into date-named subfolders.
 
@@ -303,8 +275,6 @@ def sort_preds_by_date(base_dir: Path) -> list[Path]:
     becomes:
         base_dir/20240115/prediction_20240115_abc.json
     """
-    touched_dates: set[Path] = set()
-
     for path in list_geojson_files(base_dir):
         match = DATE_PATTERN.search(path.name)
         if not match:
@@ -332,11 +302,7 @@ def sort_preds_by_date(base_dir: Path) -> list[Path]:
             continue
 
         shutil.move(str(path), str(destination))
-        touched_dates.add(date_folder)
-
         LOGGER.info("Moved: %s -> %s", path.name, date_folder)
-
-    return sorted(touched_dates)
 
 
 def iter_date_folders(base_dir: Path) -> list[Path]:

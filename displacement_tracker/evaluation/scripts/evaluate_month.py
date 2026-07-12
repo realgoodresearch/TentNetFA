@@ -4,11 +4,11 @@ import os
 
 import pandas as pd
 
+from displacement_tracker.evaluation.scripts.plots import plot_error_bars
 from displacement_tracker.evaluation.scripts.common import (
     ensure_output_dir,
     group_error_summary,
     load_annotations,
-    plot_error_bars,
 )
 
 

@@ -10,8 +10,9 @@ from displacement_tracker.evaluation.scripts.common import (
     ensure_output_dir,
     group_error_summary,
     load_annotation_points,
-    plot_error_bars,
+    load_layer,
 )
+from displacement_tracker.evaluation.scripts.plots import plot_error_bars
 
 
 def evaluate_destruction_vs_non_destruction(
@@ -38,12 +39,8 @@ def evaluate_destruction_vs_non_destruction(
     )
     tiles_gdf["date"] = pd.to_datetime(tiles_gdf["date"])
 
-    destruction_gdf = gpd.read_file(destruction_geojson)
-    if "date_start" not in destruction_gdf.columns:
-        raise ValueError("Destruction layer must contain 'date_start' column.")
+    destruction_gdf = load_layer(destruction_geojson, tiles_gdf.crs, ("date_start",))
     destruction_gdf["date_start"] = pd.to_datetime(destruction_gdf["date_start"])
-    if destruction_gdf.crs != tiles_gdf.crs:
-        destruction_gdf = destruction_gdf.to_crs(tiles_gdf.crs)
 
     joined = gpd.sjoin(
         tiles_gdf,

@@ -3,26 +3,35 @@
 The evaluation package's ground truth — the manually annotated tiles in
 ``manual_eval/manual_annotation_results.csv`` (one row per 100 m tile with
 its centroid lat/lon, acquisition date and ``manual_tent_count``) — is made
-available to the validation/tuning flow through the generic reference-data
-interface in ``util/reference_data.py``: each annotated tile contributes its
+available to the validation/tuning flow: each annotated tile contributes its
 count to the master-grid cell containing the tile centroid.
 
 Two ways to consume it:
 
-1. Directly, as reference type ``manual_eval`` (registered on import)::
+1. Materialized as a counts raster via the ``annotation-reference`` CLI,
+   which resolves one date's annotations onto a master grid and writes a
+   GeoTIFF consumable by the validation flow's built-in ``raster``
+   reference type. This works on any checkout.
 
+2. Directly, as reference type ``manual_eval``. When the generic
+   reference-data interface (``util/reference_data.py``, introduced with
+   the hyperparameter-tuning pipeline) is present, importing this module
+   registers the type in ``SOURCE_TYPES``::
+
+       import displacement_tracker.evaluation.annotation_reference  # registers
        reference:
          type: manual_eval
          path: displacement_tracker/evaluation/manual_eval/manual_annotation_results.csv
          date: 2024-10-14
 
-   The CSV spans several acquisition dates, so ``date`` must pick one
-   (``YYYY-MM-DD`` or ``YYYYMMDD``) whenever more than one is present —
-   references are never inferred from prediction timestamps.
+   Until a config-driven flow imports this module itself, use the raster
+   export above for config-only pipelines. On checkouts without the
+   interface, the module still imports and the CLI still works; only the
+   ``manual_eval`` type is unavailable (a debug log notes the skip).
 
-2. Materialized as a counts raster via the ``annotation-reference`` CLI,
-   which resolves one date's annotations onto a master grid and writes a
-   GeoTIFF consumable by the built-in ``raster`` reference type.
+The CSV spans several acquisition dates, so ``date`` must pick one
+(``YYYY-MM-DD`` or ``YYYYMMDD``) whenever more than one is present —
+references are never inferred from prediction timestamps.
 
 Caveat: the annotations are a sparse sample of tiles, not a census. Cells
 without an annotated tile read as zero reference counts, so validation
@@ -33,13 +42,13 @@ annotated tiles.
 from pathlib import Path
 
 import click
-import geopandas as gpd
 import numpy as np
 import pandas as pd
 import rasterio
 from rasterio import features
 from rasterio.enums import MergeAlg
 
+from displacement_tracker.evaluation.scripts.common import as_points, read_annotations
 from displacement_tracker.util.logging_config import setup_logging
 
 try:
@@ -47,20 +56,18 @@ try:
         SOURCE_TYPES,
         ReferenceSource,
     )
-except ImportError as exc:  # pragma: no cover - depends on PR #29
-    raise ImportError(
-        "displacement_tracker.util.reference_data is not available in this "
-        "checkout; the manual-annotation reference source requires the "
-        "reference-data interface introduced by the hyperparameter-tuning "
-        "pipeline (PR #29)."
-    ) from exc
+except ImportError:  # the tuning pipeline's interface is not on this checkout
+    SOURCE_TYPES = None
+    ReferenceSource = object
 
 LOGGER = setup_logging("annotation_reference")
 
 
 class ManualAnnotationReferenceSource(ReferenceSource):
-    """Manually annotated tile counts as a :class:`ReferenceSource`.
+    """Manually annotated tile counts as a reference source.
 
+    Implements the ``ReferenceSource.counts_on_grid`` contract from
+    ``util/reference_data.py`` (duck-typed when that module is absent).
     ``path`` is a CSV with one row per annotated tile carrying the tile
     centroid (``latitude``/``longitude``, WGS84), an acquisition ``date``
     and a count column (``manual_tent_count`` by default). Each tile's
@@ -82,23 +89,14 @@ class ManualAnnotationReferenceSource(ReferenceSource):
         if not csv_path.exists():
             raise FileNotFoundError(f"Annotation CSV not found: {csv_path}")
 
-        df = pd.read_csv(csv_path)
-        required = {lat_column, lon_column, date_column, count_column}
-        missing = required - set(df.columns)
-        if missing:
-            raise ValueError(
-                f"Annotation CSV missing required columns: {sorted(missing)}"
-            )
-
+        df = read_annotations(
+            csv_path, (lat_column, lon_column, date_column, count_column)
+        )
         df = _select_date(df, date, date_column, csv_path)
         df = df.dropna(subset=[count_column])
 
         self._count_column = count_column
-        self._gdf = gpd.GeoDataFrame(
-            df[[count_column]],
-            geometry=gpd.points_from_xy(df[lon_column], df[lat_column]),
-            crs="EPSG:4326",
-        )
+        self._gdf = as_points(df, lat_column=lat_column, lon_column=lon_column)
         LOGGER.info(
             "Loaded %d annotated tiles (%s total: %.0f) from %s",
             len(self._gdf),
@@ -156,7 +154,13 @@ def _select_date(
     return selected
 
 
-SOURCE_TYPES["manual_eval"] = ManualAnnotationReferenceSource
+if SOURCE_TYPES is not None:
+    SOURCE_TYPES["manual_eval"] = ManualAnnotationReferenceSource
+else:
+    LOGGER.debug(
+        "util.reference_data not available; 'manual_eval' reference type "
+        "not registered (raster export via the CLI still works)."
+    )
 
 
 @click.command()

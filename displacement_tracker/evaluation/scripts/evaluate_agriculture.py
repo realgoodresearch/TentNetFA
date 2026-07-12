@@ -2,15 +2,15 @@
 
 import os
 
-import geopandas as gpd
 import numpy as np
 
 from displacement_tracker.evaluation.scripts.common import (
     ensure_output_dir,
     group_error_summary,
     load_annotation_points,
-    plot_error_bars,
+    load_layer,
 )
+from displacement_tracker.evaluation.scripts.plots import plot_error_bars
 
 
 def evaluate_agriculture_vs_non_agriculture(
@@ -31,9 +31,7 @@ def evaluate_agriculture_vs_non_agriculture(
 
     tiles_gdf = load_annotation_points(annotation_csv, manual_column, model_column)
 
-    agriculture_gdf = gpd.read_file(agriculture_geojson)
-    if agriculture_gdf.crs != tiles_gdf.crs:
-        agriculture_gdf = agriculture_gdf.to_crs(tiles_gdf.crs)
+    agriculture_gdf = load_layer(agriculture_geojson, tiles_gdf.crs)
     agriculture_union = agriculture_gdf.geometry.union_all()
 
     tiles_gdf["region_type"] = np.where(

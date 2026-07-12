@@ -9,8 +9,9 @@ from displacement_tracker.evaluation.scripts.common import (
     ensure_output_dir,
     group_error_summary,
     load_annotation_points,
-    plot_error_bars,
+    load_layer,
 )
+from displacement_tracker.evaluation.scripts.plots import plot_error_bars
 
 
 def _density_bin(n) -> str | None:
@@ -41,11 +42,7 @@ def evaluate_h3_density_bins(
 
     tiles_gdf = load_annotation_points(annotation_csv, manual_column, model_column)
 
-    h3_gdf = gpd.read_file(h3_geojson)
-    if "n_buildings" not in h3_gdf.columns:
-        raise ValueError("h3_density layer must contain 'n_buildings' column.")
-    if h3_gdf.crs != tiles_gdf.crs:
-        h3_gdf = h3_gdf.to_crs(tiles_gdf.crs)
+    h3_gdf = load_layer(h3_geojson, tiles_gdf.crs, ("n_buildings",))
 
     joined = gpd.sjoin(
         tiles_gdf,

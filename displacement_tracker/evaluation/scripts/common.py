@@ -1,32 +1,54 @@
-"""Shared helpers for the model-evaluation scripts.
+"""Shared loading and statistics helpers for the evaluation scripts.
 
 Every analysis in this package follows the same pattern: load the annotated
 tiles, compute per-group mean tile error with a 95% CI, write a CSV and a
-bar plot. The hex-grid analyses additionally aggregate tile errors onto a
-hexagonal grid clipped to a boundary layer. Those shared steps live here so
-each evaluate_* module only expresses how tiles are grouped.
+plot. The loading/statistics halves of that pattern live here; the plotting
+halves live in ``plots.py`` so non-plotting consumers (e.g. the reference
+data integration in ``annotation_reference.py``) can reuse the loaders
+without pulling in matplotlib.
 """
 
 import math
 import os
 
 import geopandas as gpd
-import matplotlib
-
-matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from pyproj import CRS
 from shapely.geometry import Polygon
 
+from displacement_tracker.util.logging_config import setup_logging
+
+LOGGER = setup_logging("evaluation")
+
 Z_95 = 1.96
 
 
 # ==========================================================
-# ANNOTATION LOADING
+# ANNOTATION AND LAYER LOADING
 # ==========================================================
+
+def read_annotations(annotation_csv: str, required_columns=()) -> pd.DataFrame:
+    """Read the annotation CSV and validate that required columns exist."""
+    df = pd.read_csv(annotation_csv)
+    missing = set(required_columns) - set(df.columns)
+    if missing:
+        raise ValueError(f"Annotation CSV missing required columns: {sorted(missing)}")
+    return df
+
+
+def as_points(
+    df: pd.DataFrame,
+    lat_column: str = "latitude",
+    lon_column: str = "longitude",
+) -> gpd.GeoDataFrame:
+    """Tile centroids as an EPSG:4326 point GeoDataFrame."""
+    return gpd.GeoDataFrame(
+        df,
+        geometry=gpd.points_from_xy(df[lon_column], df[lat_column]),
+        crs="EPSG:4326",
+    )
+
 
 def load_annotations(
     annotation_csv: str,
@@ -34,14 +56,10 @@ def load_annotations(
     model_column: str,
     extra_columns: tuple = (),
 ) -> pd.DataFrame:
-    """Read the annotation CSV, validate columns and add a tile_error column."""
-    df = pd.read_csv(annotation_csv)
-
-    required = {manual_column, model_column, *extra_columns}
-    missing = required - set(df.columns)
-    if missing:
-        raise ValueError(f"Annotation CSV missing required columns: {sorted(missing)}")
-
+    """Read the annotation CSV and add a tile_error column."""
+    df = read_annotations(
+        annotation_csv, {manual_column, model_column, *extra_columns}
+    )
     df["tile_error"] = df[model_column] - df[manual_column]
     return df
 
@@ -52,18 +70,25 @@ def load_annotation_points(
     model_column: str,
     extra_columns: tuple = (),
 ) -> gpd.GeoDataFrame:
-    """Like load_annotations, but returns tile centroids as an EPSG:4326 GeoDataFrame."""
+    """Like load_annotations, but returns tile centroids as points."""
     df = load_annotations(
         annotation_csv,
         manual_column,
         model_column,
         extra_columns=("latitude", "longitude", *extra_columns),
     )
-    return gpd.GeoDataFrame(
-        df,
-        geometry=gpd.points_from_xy(df["longitude"], df["latitude"]),
-        crs="EPSG:4326",
-    )
+    return as_points(df)
+
+
+def load_layer(path: str, target_crs, required_columns=()) -> gpd.GeoDataFrame:
+    """Read a vector layer, validate required columns, align to target_crs."""
+    gdf = gpd.read_file(path)
+    missing = set(required_columns) - set(gdf.columns)
+    if missing:
+        raise ValueError(f"{path} missing required column(s): {sorted(missing)}")
+    if target_crs is not None and gdf.crs != target_crs:
+        gdf = gdf.to_crs(target_crs)
+    return gdf
 
 
 # ==========================================================
@@ -71,7 +96,11 @@ def load_annotation_points(
 # ==========================================================
 
 def mean_error_ci(errors, z: float = Z_95) -> dict | None:
-    """Mean error with a normal-approximation CI. None when there are no values."""
+    """Mean error with sample std and a normal-approximation CI.
+
+    Returns None when there are no values; std and the CI margin are 0.0
+    for a single value.
+    """
     errors = np.asarray(errors, dtype=float)
     errors = errors[np.isfinite(errors)]
     n = len(errors)
@@ -79,9 +108,11 @@ def mean_error_ci(errors, z: float = Z_95) -> dict | None:
         return None
 
     mean = float(np.mean(errors))
-    margin = z * float(np.std(errors, ddof=1)) / math.sqrt(n) if n > 1 else 0.0
+    std = float(np.std(errors, ddof=1)) if n > 1 else 0.0
+    margin = z * std / math.sqrt(n)
     return {
         "mean_tile_error": mean,
+        "std_tile_error": std,
         "ci_lower": mean - margin,
         "ci_upper": mean + margin,
         "num_tiles": n,
@@ -101,62 +132,6 @@ def group_error_summary(
             continue
         rows.append({group_column: name, **stats})
     return pd.DataFrame(rows)
-
-
-# ==========================================================
-# PLOTTING
-# ==========================================================
-
-def _ci_whiskers(results_df: pd.DataFrame) -> np.ndarray:
-    means = results_df["mean_tile_error"].values
-    lower_err = np.maximum(0, means - results_df["ci_lower"].values)
-    upper_err = np.maximum(0, results_df["ci_upper"].values - means)
-    return np.vstack((lower_err, upper_err))
-
-
-def plot_error_bars(
-    results_df: pd.DataFrame,
-    label_column: str,
-    title: str,
-    output_plot: str,
-    value_label: str = "Mean Tile-Level Prediction Error",
-    figsize: tuple = (8, 5),
-    rotate_labels: bool = False,
-    horizontal: bool = False,
-) -> None:
-    """Bar plot of mean tile error per group with 95% CI whiskers."""
-    if results_df.empty:
-        print(f"WARNING: no groups to plot for {output_plot}")
-        return
-
-    plt.figure(figsize=figsize)
-
-    positions = np.arange(len(results_df))
-    means = results_df["mean_tile_error"].values
-    whiskers = _ci_whiskers(results_df)
-
-    labels = [
-        f"{name} (n={n})"
-        for name, n in zip(results_df[label_column], results_df["num_tiles"])
-    ]
-
-    if horizontal:
-        plt.barh(positions, means, xerr=whiskers, capsize=5)
-        plt.yticks(positions, labels)
-        plt.xlabel(value_label)
-    else:
-        plt.bar(positions, means, yerr=whiskers, capsize=5)
-        if rotate_labels:
-            plt.xticks(positions, labels, rotation=45, ha="right")
-        else:
-            plt.xticks(positions, labels)
-        plt.ylabel(value_label)
-        plt.axhline(0, linestyle="--")
-
-    plt.title(title)
-    plt.tight_layout()
-    plt.savefig(output_plot)
-    plt.close()
 
 
 # ==========================================================
@@ -252,55 +227,6 @@ def hex_error_aggregation(
     hex_gdf["n_tiles"] = hex_gdf["n_tiles"].fillna(0).astype(int)
 
     return hex_gdf, points_with_hex, boundary_proj
-
-
-def plot_hex_error_map(
-    hex_gdf: gpd.GeoDataFrame,
-    boundary_proj: gpd.GeoDataFrame,
-    output_png: str,
-    title: str,
-    significant: gpd.GeoDataFrame | None = None,
-) -> None:
-    """Choropleth of mean_err per hex over the boundary outline."""
-    fig, ax = plt.subplots(figsize=(12, 12))
-    boundary_proj.boundary.plot(ax=ax, color="black", linewidth=0.5)
-
-    plot_gdf = hex_gdf.copy()
-    plot_gdf["plot_val"] = plot_gdf["mean_err"].fillna(0.0)
-
-    valid = plot_gdf["n_tiles"] > 0
-    if valid.any():
-        vmin = float(np.nanmin(plot_gdf.loc[valid, "plot_val"]))
-        vmax = float(np.nanmax(plot_gdf.loc[valid, "plot_val"]))
-    else:
-        vmin, vmax = -1.0, 1.0
-    if np.isclose(vmin, vmax):
-        vmin -= 1.0
-        vmax += 1.0
-
-    plot_gdf.plot(
-        column="plot_val",
-        cmap="RdBu_r",
-        vmin=vmin,
-        vmax=vmax,
-        ax=ax,
-        edgecolor="k",
-        linewidth=0.1,
-    )
-
-    if significant is not None and not significant.empty:
-        significant.boundary.plot(ax=ax, color="black", linewidth=1.0)
-
-    sm = plt.cm.ScalarMappable(cmap="RdBu_r", norm=plt.Normalize(vmin=vmin, vmax=vmax))
-    sm._A = []
-    cbar = fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.04)
-    cbar.set_label("Mean tile error")
-
-    ax.set_title(title)
-    ax.set_axis_off()
-    plt.tight_layout()
-    plt.savefig(output_png, dpi=200)
-    plt.close()
 
 
 def ensure_output_dir(output_dir: str) -> None:

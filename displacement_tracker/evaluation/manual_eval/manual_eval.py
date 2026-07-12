@@ -19,7 +19,7 @@ PRED_DIR = "tif_files/historic/predictions"
 GAZA_BOUNDARY_SHP = "gaza_boundaries/GazaStrip_MunicipalBoundaries.shp"
 PREWAR_TIF = "tif_files/prewar_gaza.tif"
 
-OUTPUT_CSV = "evaluation/manual_eval/manual_annotation_results.csv"
+OUTPUT_CSV = "displacement_tracker/evaluation/manual_eval/manual_annotation_results.csv"
 
 TIF_LIST = [
     # DONE "abasan_al_kabira_khuzaa_20251014_122107_ssc10_u0001_visual_clip.tif"
