@@ -2,27 +2,20 @@
 
 import os
 
-import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import pearsonr
 
 from displacement_tracker.evaluation.scripts.common import (
     ensure_output_dir,
+    finite_xy,
     load_annotations,
 )
-
-
-def _clean_xy(x, y):
-    """Remove NaN / inf pairs from x and y."""
-    x = np.asarray(x, dtype=float)
-    y = np.asarray(y, dtype=float)
-    mask = np.isfinite(x) & np.isfinite(y)
-    return x[mask], y[mask]
+from displacement_tracker.evaluation.scripts.plots import plot_scatter_with_1to1
 
 
 def _safe_pearsonr(x, y):
     """Pearson correlation, or (nan, nan) with fewer than 2 valid points."""
-    x, y = _clean_xy(x, y)
+    x, y = finite_xy(x, y)
     if len(x) < 2:
         return np.nan, np.nan
     try:
@@ -30,23 +23,6 @@ def _safe_pearsonr(x, y):
         return float(r), float(p)
     except Exception:
         return np.nan, np.nan
-
-
-def _plot_scatter_with_1to1(x, y, xlabel, ylabel, title, output_path):
-    x, y = _clean_xy(x, y)
-
-    plt.figure(figsize=(8, 8))
-    if len(x) > 0:
-        plt.scatter(x, y, alpha=0.6)
-        max_val = max(np.max(x), np.max(y))
-        plt.plot([0, max_val], [0, max_val])
-
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
-    plt.title(title)
-    plt.tight_layout()
-    plt.savefig(output_path)
-    plt.close()
 
 
 def evaluate_tile_correlation(
@@ -96,7 +72,7 @@ def evaluate_tile_correlation(
         r, p = _safe_pearsonr(x, y)
         output_path = os.path.join(output_dir, filename)
 
-        _plot_scatter_with_1to1(
+        plot_scatter_with_1to1(
             x, y, xlabel, ylabel,
             title=(
                 f"Tile-Level Prediction Correlation ({scale_label})\n"

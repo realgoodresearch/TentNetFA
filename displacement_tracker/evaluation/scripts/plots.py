@@ -12,8 +12,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.colors import TwoSlopeNorm
 
-from displacement_tracker.evaluation.scripts.common import LOGGER
+from displacement_tracker.evaluation.scripts.common import LOGGER, finite_xy
 
 
 def _ci_whiskers(results_df: pd.DataFrame) -> np.ndarray:
@@ -66,6 +67,65 @@ def plot_error_bars(
     plt.tight_layout()
     plt.savefig(output_plot)
     plt.close()
+
+
+def plot_scatter_with_1to1(x, y, xlabel, ylabel, title, output_path) -> None:
+    """Scatter of x vs y with a 1:1 reference line."""
+    x, y = finite_xy(x, y)
+
+    plt.figure(figsize=(8, 8))
+    if len(x) > 0:
+        plt.scatter(x, y, alpha=0.6)
+        max_val = max(np.max(x), np.max(y))
+        plt.plot([0, max_val], [0, max_val])
+
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+
+
+def plot_error_hexbin(lon, lat, errors, gridsize: int, output_path: str) -> int:
+    """Hexbin map of local mean error over lon/lat; returns the hex count."""
+    plt.figure(figsize=(10, 10))
+
+    hb = plt.hexbin(
+        lon,
+        lat,
+        C=errors,
+        reduce_C_function=np.mean,
+        gridsize=gridsize,
+        cmap="RdBu_r",
+    )
+
+    hex_means = hb.get_array()
+    if len(hex_means) == 0:
+        raise ValueError("No hex bins were created. Check data.")
+
+    tick_min = int(np.floor(np.nanmin(hex_means) / 10.0) * 10)
+    tick_max = int(np.ceil(np.nanmax(hex_means) / 10.0) * 10)
+    if tick_min == tick_max:
+        tick_min -= 10
+        tick_max += 10
+
+    hb.set_norm(TwoSlopeNorm(vmin=tick_min, vcenter=0, vmax=tick_max))
+    hb.set_clim(tick_min, tick_max)
+
+    cbar = plt.colorbar(hb, label="Mean Tile-Level Error")
+    ticks = np.arange(tick_min, tick_max + 10, 10)
+    cbar.set_ticks(ticks)
+    cbar.set_ticklabels([str(int(t)) for t in ticks])
+
+    plt.title("Local Mean Prediction Error (Hexbin Aggregation)")
+    plt.xlabel("Longitude")
+    plt.ylabel("Latitude")
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+
+    return int(len(hex_means))
 
 
 def plot_hex_error_map(

@@ -91,6 +91,14 @@ def load_layer(path: str, target_crs, required_columns=()) -> gpd.GeoDataFrame:
     return gdf
 
 
+def finite_xy(x, y):
+    """Remove NaN / inf pairs from x and y."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    mask = np.isfinite(x) & np.isfinite(y)
+    return x[mask], y[mask]
+
+
 # ==========================================================
 # ERROR SUMMARIES
 # ==========================================================
