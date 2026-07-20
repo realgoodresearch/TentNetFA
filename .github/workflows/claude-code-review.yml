@@ -38,7 +38,7 @@ jobs:
           base=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq .baseRefName)
           echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
           echo "base=$base" >> "$GITHUB_OUTPUT"
-          if [ "$base" != "main" ]; then
+          if [ "$base" != "main" ] && [ "$base" != "Karim" ]; then
             echo "PR #$PR_NUMBER targets '$base', not 'main' — skipping review."
           fi
 
