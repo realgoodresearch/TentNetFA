@@ -1,10 +1,12 @@
-"""Direct validation of predicted GeoJSON/GPKG point sets against ground truth.
+"""Direct validation of predicted GeoJSON/GPKG point sets against reference data.
 
-For each prediction file, the temporally nearest validation file is rasterized
-onto a master grid restricted to the convex hull of the predictions, and per-tile
-RMS, MAE, RMSLE, Spearman correlation, total counts and total difference are
-reported. A single (factor, cutoff) is applied to the predictions; for sweeping
-that parameter pair see g_scan_validation.py.
+Every prediction file is validated against one explicitly selected reference
+source (point annotations, a UNOSAT export, or a counts raster resolved on
+the master grid — see ``util/reference_data.py``), rasterized onto the
+master grid restricted to the convex hull of the predictions. Per-file RMS,
+MAE, RMSLE, Spearman correlation, total counts and total difference are
+reported. A single (factor, cutoff) is applied to the predictions; for
+optimizing that parameter pair see g1_scan_validation.py.
 """
 
 import os
@@ -15,10 +17,16 @@ import numpy as np
 import pandas as pd
 import rasterio
 
+from displacement_tracker.util.reference_data import (
+    SOURCE_TYPES,
+    ReferenceSource,
+    build_reference_source,
+    infer_target_date,
+)
 from displacement_tracker.util.validation_core import (
     compute_metrics,
-    discover_pred_val_pairs,
     keep_mask_from_params,
+    list_point_files,
     prepare_grouped_cell_inputs,
     process_grouped_cells,
     write_output_rasters,
@@ -27,13 +35,13 @@ from displacement_tracker.util.validation_core import (
 
 def validate_one_tile(
     pred_gdf: gpd.GeoDataFrame,
-    val_gdf: gpd.GeoDataFrame,
+    reference: ReferenceSource,
     src_grid: rasterio.io.DatasetReader,
     factor: float,
     cutoff: float,
 ):
-    """Run the full validation pipeline for one prediction/reference pair."""
-    grouped = prepare_grouped_cell_inputs(pred_gdf, val_gdf, src_grid)
+    """Run the full validation pipeline for one prediction file."""
+    grouped = prepare_grouped_cell_inputs(pred_gdf, reference, src_grid)
     pred_prepped = grouped["pred_prepped"]
     keep = keep_mask_from_params(pred_prepped, factor=factor, cutoff=cutoff)
 
@@ -56,7 +64,38 @@ def validate_one_tile(
 
 @click.command()
 @click.option("--pred-dir", type=click.Path(exists=True), required=True)
-@click.option("--val-dir", type=click.Path(exists=True), required=True)
+@click.option(
+    "--reference",
+    "reference_path",
+    type=click.Path(exists=True),
+    required=True,
+    help="Reference data: vector annotations (GeoJSON/GPKG/SHP), a UNOSAT "
+    "export (file, or directory + --reference-date), or a counts raster "
+    "on the master grid.",
+)
+@click.option(
+    "--reference-type",
+    type=click.Choice(sorted(SOURCE_TYPES)),
+    default=None,
+    help="Reference source type (default: inferred from the path suffix).",
+)
+@click.option(
+    "--reference-date",
+    default=None,
+    help="Selects one export when --reference is a directory (unosat type). "
+    "If omitted, the export closest to the dates stamped on the "
+    "prediction files is auto-discovered (with a warning).",
+)
+@click.option(
+    "--reference-layer",
+    default=None,
+    help="Layer to read from multi-layer reference files (GPKG/GDB).",
+)
+@click.option(
+    "--reference-where",
+    default=None,
+    help="OGR SQL attribute filter applied to the reference features.",
+)
 @click.option("--master-grid", type=click.Path(exists=True), required=True)
 @click.option("--out-dir", type=click.Path(), default="validation_results")
 @click.option(
@@ -79,26 +118,51 @@ def validate_one_tile(
     show_default=True,
     help="Minimum rescaled peak required to keep a predicted point.",
 )
-def cli(pred_dir, val_dir, master_grid, out_dir, exclusion_zones, factor, cutoff):
-    """Validate predictions against ground truth at a fixed (factor, cutoff)."""
+def cli(
+    pred_dir,
+    reference_path,
+    reference_type,
+    reference_date,
+    reference_layer,
+    reference_where,
+    master_grid,
+    out_dir,
+    exclusion_zones,
+    factor,
+    cutoff,
+):
+    """Validate predictions against reference data at a fixed (factor, cutoff)."""
     os.makedirs(out_dir, exist_ok=True)
+
+    pred_paths = list_point_files(pred_dir)
+    if not pred_paths:
+        raise click.ClickException(f"No prediction files found in {pred_dir}")
+
+    reference = build_reference_source(
+        {
+            "path": reference_path,
+            "type": reference_type,
+            "date": reference_date,
+            "layer": reference_layer,
+            "where": reference_where,
+        },
+        nearest_to=infer_target_date(pred_paths),
+    )
 
     exclusion_geom = None
     if exclusion_zones:
         exclusion_geom = gpd.read_file(exclusion_zones).geometry.union_all()
 
-    pairs = discover_pred_val_pairs(pred_dir, val_dir)
     results = []
 
     with rasterio.open(master_grid) as src_grid:
         raster_crs = src_grid.crs
 
-        for pred_path, val_path, pred_date, val_date in pairs:
+        for pred_path in pred_paths:
             pred_file = os.path.basename(pred_path)
             base_name = os.path.splitext(pred_file)[0]
 
             pred_gdf = gpd.read_file(pred_path).to_crs(raster_crs)
-            val_gdf = gpd.read_file(val_path).to_crs(raster_crs)
             if exclusion_geom is not None:
                 pred_gdf = pred_gdf.clip(exclusion_geom)
             if pred_gdf.empty:
@@ -106,7 +170,7 @@ def cli(pred_dir, val_dir, master_grid, out_dir, exclusion_zones, factor, cutoff
 
             try:
                 grouped, processed, metrics = validate_one_tile(
-                    pred_gdf, val_gdf, src_grid, factor=factor, cutoff=cutoff
+                    pred_gdf, reference, src_grid, factor=factor, cutoff=cutoff
                 )
             except Exception as exc:
                 click.echo(f"Skipping {pred_file}: {exc}")
@@ -115,8 +179,6 @@ def cli(pred_dir, val_dir, master_grid, out_dir, exclusion_zones, factor, cutoff
             results.append(
                 {
                     "file": pred_file,
-                    "pred_date": pred_date.strftime("%Y-%m-%d"),
-                    "val_date": val_date.strftime("%Y-%m-%d"),
                     "factor": factor,
                     "cutoff": cutoff,
                     **metrics,

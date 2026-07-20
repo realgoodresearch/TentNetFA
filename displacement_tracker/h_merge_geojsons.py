@@ -314,6 +314,28 @@ def iter_date_folders(base_dir: Path) -> list[Path]:
     )
 
 
+MERGE_CONFIG_KEYS = (
+    "min_distance_m",
+    "agreement",
+    "min_adj_peak",
+    "adjustment_factor",
+    "thresholds_config",
+    "exclusion_zones_gpkg",
+    "inclusion_zone",
+)
+
+
+def merge_kwargs_from_config(
+    merge_cfg: dict, keys: tuple[str, ...] = MERGE_CONFIG_KEYS
+) -> dict:
+    """Merge kwargs for the keys the config actually sets.
+
+    ``merge_geojsons()`` signature defaults are the single source of truth
+    for everything else.
+    """
+    return {key: merge_cfg[key] for key in keys if merge_cfg.get(key) is not None}
+
+
 @click.command()
 @click.argument("config", type=click.Path(exists=True, dir_okay=False))
 @flow_option(default="predict")
@@ -338,23 +360,12 @@ def cli(config: str, flow: str) -> None:
     if not output_gpkg and not merge_cfg.get("process_by_date"):
         raise click.ClickException("Missing required config key: merge.output")
 
-    # only pass keys the config actually sets — merge_geojsons() signature
-    # defaults are the single source of truth for the rest
-    kwargs = {
-        key: merge_cfg[key]
-        for key in (
-            "min_distance_m",
-            "agreement",
-            "min_adj_peak",
-            "adjustment_factor",
-            "thresholds_config",
-            "exclusion_zones_gpkg",
-            "inclusion_zone",
-            "process_by_date",
-        )
-        if merge_cfg.get(key) is not None
-    }
-    merge_geojsons(input_folder, output_gpkg, **kwargs)
+    merge_geojsons(
+        input_folder,
+        output_gpkg,
+        process_by_date=bool(merge_cfg.get("process_by_date")),
+        **merge_kwargs_from_config(merge_cfg),
+    )
 
 
 def merge_geojsons(

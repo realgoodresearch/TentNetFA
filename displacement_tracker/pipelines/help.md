@@ -1,9 +1,12 @@
 # TentNetFA pipelines
 
 TentNetFA detects tents in Planet satellite imagery of the Gaza Strip with a
-pixel-wise CNN. Two end-to-end pipelines cover the full workflow: **training**
-builds a model from annotated imagery, **prediction** applies a trained model
-to new imagery and produces a deduplicated GeoPackage of tent locations.
+pixel-wise CNN. Three end-to-end pipelines cover the full workflow:
+**training** builds a model from annotated imagery, **prediction** applies a
+trained model to new imagery and produces a deduplicated GeoPackage of tent
+locations, and **hyperparameter tuning** finds the merge thresholds
+(`min_adj_peak`, `adjustment_factor`) that best match a reference dataset
+and re-merges the predictions with them.
 
 Every run is self-contained: the runner resolves your configuration, writes it
 into a fresh run directory with fixed subfolder names, and executes the
@@ -15,6 +18,7 @@ selected stages against it.
     logs/           one log file per stage
     manifests/ preds/ merged/     (prediction)
     manifests/ dataset/ model/    (training)
+    merged_raw/ tuning/ merged/   (hyperparameter tuning)
 ```
 
 ## Pipeline diagrams
@@ -63,6 +67,27 @@ flowchart TB
     merge --> out
 ```
 
+### Hyperparameter tuning pipeline (`tune` section of `config.yaml`)
+
+```mermaid
+flowchart TB
+    preds["Prediction GeoJSONs<br/>(merge.input_folder — the preds/ folder<br/>of an earlier prediction run)"]
+    refdata["Reference data<br/>(tuning.reference:<br/>vector | unosat | raster)"]
+    grid["Master grid raster<br/>(tuning.master_grid)"]
+    merge_raw["<b>merge_raw</b> — h_merge_geojsons<br/>merges & deduplicates WITHOUT thresholding<br/>(min_adj_peak 0, adjustment_factor 1)"]
+    scan["<b>scan</b> — g1_scan_validation<br/>rasterizes predictions vs. reference on the master grid,<br/>ridge-aware search over (adjustment_factor, min_adj_peak)<br/>optimising tuning.metric"]
+    merge_tuned["<b>merge_tuned</b> — h2_merge_tuned<br/>re-merges the raw predictions<br/>with the tuned thresholds"]
+    out(["merged/merged_tuned.gpkg"])
+
+    preds --> merge_raw
+    merge_raw -- "merged_raw/merged_raw.gpkg" --> scan
+    refdata --> scan
+    grid --> scan
+    scan -- "tuning/best_params.yaml" --> merge_tuned
+    preds --> merge_tuned
+    merge_tuned --> out
+```
+
 Stages can be toggled individually in the sidebar — e.g. re-run only
 *predict* + *merge* against manifests from an earlier run by pointing the
 advanced YAML overrides at that run's folders, or skip *merge* while tuning
@@ -70,15 +95,15 @@ selection parameters.
 
 ## Configuration reference
 
-Both pipelines are configured through the single `config.yaml`, which has
-three top-level sections: `shared` (single source of truth for values used
-by both flows), `train` and `predict` (everything specific to one flow).
-Before a run, the selected pipeline's section is deep-merged over `shared`
-(the flow section wins), producing the flat key layout documented below —
-so e.g. `boundaries` lives under `shared:` while `prediction.model` lives
-under `predict:`. Stage CLIs resolve their natural flow by default and
-accept `--flow train|predict` to override; the resolved config written into
-each run directory is already flat.
+All pipelines are configured through the single `config.yaml`, which has
+four top-level sections: `shared` (single source of truth for values used
+by more than one flow), and `train`, `predict` and `tune` (everything
+specific to one flow). Before a run, the selected pipeline's section is
+deep-merged over `shared` (the flow section wins), producing the flat key
+layout documented below — so e.g. `boundaries` lives under `shared:` while
+`prediction.model` lives under `predict:`. Stage CLIs resolve their natural
+flow by default and accept `--flow train|predict|tune` to override; the
+resolved config written into each run directory is already flat.
 
 Paths may reference environment variables as `${VAR}` (resolved from `.env`);
 `${DATA_DIR}` is the conventional data root. Keys marked **runner-managed**
@@ -148,6 +173,33 @@ manually.
 | `merge.exclusion_zones_gpkg`, `inclusion_zone` | Drop points inside / outside these geometries. |
 | `merge.input_folder` | Prediction GeoJSONs to merge; defaults to `prediction.output_folder`. |
 | `merge.output` | Final GeoPackage. **Runner-managed** → `merged/merged.gpkg`. |
+
+### Hyperparameter tuning pipeline
+
+The tune flow reuses the `merge` section for both merge passes and adds a
+`tuning` section. The runner **forces** `merge.min_adj_peak: 0`,
+`merge.adjustment_factor: 1` and `merge.thresholds_config: null` — whatever
+the base config or overrides say — so the scan always sees every candidate
+point and the tuned global threshold cannot be shadowed:
+
+| Key | Role |
+|---|---|
+| `merge.input_folder` | Prediction GeoJSONs to tune on — typically the `preds/` folder of an earlier prediction run. |
+| `merge.output` | Unthresholded merged predictions the scan runs on. **Runner-managed** → `merged_raw/merged_raw.gpkg`. |
+| `merge.min_distance_m`, `agreement`, zones | Same semantics as in the prediction pipeline; applied to both merge passes. |
+| `tuning.master_grid` | Grid raster the predictions and the reference data are resolved onto. |
+| `tuning.reference.type` | Reference source: `vector` (point annotations in any OGR-readable file), `unosat` (an export file, or a directory of exports + explicit `date`), or `raster` (counts already resolved on the master grid). |
+| `tuning.reference.path` | The annotation file / export / directory / raster. |
+| `tuning.reference.date` | Pins one export when the path is a directory (`unosat`; child directories are searched). Unset: the export dated closest to the dates stamped on the pre-merge prediction files is auto-discovered — logged with a warning so the implicit choice is visible. |
+| `tuning.reference.layer`, `where` | Optional layer name and OGR SQL attribute filter for vector sources. |
+| `tuning.metric` | Evaluation metric whose optimum becomes the tuned `(min_adj_peak, adjustment_factor)`: `rms`, `mae`, `rmsle`, `abs_total_diff`, `abs_total_pdiff` or `spearman`. |
+| `tuning.metrics` | Metrics tracked during the scan (the evaluation metric is always included). |
+| `tuning.factor_min/max`, `cutoff_min/max` | Search bounds for `adjustment_factor` / `min_adj_peak`. |
+| `tuning.ridge_probes`, `xtol_factor`, `xtol_cutoff`, `refine_maxiter` | Search effort and precision of the ridge-aware optimizer. |
+| `tuning.exclusion_zones` | Optional gpkg; predictions are clipped to its union before the scan. |
+| `tuning.input` | Merged raw predictions; defaults to `merge.output`. **Runner-managed** → `merged_raw/merged_raw.gpkg`. |
+| `tuning.out_dir`, `best_params` | Scan artifacts (search trace, summary, rasters) and the tuned-parameter YAML. **Runner-managed** → `tuning/`. |
+| `tuning.final_output` | Final tuned GeoPackage. **Runner-managed** → `merged/merged_tuned.gpkg`. |
 
 ### Anything else
 
