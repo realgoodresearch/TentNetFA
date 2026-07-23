@@ -1,0 +1,15 @@
+{
+  "annotation_csv": "manual_eval/manual_annotation_results.csv",
+  "output_csv": "manual_eval/manual_annotation_results_with_new_model.csv",
+  "prediction_dir": null,
+  "sample_tif": null,
+  "new_model_column": null,
+  "model_column": "model_tent_count",
+  "manual_column": "manual_tent_count",
+  "output_dir": "results",
+  "boundary_shp": "../../gaza_boundaries/GazaStrip_MunicipalBoundaries.shp",
+  "agriculture_geojson": "spatial_data/layers/agriculture.json",
+  "h3_geojson": "spatial_data/layers/h3_density.json",
+  "destruction_geojson": "spatial_data/layers/destruction.json",
+  "hex_size_m": 1000.0
+}

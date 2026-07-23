@@ -1,91 +1,48 @@
+"""Hexbin map of local mean tile error."""
+
 import os
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-from matplotlib.colors import TwoSlopeNorm
 
-# ==========================
-# CONFIGURATION
-# ==========================
-
-ANNOTATION_CSV = "displacement_tracker/evaluation/manual_annotation_results.csv"
-OUTPUT_PATH = "displacement_tracker/evaluation/results/spatial_tile_error_hexbin.png"
-
-os.makedirs("displacement_tracker/evaluation/results", exist_ok=True)
-
-# ==========================
-# LOAD DATA
-# ==========================
-
-df = pd.read_csv(ANNOTATION_CSV)
-
-required_cols = {
-    "latitude",
-    "longitude",
-    "manual_tent_count",
-    "model_tent_count"
-}
-
-if not required_cols.issubset(df.columns):
-    raise ValueError("Annotation CSV missing required columns.")
-
-# Tile-level error
-df["tile_error"] = df["model_tent_count"] - df["manual_tent_count"]
-
-lon = df["longitude"].values
-lat = df["latitude"].values
-error = df["tile_error"].values
-
-# ==========================
-# HEXBIN PLOT
-# ==========================
-
-plt.figure(figsize=(10, 10))
-
-hb = plt.hexbin(
-    lon,
-    lat,
-    C=error,
-    reduce_C_function=np.mean,
-    gridsize=60,
-    cmap="RdBu_r"
+from displacement_tracker.evaluation.scripts.common import (
+    ensure_output_dir,
+    load_annotations,
 )
+from displacement_tracker.evaluation.scripts.plots import plot_error_hexbin
 
-# Get aggregated mean values per hex
-# Get aggregated mean values per hex
-hex_means = hb.get_array()
 
-if len(hex_means) == 0:
-    raise ValueError("No hex bins were created. Check data.")
+def evaluate_spatial_points(
+    annotation_csv: str,
+    output_dir: str,
+    manual_column: str = "manual_tent_count",
+    model_column: str = "model_tent_count",
+    gridsize: int = 60,
+):
+    """
+    Create a hexbin map of local mean tile error.
 
-vmin = np.min(hex_means)
-vmax = np.max(hex_means)
+    Outputs:
+        - spatial_tile_error_hexbin.png
+    """
+    ensure_output_dir(output_dir)
+    output_path = os.path.join(output_dir, "spatial_tile_error_hexbin.png")
 
-# Round bounds to nearest 10
-tick_min = int(np.floor(vmin / 10.0) * 10)
-tick_max = int(np.ceil(vmax / 10.0) * 10)
+    df = load_annotations(
+        annotation_csv, manual_column, model_column,
+        extra_columns=("latitude", "longitude"),
+    )
+    if df.empty:
+        raise ValueError("No rows found in annotation CSV.")
 
-# Zero-centered normalization using rounded bounds
-norm = TwoSlopeNorm(vmin=tick_min, vcenter=0, vmax=tick_max)
-hb.set_norm(norm)
-hb.set_clim(tick_min, tick_max)
+    n_hexes = plot_error_hexbin(
+        df["longitude"].to_numpy(),
+        df["latitude"].to_numpy(),
+        df["tile_error"].to_numpy(),
+        gridsize=gridsize,
+        output_path=output_path,
+    )
 
-cbar = plt.colorbar(hb, label="Mean Tile-Level Prediction Error")
-
-# Create ticks in increments of 10
-ticks = np.arange(tick_min, tick_max + 10, 10)
-cbar.set_ticks(ticks)
-cbar.set_ticklabels([str(int(t)) for t in ticks])
-
-plt.title("Local Mean Prediction Error (Hexbin Aggregation)")
-plt.xlabel("Longitude")
-plt.ylabel("Latitude")
-
-plt.tight_layout()
-plt.savefig(OUTPUT_PATH)
-plt.close()
-
-print(f"Saved hexbin plot to {OUTPUT_PATH}")
-
-### TODO
-# Spatial bootstrap to local regional hex, get hex level CIs
+    return {
+        "output_path": output_path,
+        "n_points": int(len(df)),
+        "n_hexes": n_hexes,
+        "mean_tile_error": float(df["tile_error"].mean()),
+    }

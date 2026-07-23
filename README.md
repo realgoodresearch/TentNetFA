@@ -242,7 +242,7 @@ The repository includes several scripts for analyzing the results:
 
 -   `evaluate-geojson`: Compare a prediction GeoJSON against a ground truth GeoJSON to compute metrics like precision, recall, and F1-score.
 -   `validate-geojson`: Perform spatial validation by comparing rasterized prediction counts against an explicitly selected reference source on a master grid (`--reference`, plus `--reference-type/-date/-layer/-where`; see `displacement_tracker/util/reference_data.py`).
--   `merge-geojsons`: Merge multiple prediction GeoJSONs into a single, deduplicated GeoPackage file.
+-   `merge-geojsons`: Merge multiple prediction GeoJSONs into a single, deduplicated GeoPackage file. With `merge.process_by_date: true`, predictions are first sorted into `YYYYMMDD/` folders and each date is merged into its own `YYYYMMDD.gpkg` instead.
 
 ### 6. Tune the Merge Thresholds
 The `tune` section of `config.yaml` configures the hyperparameter tuning flow, which finds the `merge.min_adj_peak` / `merge.adjustment_factor` pair that best matches a reference dataset:
@@ -404,6 +404,86 @@ poetry run python -m displacement_tracker.h_merge_geojsons config.yaml
 ```
 
 This deduplicates overlapping predictions and produces a consolidated output. Note: this merges everything in the input folder into a single gpkg file. Only do this if the predictions in the input folder are intended to be merged and deduplicated into one file.
+
+### Step 4: Evaluate Model Predictions
+
+The `displacement_tracker/evaluation/` package compares model predictions
+against the manually annotated tiles in
+`displacement_tracker/evaluation/manual_eval/manual_annotation_results.csv`
+and produces CSV summaries and plots of tile-level error: overall and
+hex-aggregated error (analytic and bootstrap CIs), error by municipality,
+month, building density, agriculture and destruction areas, and
+manual-vs-model correlations.
+
+Run the full suite from a JSON config:
+
+```bash
+poetry run run-evaluation --config displacement_tracker/evaluation/analysis_config.json
+```
+
+Relative paths in the config are resolved against the config file's
+directory.
+
+The evaluation suite deliberately uses its own JSON config rather than the
+pipeline `config.yaml`: it is a standalone analysis layer rather than a
+pipeline stage — typically run with several parallel configs (one per
+evaluated model), against assets that live next to the config instead of
+under `${DATA_DIR}`.
+
+The three spatial context layers the analyses read (`agriculture.json`,
+`h3_density.json`, `destruction.json`) are deliberately **not committed**
+(~20 MB even minified). Obtain them from the team data share — or from the
+original evaluation branch, which still carries them:
+
+```bash
+git checkout origin/eval-postprocessing-pipeline -- \
+  displacement_tracker/evaluation/spatial_data/layers/agriculture.json \
+  displacement_tracker/evaluation/spatial_data/layers/h3_density.json \
+  displacement_tracker/evaluation/spatial_data/layers/destruction.json
+git restore --staged displacement_tracker/evaluation/spatial_data/layers/
+```
+
+The directory is gitignored, so the files stay local. `run-evaluation`
+checks for them up front and lists anything missing.
+
+By default the suite evaluates the `model_column` already present
+in the annotation CSV. To evaluate a new model instead, set
+`prediction_dir` (a folder of per-date `YYYYMMDD.gpkg` files produced by
+`merge-geojsons` with `merge.process_by_date: true`), `sample_tif` (any GeoTIFF with the
+prediction CRS) and `new_model_column` in the config; the new model's counts
+are then joined onto the annotations before the analyses run.
+
+Results are written to the config's `output_dir`
+(`displacement_tracker/evaluation/results/` by default, which is
+gitignored).
+
+#### Using the manual annotations as validation reference data
+
+The manual annotations also plug into the generic reference-data interface
+used by the validation and tuning flows (`util/reference_data.py`,
+introduced with the hyperparameter-tuning pipeline). Two options:
+
+- Reference type `manual_eval` (registered by importing
+  `displacement_tracker.evaluation.annotation_reference`): point
+  `reference.path` at the annotation CSV and set `reference.date` to pick
+  one acquisition date — each annotated tile's count lands in the
+  master-grid cell containing the tile centroid.
+- Materialize one date as a counts raster consumable by the built-in
+  `raster` reference type:
+
+```bash
+poetry run annotation-reference --date 2024-10-14 \
+  --master-grid path/to/master_grid.tif \
+  --output reference_20241014.tif
+```
+
+The raster export works on any checkout. The `manual_eval` reference type
+additionally requires `util/reference_data.py` (the tuning pipeline) to be
+present, and registers when this module is imported.
+
+Note the annotations are a sparse sample of tiles: cells without an
+annotated tile read as zero reference counts, so restrict comparisons to
+annotated areas.
 
 ## Output
 
