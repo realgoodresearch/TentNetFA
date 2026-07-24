@@ -20,9 +20,6 @@ from displacement_tracker.util.logging_config import setup_logging
 from displacement_tracker.util.distance import interpolate_centroid
 from displacement_tracker.util.deduplication import merge_close_points_global
 from displacement_tracker.util.thresholding import passes_threshold
-from displacement_tracker.util.tiff_predictions import (
-    merge_prediction_tiffs,
-)
 
 LOGGER = setup_logging("predict_json")
 
@@ -124,7 +121,6 @@ def predict(
     device,
     selection_cfg,
     sample_cfg=None,
-    validation_tifs=False,
     batch_size=12,
     num_workers=4,
     progress_label=None,
@@ -425,7 +421,6 @@ def run_prediction_job(
     device,
     selection_cfg,
     sample_cfg,
-    validation_tifs,
     boundaries_path,
     batch_size,
     num_workers,
@@ -441,7 +436,6 @@ def run_prediction_job(
             device,
             selection_cfg,
             sample_cfg,
-            validation_tifs=validation_tifs,
             batch_size=batch_size,
             num_workers=num_workers,
             progress_label=input_path.stem,
@@ -493,7 +487,6 @@ def cli(config, flow) -> None:
     model = SimpleCNN.from_pth(
         pred_cfg["model"], model_args={"n_channels": 3, "n_classes": 1}
     )
-    validation_tifs = pred_cfg.get("validation_tifs", False)
     boundaries_path = params.get("boundaries")
 
     device = torch.device(device)
@@ -509,17 +502,11 @@ def cli(config, flow) -> None:
             device,
             selection_cfg,
             sample_cfg,
-            validation_tifs,
             boundaries_path,
             batch_size,
             num_workers,
             per_tile_standardisation=per_tile_standardisation,
         )
-
-    if validation_tifs:
-        tiff_dir = Path(selection_cfg.get("tiff_output_dir", "prediction_tiffs"))
-        mosaic_out = Path(pred_cfg.get("tiff_mosaic_output", "predictions_mosaic.tif"))
-        merge_prediction_tiffs(tiff_dir, str(mosaic_out))
 
 
 if __name__ == "__main__":

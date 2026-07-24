@@ -354,7 +354,7 @@ def cli(config, flow):
     boundaries_path = params.get("boundaries")
     geojson = params["geojson"]
 
-    manifest_folder = params.get("manifest_folder") or params.get("hdf5_folder")
+    manifest_folder = params.get("manifest_folder")
     if not manifest_folder:
         raise click.ClickException("Missing required config key: manifest_folder")
 
