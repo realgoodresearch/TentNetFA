@@ -27,3 +27,33 @@ jobs:
 
       - name: Check formatting
         run: ruff format --check .
+
+  test:
+    name: Unit tests (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: poetry.lock
+
+      - name: Install Poetry
+        run: pip install "poetry>=2.3,<3.0"
+
+      # The `test` dependency group in pyproject.toml is exactly what the
+      # suite needs — it leaves out torch, torchvision, selenium, opencv
+      # and the Google API clients, so this skips a multi-GB download.
+      # Versions come from poetry.lock, which resolves one version per
+      # package across every group, so this subset cannot drift away from
+      # the full development environment.
+      - name: Install test dependencies
+        run: poetry install --only test --no-root
+
+      # `python -m` rather than a bare `pytest`: --no-root skips installing
+      # the project, so the repo root has to be on sys.path for the tests to
+      # import displacement_tracker.
+      - name: Run unit tests
+        run: poetry run python -m pytest tests/ -v

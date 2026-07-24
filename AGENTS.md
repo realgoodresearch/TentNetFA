@@ -27,10 +27,10 @@ poetry run pipeline-run tune --dry-run   # resolve a flow without running it
 ```
 
 CI runs the tests, `ruff check`, and `ruff format --check` on every pull
-request into `main` or `Karim`, and all three must be green. That base list
-lives in the `pull_request` trigger of `.github/workflows/ci.yml`; the
-thermo-nuclear review workflow keeps its own copy in `ALLOWED_BASES`, so a
-new base branch has to be added in both.
+request into one of the base branches listed in the `pull_request` trigger of
+`.github/workflows/ci.yml`, and all three must be green. The thermo-nuclear
+review workflow keeps its own copy of that list in `ALLOWED_BASES`, so a new
+base branch has to be added in both.
 
 ## Conventions
 
