@@ -1,10 +1,83 @@
 # Master-grid tiling migration — plan
 
-Status: proposal. Planned against `Karim` with **#28** merged and **#31** landed.
-There is no test suite and no CI that runs project code
-(`.github/workflows/claude-code-review.yml` is a manual review bot), so every PR
-below carries explicit manual verification, and every PR leaves the train,
-predict, tune and evaluation flows runnable.
+Status: proposal. Planned against `Karim` at **7da6de6**, where **#28**, **#31**,
+**#36** (ruff sweep + CI) and **#37** (test conventions + `AGENTS.md`) have all
+merged. **#35** — the 220-test unit suite and the CI test job — is expected to
+land before this plan starts; see *Verification regime* below and Open decision 9
+for what changes if it does not. Every PR leaves the train, predict, tune and
+evaluation flows runnable.
+
+> **Line anchors were re-verified against 7da6de6.** #36 ran `ruff format` over
+> 38 files, shifting most of them (`e_predict_json.py` 508→528 lines,
+> `b_coordinate_scanner.py` 1111→1124, `tile_builder.py` 204→198,
+> `b1_annotated_scanner.py` 399→390). Anchors below are current as of that
+> commit; re-check any that a preceding PR in this sequence moves.
+
+## Verification regime
+
+The premise this plan was first written under — "no test suite, no CI, review
+and manual runs only" — is dead. It now has three layers, and each PR must
+satisfy all three.
+
+**1. CI is now a gate.** `.github/workflows/ci.yml` runs `ruff check .`,
+`ruff format --check .` and the test suite on every PR into `main` or `Karim`,
+and all three must be green (`AGENTS.md:29-33`). Adding a new base branch means
+editing both that trigger and the review workflow's `ALLOWED_BASES`.
+
+**2. Tests are binding, and `docs/test-patterns.md` governs them.** Every PR
+that changes deterministic behavior adds or updates tests to those conventions:
+business logic only, Given/When/Then split inline, real files in `tmp_path`
+rather than mocks, hand-derived expectations, sharp assertions. Two consequences
+worth stating plainly:
+
+* **Shared on-disk builders live in `tests/_helpers.py`** and are imported
+  explicitly (`test-patterns.md:188-200`). Several PRs below need a master-grid
+  GeoTIFF fixture and a manifest-Parquet builder — those belong in `_helpers.py`
+  the first time they are needed, not copied per file.
+* **`tests/conftest.py` is for isolating global state** (`:201-204`). The
+  `SOURCE_TYPES` registry that PR 2 touches is exactly the module-level registry
+  the conventions warn about — isolate it in a fixture rather than loosening
+  assertions until they tolerate both import orders (`:206-210`).
+
+**3. Manual acceptance runs still carry the parts tests cannot.**
+`test-patterns.md:15-22` puts anything depending on model training, an unseeded
+draw, or the contents of a data share explicitly out of scope. That is exactly
+what the drift gates in PR 6 and PR 12 measure, so those stay manual — and are
+now clearly labelled as such rather than being the only line of defence.
+
+### What the existing suite does and does not cover
+
+#35's 220 tests cover the evaluation pipeline (#28), the tuning pipeline (#29)
+and the shared core algorithms. They do **not** cover the scanning and training
+path this migration rewrites: there is no `test_manifest_writer.py`,
+`test_tile_builder.py`, `test_annotations.py`, `test_paired_image_dataset.py`,
+`test_c_resample_manifest.py` or `test_validation_core.py`. So the suite gives
+this migration **little direct protection where it is riskiest** (tiling
+geometry) while **pinning the surfaces it changes at the edges** (config
+resolution, spec/runner artifact paths, reference data, evaluation joins).
+
+That asymmetry sets the testing work: the tiling PRs *add* the missing coverage
+as they go, and the edge PRs *update* pinned contracts they deliberately change.
+
+### Existing tests this plan breaks
+
+Two breakages are certain and precise; both are the suite working as intended.
+
+| PR | Test | Why it breaks |
+|---|---|---|
+| 6 | `tests/test_scan_orchestrator.py` — `_manifest_row` asserts `len(values) == len(MANIFEST_COLUMNS)`, and three `run_scans` tests build rows through it | Deliberate schema-drift canary. Manifest schema v2 adds four columns, so the assertion fires with a message naming the new columns. Update the builder; do not weaken the assertion. |
+| 11 | `tests/test_add_new_model_results.py` — 7 tests pass `sample_tif` as a required input, including `test_missing_inputs_raise_file_not_found` (matches `"tif"`) and `test_sample_tif_without_crs_raises_value_error` (matches `"CRS"`); `test_counts_points_within_reconstructed_100m_tiles` pins the ±50 m reconstruction with hand-derived offsets | PR 11 replaces `sample_tif` with the master grid as the CRS source. The contract genuinely changes, so the tests are rewritten against the new one — see the revised PR 11. |
+
+Checked and **not** broken: `tests/test_config_flows.py` exercises
+`util/config.py` on synthetic configs (`{"processing": {"core": 100}}`), not on
+real `config.yaml` keys, so moving `master_grid` between sections and deleting
+`core_metres` leave it green.
+
+Verify-and-update, not yet confirmed broken (these files were not read in full):
+`test_pipeline_runner.py` and the `pipelines/spec.py` artifact-path contracts
+against PRs 4/6/8; `test_scan_validation.py` against g1's `master_grid` key move
+in PR 4; `test_reference_data.py` and `test_annotation_reference.py` against
+PR 2. Treat each as a checklist item in its PR, not as a known failure.
 
 ## Goal
 
@@ -53,10 +126,12 @@ equality).
 
 Rationale: every geographically pinned artifact — the 1,248 manual annotations'
 cell assignments, tuning outputs, `annotation-reference` and zonal rasters — is
-implicitly pinned to the existing file. With no test suite, transcribing the
-spec into config risks a silent one-cell shift. The loader plus `check` closes
-the real gap (today there is **no** generator and **no** validation anywhere in
-the repo) without moving authority.
+implicitly pinned to the existing file, and no test can catch a shift in a data
+file the suite never sees (`test-patterns.md:15-22` puts data-share contents out
+of scope), so transcribing the spec into config risks a silent one-cell shift
+that CI would report green. The loader plus `check` closes the real gap (today
+there is **no** generator and **no** validation anywhere in the repo) without
+moving authority.
 
 **Tile geometry.** Tile core = one master-grid cell (100 m); span = cell +
 2·`margin_metres` = 130 m; stride = 100 m; 260×260 px at 0.5 m/px (was
@@ -198,13 +273,29 @@ only ever merged an empty directory using the fossil `/9` divisor at
 `tiff_predictions.py:63-65`). `f_evaluate_geojson`'s polygon mode is *live* code
 and is deliberately **not** touched here (see PR 9).
 
-**Verification:** `grep -rn "b_coordinate_scanner\|h5py\|tiff_predictions\|save_bounds\|validation_tifs\|visualise_geojson"`
-→ zero hits including docs; `poetry lock && poetry install`; a fresh
+**Already done by #36 — drop from this PR's scope:** the dead
+`count_predictions_in_tile` in `manual_eval.py` (deleted, not repaired, for the
+same reasons this plan gave), and the unused locals in `b_coordinate_scanner.py`,
+`d_train_cnn.py` and `g1_scan_validation.py`.
+
+**Verification:** CI green (`ruff check`, `ruff format --check`, suite);
+`grep -rn "b_coordinate_scanner\|h5py\|tiff_predictions\|save_bounds\|validation_tifs\|visualise_geojson"`
+→ zero hits in tracked source and docs; `poetry lock && poetry install`; a fresh
 `pip install -r requirements.txt`; `annotated-scanner` and `image-scanner` each
 on one TIFF with manifest row counts matching a pre-PR run; `predict-json`
 end-to-end on one manifest; `poetry run train-embedding --help` imports cleanly.
 
-**Dependencies:** none. **Size:** large deletion, trivial review.
+**Tests:** no new tests — this PR only removes unreachable code, and
+`test-patterns.md:46-58` excludes tests whose subject cannot produce a wrong
+answer for a user. Confirm the suite still passes: `poetry run pytest tests/ -q`.
+
+**Merge-order note:** #35 touches `b_coordinate_scanner.py` (ruff formatting
+only) while this PR deletes it, and #35 is currently conflicted against `Karim`.
+Land #35 first and rebase this PR on it — deleting a file #35 also edits is a
+trivial conflict to resolve in that direction, and the reverse order forces #35
+to be re-resolved against a missing file.
+
+**Dependencies:** none (rebase after #35). **Size:** large deletion, trivial review.
 
 ## PR 2: Make the `manual_eval` reference type usable
 
@@ -235,6 +326,26 @@ export: g2's `val_count` is written on a hull-cropped window
 (`validation_core.py:54-61`) while the CLI writes the full grid. Compare
 overlapping cells (window the export by `out_transform`) or compare summed
 counts inside the hull.
+
+**Tests (required — this closes a gap #35 named):** #35's description documents
+this exact bug as a known follow-up and states *"No test encodes either
+behavior"*, so it is handed off deliberately. Add to
+`tests/test_annotation_reference.py`:
+
+* `build_reference_source({"type": "manual_eval", "path": …, "date": …})`
+  returns a working source whose `counts_on_grid` matches the direct
+  constructor's output cell-for-cell on a small hand-built grid — the assertion
+  that fails today with `TypeError`.
+* An unknown-type error message lists `manual_eval` among the valid types
+  (`reference_data.py:325`, `:360`), matching the part of the message naming
+  what the user must fix (`test-patterns.md:174-177`).
+* `.csv` suffix inference resolves to `manual_eval`.
+
+**Isolate the registry.** `SOURCE_TYPES` is a module-level dict mutated at import
+(`annotation_reference.py:157-158`), which is precisely the cross-file leak
+`test-patterns.md:206-210` calls out: tests must pass in any order, and the fix
+is a `conftest.py` fixture that snapshots and restores the registry — never a
+loosened assertion that tolerates both orders.
 
 **Dependencies:** none. **Size:** tiny.
 **Unblocks:** manual annotations as an independent reference for PR 6's gate.
@@ -422,7 +533,33 @@ untouched.
 6. Tune end-to-end on the new preds; `h2_merge_tuned` consumes the fresh
    `best_params.yaml`.
 
-**Dependencies:** PRs 2, 4, 5. **Size:** ~330 LOC.
+Steps 2–6 are the manual layer: they depend on real imagery, a trained
+checkpoint and a data share, which `test-patterns.md:15-22` puts out of unit-test
+scope. They are the go/no-go, not a substitute for the tests below.
+
+**Tests (required):**
+
+* **Update the schema canary.** `tests/test_scan_orchestrator.py::_manifest_row`
+  builds a row positionally against `MANIFEST_COLUMNS` and asserts
+  `len(values) == len(MANIFEST_COLUMNS)`; three `run_scans` tests go through it.
+  Schema v2 adds four columns, so this fires by design. Extend the value tuple —
+  do **not** relax the assertion, which is the only thing standing between a
+  silent schema drift and a corrupted manifest.
+* **Add `tests/test_manifest_writer.py`** (no such file exists today) pinning:
+  `compute_tile_id`'s dispatch — two rows with cell indices hash differently,
+  two rows *without* them fall back to the legacy `raster_path|r0|c0` formula and
+  stay distinct (the H1 hazard, asserted directly rather than trusted); the same
+  ground cell in two different rasters yields the same `(cell_row, cell_col)` but
+  distinct `tile_id`s; v2 round-trips through Parquet with `master_grid`
+  provenance metadata surviving `close()`.
+* **Add `tests/test_tile_builder.py`** pinning cell enumeration on a hand-built
+  3×3 grid: the cells a small raster overlaps, a cell centre reprojected to a
+  raster CRS landing in the expected pixel window, and the ≤¼ px snap tolerance.
+* **`tests/_helpers.py`**: add the master-grid GeoTIFF fixture builder and the
+  manifest-Parquet builder here rather than in the test files
+  (`test-patterns.md:188-200`) — PRs 7, 8 and 11 all need them.
+
+**Dependencies:** PRs 2, 4, 5. **Size:** ~330 LOC + ~200 LOC tests.
 **Unblocks:** PRs 7, 8, 10; change detection becomes structurally possible.
 
 ## PR 7: Versioned, id-keyed, leakage-free splits
@@ -610,6 +747,21 @@ a row as centroid + counts, and `ManualAnnotationReferenceSource` already bins b
 centroid containment (`annotation_reference.py:108-128`): approximate before,
 approximate after.
 
+> **This PR rewrites a pinned test contract — budget for it.**
+> `tests/test_add_new_model_results.py` passes `sample_tif` in all 7 tests, and
+> two of them pin its failure modes by message:
+> `test_missing_inputs_raise_file_not_found` (matches `"tif"`) and
+> `test_sample_tif_without_crs_raises_value_error` (matches `"CRS"`).
+> `test_counts_points_within_reconstructed_100m_tiles` additionally pins the
+> ±50 m reconstruction with hand-derived offsets `(10,10)`, `(-49,0)`, `(0,49)`
+> inside the tile and `(+60,0)` outside it. Per `test-patterns.md:23-27` these
+> tests are doing their job — the observable contract really is changing — so
+> they are **rewritten, not deleted**: the same cases re-expressed with the
+> master grid as the CRS source, and the missing-input / missing-CRS assertions
+> re-pointed at the grid with their `match=` patterns updated to name it. Keep
+> at least one legacy-row case asserting that centroid ± 50 m reconstruction
+> still counts identically, since that path survives for the 1,248 frozen rows.
+
 **Scope** (~350 LOC):
 
 * `evaluation/manual_eval/manual_eval.py`: sample seeded random **cells** from
@@ -636,7 +788,13 @@ approximate after.
   the trigger to `prediction_dir`/`new_model_column` and take the CRS from the
   master grid. There is no `--sample-tif` CLI flag today
   (`add_new_model_results` has no entry point) — if the escape hatch is wanted,
-  it must be a new `analysis_config.json` key, not a flag.
+  it must be a new `analysis_config.json` key, not a flag. **This also settles
+  the PR 11/PR 15 gate contradiction the completeness review flagged:** since
+  `sample_tif` is removed from the signature outright, PR 15's zero-hits grep
+  stands unconditionally, and any retained escape hatch is a differently-named
+  config key.
+* Delete the dead `count_predictions_in_tile` — **already done by #36**, drop
+  from scope.
 * `total_error.py:16-17`: `evaluate_total_error` (`:20-28`) takes no grid
   argument and its call site passes none, so deriving `TILE_SIZE_M` from the
   grid means threading a parameter through `run_all_analyses` — include that in
@@ -832,15 +990,22 @@ Items surfaced by the coupling audit that belong to no other PR:
   `config.yaml:112` (`model: /home/karim/TentNetFA/runs/v2.0/best_model.pth`)
   and `config.yaml:60` — with `${DATA_DIR}`-relative values, otherwise the
   verification below is not achievable by anyone else.
+* **`AGENTS.md` (new since #37) is now a doc surface this migration changes.**
+  Its layout table names stage modules by pipeline position (`:12`) and its
+  `util/` row lists the shared logic (`:13`) — add `master_grid.py`; its command
+  block (`:21-27`) should gain `master-grid check` alongside the existing
+  `pipeline-run tune --dry-run` example. The "Config over flags" convention
+  (`:44-48`) is also the standing justification for PR 5 moving `PIXEL_METRES`
+  into config and for PR 11 refusing to add a `--sample-tif` flag — cite it
+  rather than re-arguing it.
 
 **Verification:** `pipeline-run predict` and `pipeline-run tune` from a clean
 run dir on the checked-in config; `pipeline-ui` renders; fresh-clone
 `poetry install`. Scope the grep gate to tracked source and docs — a bare
 repo-wide grep hits `poetry.lock` (`hdf5` extras strings) and this very
-document, so it can never return zero. **Condition the `sample_tif` clause on
-PR 11's outcome:** if that PR's one-time CRS check showed the historic rasters
-do *not* share the grid CRS, the escape hatch is deliberately retained and
-`sample_tif` must stay — the two PRs otherwise assert contradictory gates.
+document, so it can never return zero. The `sample_tif` clause is now
+unconditional — PR 11 removes the parameter outright and routes any retained
+escape hatch through a differently-named config key.
 
 **Dependencies:** all prior. **Size:** docs.
 
@@ -894,3 +1059,21 @@ do *not* share the grid CRS, the escape hatch is deliberately retained and
    `f_evaluate` to a metre threshold in the same cycle as PR 12 (it is a
    reporting tool, so the blast radius is small); leave the dedup projection
    alone, since it is accurate at this scale and sits in a hot path.
+9. **What if #35 does not land first?** The plan assumes the 220-test suite is
+   in place, and #35 is currently open and conflicted against `Karim`. If it
+   stalls, the two "existing tests this plan breaks" rows disappear, but so does
+   the safety net at the edges — and the tiling PRs' *new* tests (PRs 2, 6, 7, 8)
+   become the only automated coverage in the repo. Recommended: land #35 first;
+   it is cheap to rebase and every PR here is written against its conventions
+   either way. If it cannot land, keep the new tests (they need only pytest plus
+   `requirements-test.txt`, both of which #36's CI already supports adding) and
+   treat the manual acceptance runs in PRs 6 and 12 as blocking rather than
+   confirmatory.
+10. **Do the tiling PRs need integration tests?** `test-patterns.md:220-224`
+   confines the suite to `requirements-test.txt`, which deliberately excludes
+   torch/selenium/opencv — so anything exercising `PairedImageDataset` end to end
+   (PR 7's splits, PR 8's label rasterisation) cannot live there. Recommended:
+   pin the *pure* logic that does not import torch (split assignment over a
+   synthetic manifest, cell enumeration, label geometry) and leave the
+   torch-dependent paths to the manual runs, rather than adding a second test
+   tier this repo has no home for yet.
