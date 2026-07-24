@@ -53,10 +53,34 @@ def evaluate_tile_correlation(
     y_nz = nonzero[model_column].to_numpy(dtype=float)
 
     variants = {
-        "linear_all": (x_all, y_all, False, "Linear", "tile_prediction_correlation_linear.png"),
-        "log_all": (x_all, y_all, True, "Log Scale", "tile_prediction_correlation_log.png"),
-        "linear_nonzero": (x_nz, y_nz, False, "Linear, Manual > 0", "tile_prediction_correlation_linear_nonzero.png"),
-        "log_nonzero": (x_nz, y_nz, True, "Log, Manual > 0", "tile_prediction_correlation_log_nonzero.png"),
+        "linear_all": (
+            x_all,
+            y_all,
+            False,
+            "Linear",
+            "tile_prediction_correlation_linear.png",
+        ),
+        "log_all": (
+            x_all,
+            y_all,
+            True,
+            "Log Scale",
+            "tile_prediction_correlation_log.png",
+        ),
+        "linear_nonzero": (
+            x_nz,
+            y_nz,
+            False,
+            "Linear, Manual > 0",
+            "tile_prediction_correlation_linear_nonzero.png",
+        ),
+        "log_nonzero": (
+            x_nz,
+            y_nz,
+            True,
+            "Log, Manual > 0",
+            "tile_prediction_correlation_log_nonzero.png",
+        ),
     }
 
     results = {}
@@ -73,7 +97,10 @@ def evaluate_tile_correlation(
         output_path = os.path.join(output_dir, filename)
 
         plot_scatter_with_1to1(
-            x, y, xlabel, ylabel,
+            x,
+            y,
+            xlabel,
+            ylabel,
             title=(
                 f"Tile-Level Prediction Correlation ({scale_label})\n"
                 f"Pearson r = {r:.3f}"

@@ -26,7 +26,9 @@ def evaluate_spatial_points(
     output_path = os.path.join(output_dir, "spatial_tile_error_hexbin.png")
 
     df = load_annotations(
-        annotation_csv, manual_column, model_column,
+        annotation_csv,
+        manual_column,
+        model_column,
         extra_columns=("latitude", "longitude"),
     )
     if df.empty:

@@ -180,7 +180,7 @@ def _read_rgb(src: rasterio.io.DatasetReader, window):
     if data.size == 0 or np.all(np.isnan(data)) or np.all(data == 0):
         return None
     return data.astype(np.float32)
-    
+
 
 def _create_label_from_feats(
     lon_min: float,
@@ -351,15 +351,16 @@ def process_group(
                                     nodata_pre = prewar_src.nodata
                                     if nodata_pre is not None:
                                         valid_mask = (~np.isnan(prewar_tile_rgb)) & (
-                                                prewar_tile_rgb != nodata_pre
+                                            prewar_tile_rgb != nodata_pre
                                         )
                                     else:
                                         valid_mask = (~np.isnan(prewar_tile_rgb)) & (
-                                                prewar_tile_rgb != 0
+                                            prewar_tile_rgb != 0
                                         )
 
                                     valid_fraction_pre = (
-                                            np.count_nonzero(valid_mask) / prewar_tile_rgb.size
+                                        np.count_nonzero(valid_mask)
+                                        / prewar_tile_rgb.size
                                     )
                                 except Exception:
                                     valid_fraction_pre = 0.0
@@ -368,11 +369,15 @@ def process_group(
                                     prewar_tile_rgb = None
                                 else:
                                     # --- per-tile, per-channel standardisation ---
-                                    mean = prewar_tile_rgb.mean(axis=(1, 2), keepdims=True)
-                                    std = prewar_tile_rgb.std(axis=(1, 2), keepdims=True)
-                                    prewar_tile_rgb = (
-                                                              prewar_tile_rgb - mean
-                                                      ) / (std + 1e-6)
+                                    mean = prewar_tile_rgb.mean(
+                                        axis=(1, 2), keepdims=True
+                                    )
+                                    std = prewar_tile_rgb.std(
+                                        axis=(1, 2), keepdims=True
+                                    )
+                                    prewar_tile_rgb = (prewar_tile_rgb - mean) / (
+                                        std + 1e-6
+                                    )
 
                         except Exception:
                             prewar_tile_rgb = None
@@ -383,7 +388,12 @@ def process_group(
         h = rgb.shape[1]
         w = rgb.shape[2]
         if prewar_tile_rgb is None:
-            return None, None, None, None # Previously this allowed for training tiles without prewar data
+            return (
+                None,
+                None,
+                None,
+                None,
+            )  # Previously this allowed for training tiles without prewar data
         else:
             ph, pw = prewar_tile_rgb.shape[1], prewar_tile_rgb.shape[2]
             if (ph, pw) != (h, w):
@@ -412,7 +422,7 @@ def is_high_quality_tile(
     start_threshold: float,
     max_missing_end: float,
     min_valid_fraction: float,
-    transformer
+    transformer,
 ) -> bool:
     """
     Checks date distributions and raster valid-pixel fraction for the tile.
@@ -483,9 +493,8 @@ class HDF5Writer:
         self._d_prewar = None
         self._d_meta = None
 
-
     def _create_datasets(
-            self, feature: np.ndarray, label: np.ndarray, prewar: np.ndarray | None
+        self, feature: np.ndarray, label: np.ndarray, prewar: np.ndarray | None
     ):
         # feature shape is (C, H, W)
         channels, h, w = feature.shape
@@ -545,11 +554,11 @@ class HDF5Writer:
         self._created = True
 
     def add_entry(
-            self,
-            feature: np.ndarray,
-            label: np.ndarray,
-            meta: dict[str, Any],
-            prewar: np.ndarray | None = None,
+        self,
+        feature: np.ndarray,
+        label: np.ndarray,
+        meta: dict[str, Any],
+        prewar: np.ndarray | None = None,
     ):
         # lazy create on first tile
         if not self._created:
@@ -561,7 +570,9 @@ class HDF5Writer:
         # resize then write each dataset
         self._d_feature.resize(idx + 1, axis=0)
         # ensure dtype matches dataset
-        self._d_feature[idx, :, :, :] = feature.astype(self._d_feature.dtype, copy=False)
+        self._d_feature[idx, :, :, :] = feature.astype(
+            self._d_feature.dtype, copy=False
+        )
 
         self._d_label.resize(idx + 1, axis=0)
         self._d_label[idx, :, :] = label
@@ -701,7 +712,6 @@ def scan_grouped_coordinates(
             return
         src = cropped
 
-    tif_name = os.path.basename(geotiff_path)
     prewar_src = _open_raster(prewar_path) if prewar_path else None
 
     try:
@@ -789,10 +799,10 @@ def scan_grouped_coordinates(
                 )
 
                 if (
-                        feature is not None
-                        and label is not None
-                        and meta is not None
-                        and prewar_tile is not None
+                    feature is not None
+                    and label is not None
+                    and meta is not None
+                    and prewar_tile is not None
                 ):
                     hdf5_writer.add_entry(feature, label, meta, prewar_tile)
                     processed_count += 1
@@ -827,14 +837,14 @@ def scan_grouped_coordinates(
     ):
         # incomplete TIFF: apply quality filter
         if not is_high_quality_tile(
-                feats,
-                date_target,
-                src,
-                lon,
-                lat,
-                step,
-                **quality_thresholds,
-                transformer=transformer,
+            feats,
+            date_target,
+            src,
+            lon,
+            lat,
+            step,
+            **quality_thresholds,
+            transformer=transformer,
         ):
             continue
         feature, label, meta, prewar_tile = process_group(
@@ -850,10 +860,10 @@ def scan_grouped_coordinates(
             min_valid_fraction=min_valid,
         )
         if (
-                feature is not None
-                and label is not None
-                and meta is not None
-                and prewar_tile is not None
+            feature is not None
+            and label is not None
+            and meta is not None
+            and prewar_tile is not None
         ):
             hdf5_writer.add_entry(feature, label, meta, prewar_tile)
             high_quality_found = True
@@ -876,13 +886,14 @@ def scan_all_coordinates(
     prewar_path: str | None = None,
     min_valid_fraction: float = 0.0,
 ):
-    LOGGER.info(f"Scanning entire raster grid for {os.path.basename(geotiff_path)} with step {step} and min_valid_fraction {min_valid_fraction}")
+    LOGGER.info(
+        f"Scanning entire raster grid for {os.path.basename(geotiff_path)} with step {step} and min_valid_fraction {min_valid_fraction}"
+    )
     src = _open_raster(geotiff_path)
     if src is None:
         return
 
     transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
-    tif_name = os.path.basename(geotiff_path)
 
     bounds = src.bounds
     lon_bounds, lat_bounds = transform(
@@ -1081,7 +1092,9 @@ def coordinate_scanner(
             return
 
         if not hdf5:
-            raise ValueError("hdf5 must be provided when processing.individual is false")
+            raise ValueError(
+                "hdf5 must be provided when processing.individual is false"
+            )
 
         _ensure_parent_dir(hdf5)
         LOGGER.info(f"Processing {len(tif_files)} TIFF files into {hdf5}")

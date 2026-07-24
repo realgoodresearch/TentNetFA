@@ -4,6 +4,7 @@ Manifest rows are returned as plain dicts so per-row access in `__getitem__`
 doesn't depend on pyarrow at hot-path time. Memory cost: ~150 bytes per row
 × O(10^5) tiles per TIFF ≈ tens of MB — comfortable to hold in worker RAM.
 """
+
 from __future__ import annotations
 
 import json

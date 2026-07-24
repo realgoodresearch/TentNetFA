@@ -11,6 +11,7 @@ from displacement_tracker.util.logging_config import setup_logging
 
 LOGGER = setup_logging("tiff-predictions")
 
+
 def save_prediction_tiff(probs, bounds, out_path):
     """
     Save a single-band GeoTIFF from a probability array.

@@ -147,9 +147,7 @@ class VectorReferenceSource(PointsSource):
                 int(non_points.sum()),
             )
             gdf = gdf.assign(geometry=gdf.geometry.centroid)
-        LOGGER.info(
-            "Loaded %d reference points from %s", len(gdf), source_path
-        )
+        LOGGER.info("Loaded %d reference points from %s", len(gdf), source_path)
         super().__init__(gdf)
 
 
@@ -328,7 +326,9 @@ def _infer_type(path: str) -> str:
     )
 
 
-def build_reference_source(cfg, nearest_to: Optional[datetime] = None) -> ReferenceSource:
+def build_reference_source(
+    cfg, nearest_to: Optional[datetime] = None
+) -> ReferenceSource:
     """Build a :class:`ReferenceSource` from config.
 
     ``cfg`` is either a bare path (type inferred from the suffix) or a
@@ -365,9 +365,7 @@ def build_reference_source(cfg, nearest_to: Optional[datetime] = None) -> Refere
     accepted = {k: v for k, v in cfg.items() if k in allowed}
     dropped = sorted(set(cfg) - allowed)
     if dropped:
-        LOGGER.warning(
-            "Reference type %r ignores option(s): %s", source_type, dropped
-        )
+        LOGGER.warning("Reference type %r ignores option(s): %s", source_type, dropped)
     if nearest_to is not None and factory is UnosatReferenceSource:
         accepted["nearest_to"] = nearest_to
     return factory(path, **accepted)

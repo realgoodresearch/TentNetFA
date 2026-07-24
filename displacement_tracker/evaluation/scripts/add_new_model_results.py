@@ -59,7 +59,9 @@ def _count_predictions_for_date(
 
     half = tile_size_meters / 2
     tiles = gpd.GeoDataFrame(
-        geometry=[box(c.x - half, c.y - half, c.x + half, c.y + half) for c in centroids],
+        geometry=[
+            box(c.x - half, c.y - half, c.x + half, c.y + half) for c in centroids
+        ],
         index=group.index,
         crs=raster_crs,
     )
@@ -107,6 +109,8 @@ def add_new_model_results(
         )
 
     df.to_csv(output_csv, index=False)
-    LOGGER.info("Saved updated CSV to %s (added column %s)", output_csv, actual_column_name)
+    LOGGER.info(
+        "Saved updated CSV to %s (added column %s)", output_csv, actual_column_name
+    )
 
     return output_csv, actual_column_name

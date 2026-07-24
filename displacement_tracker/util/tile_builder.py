@@ -161,9 +161,7 @@ def _read_prewar_tile(
 
         lon_c = 0.5 * (lon_min + lon_max)
         lat_c = 0.5 * (lat_min + lat_max)
-        pxs, pys = transform(
-            "EPSG:4326", prewar_src.crs, [lon_c], [lat_c]
-        )
+        pxs, pys = transform("EPSG:4326", prewar_src.crs, [lon_c], [lat_c])
         col_f, row_f = (~prewar_src.transform) * (pxs[0], pys[0])
         r_center = int(round(row_f))
         c_center = int(round(col_f))
@@ -174,9 +172,7 @@ def _read_prewar_tile(
         rpre1 = rpre0 + tile_px
         cpre1 = cpre0 + tile_px
 
-        pre_data = prewar_src.read(
-            [1, 2, 3], window=((rpre0, rpre1), (cpre0, cpre1))
-        )
+        pre_data = prewar_src.read([1, 2, 3], window=((rpre0, rpre1), (cpre0, cpre1)))
         if pre_data.size == 0:
             return None
 
@@ -190,9 +186,7 @@ def _read_prewar_tile(
                 )
             else:
                 valid_mask = (~np.isnan(prewar_tile_rgb)) & (prewar_tile_rgb != 0)
-            valid_fraction_pre = (
-                np.count_nonzero(valid_mask) / prewar_tile_rgb.size
-            )
+            valid_fraction_pre = np.count_nonzero(valid_mask) / prewar_tile_rgb.size
         except Exception:
             valid_fraction_pre = 0.0
 

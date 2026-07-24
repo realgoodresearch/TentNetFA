@@ -85,9 +85,10 @@ class DatasetViewer:
         arr_feat, arr_prewar, arr_label, meta_text = self._prepare_display_data(idx)
 
         fig, axes = plt.subplots(
-            1, 3,
+            1,
+            3,
             figsize=(30, 8),  # bigger figure
-            dpi=150  # higher resolution
+            dpi=150,  # higher resolution
         )
 
         self._plot_meta(axes[0], meta_text)
@@ -114,9 +115,10 @@ class DatasetViewer:
             diff_vis /= diff_vis.max()
 
         fig, axes = plt.subplots(
-            1, 5,
+            1,
+            5,
             figsize=(30, 8),  # bigger figure
-            dpi=150  # higher resolution
+            dpi=150,  # higher resolution
         )
 
         self._plot_meta(axes[0], meta_text)

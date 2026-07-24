@@ -80,6 +80,7 @@ TILE_SIZE_METERS = 100
 # HELPER FUNCTIONS
 # ==========================
 
+
 def parse_tif_name(filename):
     """
     Parse filename into:
@@ -140,47 +141,6 @@ def random_tile_within_polygon(src, polygon_gdf):
     raise RuntimeError("Failed to sample valid tile after many attempts.")
 
 
-def count_predictions_in_tile(tile_geom, geojson_path, raster_crs):
-    """
-    Count number of prediction points inside tile.
-    Ensures CRS alignment and verifies spatial overlap.
-    """
-
-    if not os.path.exists(geojson_path):
-        print("GeoJSON not found:", geojson_path)
-        return 0
-
-    preds = gpd.read_file(geojson_path)
-
-    if preds.empty:
-        return 0
-
-    # If CRS missing, assume WGS84 (very common for GeoJSON)
-    if preds.crs is None:
-        preds.set_crs("EPSG:4326", inplace=True)
-
-    # Reproject predictions to raster CRS
-    preds = preds.to_crs(raster_crs)
-
-    # Quick sanity check: do predictions overlap raster at all?
-    raster_bounds_geom = box(*rasterio.open(tif_path).bounds)
-
-    if not preds.total_bounds.any():
-        return 0
-
-    # Filter predictions to raster extent first
-    preds = preds[preds.intersects(raster_bounds_geom)]
-
-    if preds.empty:
-        print("Predictions do not overlap raster after reprojection.")
-        return 0
-
-    # Now count points inside tile
-    count = preds.within(tile_geom).sum()
-
-    return int(count)
-
-
 def show_tile_and_get_count(tile_array, prewar_array):
     """
     Display current and prewar tiles side by side.
@@ -232,6 +192,7 @@ def show_tile_and_get_count(tile_array, prewar_array):
 # MAIN PROCESS
 # ==========================
 
+
 def main():
 
     if not TIF_LIST:
@@ -261,7 +222,6 @@ def main():
 
         with rasterio.open(tif_path) as src:
             with rasterio.open(PREWAR_TIF) as prewar_src:
-
                 # ---- Load and align predictions ONCE ----
                 if os.path.exists(geojson_path):
                     preds = gpd.read_file(geojson_path)
@@ -292,20 +252,20 @@ def main():
 
                     tile_geom = random_tile_within_polygon(src, gaza_boundary)
 
-                    window = from_bounds(
-                        *tile_geom.bounds,
-                        transform=src.transform
-                    )
+                    window = from_bounds(*tile_geom.bounds, transform=src.transform)
 
                     # prepare prewar window, reproject tile_geom to prewar CRS if necessary
                     if prewar_src.crs == src.crs:
                         prewar_geom = tile_geom
                     else:
-                        prewar_geom = gpd.GeoSeries([tile_geom], crs=src.crs).to_crs(prewar_src.crs).iloc[0]
+                        prewar_geom = (
+                            gpd.GeoSeries([tile_geom], crs=src.crs)
+                            .to_crs(prewar_src.crs)
+                            .iloc[0]
+                        )
 
                     prewar_window = from_bounds(
-                        *prewar_geom.bounds,
-                        transform=prewar_src.transform
+                        *prewar_geom.bounds, transform=prewar_src.transform
                     )
 
                     # safe reads: skip tile if reading fails (out-of-range)
@@ -351,30 +311,33 @@ def main():
                     centroid = tile_geom.centroid
 
                     # Convert centroid to lat/lon
-                    centroid_gdf = gpd.GeoSeries(
-                        [centroid],
-                        crs=src.crs
-                    ).to_crs("EPSG:4326")
+                    centroid_gdf = gpd.GeoSeries([centroid], crs=src.crs).to_crs(
+                        "EPSG:4326"
+                    )
 
                     lon = centroid_gdf.x.values[0]
                     lat = centroid_gdf.y.values[0]
 
-                    rows.append({
-                        "region": region,
-                        "date": date,
-                        "time": time,
-                        "satellite": satellite,
-                        "tif_name": tif_name,
-                        "latitude": lat,
-                        "longitude": lon,
-                        "manual_tent_count": manual_count,
-                        "model_tent_count": model_count
-                    })
+                    rows.append(
+                        {
+                            "region": region,
+                            "date": date,
+                            "time": time,
+                            "satellite": satellite,
+                            "tif_name": tif_name,
+                            "latitude": lat,
+                            "longitude": lon,
+                            "manual_tent_count": manual_count,
+                            "model_tent_count": model_count,
+                        }
+                    )
 
                     accepted += 1
 
                 if accepted < N_TILES_PER_IMAGE:
-                    print(f"Warning: only collected {accepted}/{N_TILES_PER_IMAGE} tiles for {tif_name} after {attempts} attempts.")
+                    print(
+                        f"Warning: only collected {accepted}/{N_TILES_PER_IMAGE} tiles for {tif_name} after {attempts} attempts."
+                    )
 
     df = pd.DataFrame(rows)
 

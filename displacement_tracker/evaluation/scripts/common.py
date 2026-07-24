@@ -28,6 +28,7 @@ Z_95 = 1.96
 # ANNOTATION AND LAYER LOADING
 # ==========================================================
 
+
 def read_annotations(annotation_csv: str, required_columns=()) -> pd.DataFrame:
     """Read the annotation CSV and validate that required columns exist."""
     df = pd.read_csv(annotation_csv)
@@ -57,9 +58,7 @@ def load_annotations(
     extra_columns: tuple = (),
 ) -> pd.DataFrame:
     """Read the annotation CSV and add a tile_error column."""
-    df = read_annotations(
-        annotation_csv, {manual_column, model_column, *extra_columns}
-    )
+    df = read_annotations(annotation_csv, {manual_column, model_column, *extra_columns})
     df["tile_error"] = df[model_column] - df[manual_column]
     return df
 
@@ -103,6 +102,7 @@ def finite_xy(x, y):
 # ERROR SUMMARIES
 # ==========================================================
 
+
 def mean_error_ci(errors, z: float = Z_95) -> dict | None:
     """Mean error with sample std and a normal-approximation CI.
 
@@ -145,6 +145,7 @@ def group_error_summary(
 # ==========================================================
 # HEX GRID
 # ==========================================================
+
 
 def choose_utm_crs_from_gdf(gdf: gpd.GeoDataFrame) -> CRS:
     """Choose a UTM CRS based on the centroid of the layer."""
@@ -225,11 +226,15 @@ def hex_error_aggregation(
     points_with_hex = points_with_hex.dropna(subset=["hex_id"]).copy()
     points_with_hex["hex_id"] = points_with_hex["hex_id"].astype(int)
 
-    agg = points_with_hex.groupby("hex_id").agg(
-        n_tiles=("tile_error", "size"),
-        mean_err=("tile_error", "mean"),
-        std_err=("tile_error", "std"),
-    ).reset_index()
+    agg = (
+        points_with_hex.groupby("hex_id")
+        .agg(
+            n_tiles=("tile_error", "size"),
+            mean_err=("tile_error", "mean"),
+            std_err=("tile_error", "std"),
+        )
+        .reset_index()
+    )
 
     hex_gdf = hex_gdf.merge(agg, on="hex_id", how="left")
     hex_gdf["n_tiles"] = hex_gdf["n_tiles"].fillna(0).astype(int)

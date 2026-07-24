@@ -219,7 +219,7 @@ _MERMAID_FENCE = re.compile(r"```mermaid\n(.*?)```", re.DOTALL)
 def _markdown_with_mermaid(md: str) -> None:
     pos = 0
     for match in _MERMAID_FENCE.finditer(md):
-        before = md[pos:match.start()]
+        before = md[pos : match.start()]
         if before.strip():
             st.markdown(before)
         st.iframe(
@@ -250,8 +250,7 @@ def _render_load_bar(
         return f"{max(0.0, min(100.0, pct or 0.0)):.1f}"
 
     html = (
-        _LOADBAR_TEMPLATE
-        .replace("__TITLE__", title)
+        _LOADBAR_TEMPLATE.replace("__TITLE__", title)
         .replace("__CPU_CLS__", _severity(cpu_pct))
         .replace("__CPU_TEXT__", cpu_text)
         .replace("__CPU_W__", width(cpu_pct))
@@ -272,12 +271,17 @@ def _update_load_bar(box, monitor, stage_label: str) -> None:
         cpu_pct = cpu_sum / cores
         mem_pct = rss / total * 100 if total else None
         mem_text = (
-            f"{rss / 2**30:.1f} / {total / 2**30:.0f} GiB" if total
+            f"{rss / 2**30:.1f} / {total / 2**30:.0f} GiB"
+            if total
             else f"{rss / 2**30:.1f} GiB"
         )
         _render_load_bar(
-            box, f"System load — {stage_label}",
-            cpu_pct, f"{cpu_pct:.0f} %", mem_pct, mem_text,
+            box,
+            f"System load — {stage_label}",
+            cpu_pct,
+            f"{cpu_pct:.0f} %",
+            mem_pct,
+            mem_text,
         )
     except Exception:
         pass
@@ -285,21 +289,31 @@ def _update_load_bar(box, monitor, stage_label: str) -> None:
 
 def _widget(param: Param, default, key: str):
     if param.type == "bool":
-        return st.checkbox(param.label, value=bool(default), key=key, help=param.help or None)
+        return st.checkbox(
+            param.label, value=bool(default), key=key, help=param.help or None
+        )
     if param.type == "int":
         return st.number_input(
-            param.label, value=int(default if default is not None else 0),
-            step=1, key=key, help=param.help or None,
+            param.label,
+            value=int(default if default is not None else 0),
+            step=1,
+            key=key,
+            help=param.help or None,
         )
     if param.type == "float":
         return st.number_input(
-            param.label, value=float(default if default is not None else 0.0),
-            format="%g", key=key, help=param.help or None,
+            param.label,
+            value=float(default if default is not None else 0.0),
+            format="%g",
+            key=key,
+            help=param.help or None,
         )
     if param.type == "list":
         text = st.text_area(
-            param.label, value="\n".join(default or []),
-            key=key, help=param.help or None,
+            param.label,
+            value="\n".join(default or []),
+            key=key,
+            help=param.help or None,
             placeholder="Empty: scan stage processes ALL .tif files in the "
             "GeoTIFF directory; download stage downloads nothing.",
         )
@@ -307,8 +321,10 @@ def _widget(param: Param, default, key: str):
         return entries or None
     # str / path
     value = st.text_input(
-        param.label, value="" if default is None else str(default),
-        key=key, help=param.help or None,
+        param.label,
+        value="" if default is None else str(default),
+        key=key,
+        help=param.help or None,
     )
     if value == "":
         return None if param.optional else ""
@@ -332,7 +348,9 @@ def main() -> None:
         base_config_path = st.text_input("Base config", value=pipeline.base_config)
         run_root = st.text_input("Run root", value=runner.default_run_root())
         run_name = st.text_input(
-            "Run name", value="", placeholder="empty = timestamp",
+            "Run name",
+            value="",
+            placeholder="empty = timestamp",
             help="Artifacts land in <run root>/<pipeline>/<run name>/.",
         )
         st.caption("Artifacts will be written to:")
@@ -347,12 +365,16 @@ def main() -> None:
             stage
             for stage in pipeline.stages
             if st.checkbox(
-                stage.label, value=stage.default_enabled, key=f"{pipeline.key}:stage:{stage.key}"
+                stage.label,
+                value=stage.default_enabled,
+                key=f"{pipeline.key}:stage:{stage.key}",
             )
         ]
 
         run_clicked = st.button(
-            "Run pipeline", type="primary", disabled=not enabled_stages,
+            "Run pipeline",
+            type="primary",
+            disabled=not enabled_stages,
             use_container_width=True,
         )
         st.caption(
@@ -410,7 +432,9 @@ def main() -> None:
                 "Deep-merged on top of everything above. Use the same structure "
                 "as the base config, e.g. `prediction: {selection: {method: nms}}`."
             )
-            raw_yaml = st.text_area("YAML", value="", height=160, label_visibility="collapsed")
+            raw_yaml = st.text_area(
+                "YAML", value="", height=160, label_visibility="collapsed"
+            )
 
     # Fixed bottom bar (the iframe script escapes the tab flow entirely).
     load_box = st.empty()
@@ -418,7 +442,9 @@ def main() -> None:
 
     if not run_clicked:
         with logs_tab:
-            st.caption("No run in this session yet — configure and press *Run pipeline*.")
+            st.caption(
+                "No run in this session yet — configure and press *Run pipeline*."
+            )
         return
 
     extra: dict = {}
@@ -470,7 +496,9 @@ def main() -> None:
                             tail[-1] = text
                         else:
                             tail.append(text)
-                        overwrite = segment.endswith("\r") and not segment.endswith("\r\n")
+                        overwrite = segment.endswith("\r") and not segment.endswith(
+                            "\r\n"
+                        )
                         now = time.monotonic()
                         if now - last_render > 0.2:
                             box.code("\n".join(tail))
@@ -478,7 +506,9 @@ def main() -> None:
                         if now - last_load > 1.0:
                             if monitor is None and ctx.active_process is not None:
                                 try:
-                                    monitor = runner.StageLoadMonitor(ctx.active_process)
+                                    monitor = runner.StageLoadMonitor(
+                                        ctx.active_process
+                                    )
                                 except Exception:
                                     monitor = None
                             elif monitor is not None:

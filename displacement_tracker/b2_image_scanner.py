@@ -5,6 +5,7 @@ process aggregates rows and writes a single Parquet manifest at end-of-TIFF.
 The HDF5 materialisation step is gone — the runtime dataset reads tiles
 directly from the standardised raster.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -121,9 +122,10 @@ def _chunked(seq: Iterable, n: int) -> Iterator[list]:
 def _supports_max_tasks_per_child() -> bool:
     """ProcessPoolExecutor.max_tasks_per_child was added in Python 3.11."""
     try:
-        return "max_tasks_per_child" in inspect.signature(
-            ProcessPoolExecutor.__init__
-        ).parameters
+        return (
+            "max_tasks_per_child"
+            in inspect.signature(ProcessPoolExecutor.__init__).parameters
+        )
     except (TypeError, ValueError):
         return sys.version_info >= (3, 11)
 
@@ -168,9 +170,7 @@ def scan_all_coordinates(
         return
 
     src_means, src_stds = compute_standardisation_stats(src)
-    manifest_writer.set_raster_stats(
-        src.name, src_means, src_stds, nodata=src.nodata
-    )
+    manifest_writer.set_raster_stats(src.name, src_means, src_stds, nodata=src.nodata)
 
     bounds = src.bounds
     LOGGER.info(

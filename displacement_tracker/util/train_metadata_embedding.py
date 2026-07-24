@@ -11,6 +11,7 @@ Per-row feature vector (21 dims):
 Stats are taken from PairedImageDataset's outputs, i.e. post per-TIFF
 standardization — the same signal a downstream model would consume.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -186,7 +187,9 @@ class ProjectionHead(nn.Module):
         return self.net(x)
 
 
-def nt_xent_loss(z1: torch.Tensor, z2: torch.Tensor, temperature: float) -> torch.Tensor:
+def nt_xent_loss(
+    z1: torch.Tensor, z2: torch.Tensor, temperature: float
+) -> torch.Tensor:
     """SimCLR InfoNCE over in-batch negatives. z1, z2: (B, D)."""
     batch_size = z1.size(0)
     z = F.normalize(torch.cat([z1, z2], dim=0), dim=1)
@@ -269,7 +272,9 @@ def train(
     run_dir = Path("runs") / timestamp
     run_dir.mkdir(parents=True, exist_ok=True)
     save_path = (
-        Path(checkpoint_path) if checkpoint_path else (run_dir / "metadata_embedding.pth")
+        Path(checkpoint_path)
+        if checkpoint_path
+        else (run_dir / "metadata_embedding.pth")
     )
     save_path.parent.mkdir(parents=True, exist_ok=True)
 

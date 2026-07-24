@@ -5,6 +5,7 @@ by whether `label_feature_ids` is empty (negative) or non-empty (positive),
 samples negatives at `null_keep_fraction`, and concatenates kept rows into a
 single output Parquet. No raster I/O — runs in seconds.
 """
+
 from __future__ import annotations
 
 import json
@@ -34,9 +35,7 @@ def resample_and_merge(config_path: str, flow: str | None = "train") -> None:
 
     manifest_dir = config.get("manifest_folder") or config.get("hdf5_folder")
     if not manifest_dir:
-        raise click.ClickException(
-            "Missing required config key: manifest_folder"
-        )
+        raise click.ClickException("Missing required config key: manifest_folder")
     out_path = Path(rebal_config.get("out") or "")
     if not str(out_path):
         raise click.ClickException("Missing required config key: rebalancing.out")
@@ -49,7 +48,9 @@ def resample_and_merge(config_path: str, flow: str | None = "train") -> None:
     rng = np.random.default_rng(rng_seed)
     manifest_dir_path = Path(manifest_dir)
     if not manifest_dir_path.is_dir():
-        print(f"Error: manifest directory not found: {manifest_dir_path}", file=sys.stderr)
+        print(
+            f"Error: manifest directory not found: {manifest_dir_path}", file=sys.stderr
+        )
         sys.exit(1)
 
     if loading_files:

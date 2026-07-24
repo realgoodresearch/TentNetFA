@@ -29,14 +29,40 @@ def _parse_override(raw: str) -> tuple[str, object]:
 
 @click.command()
 @click.argument("pipeline_key", type=click.Choice(sorted(PIPELINES)))
-@click.option("--config", "base_config", default=None, help="Base YAML (defaults to the pipeline's standard config).")
-@click.option("--set", "assignments", multiple=True, help="Override a config value: dotted.path=value (YAML-parsed).")
-@click.option("--skip", "skipped", multiple=True, help="Stage key to skip (repeatable).")
-@click.option("--only", "only", multiple=True, help="Run only these stage keys (repeatable).")
-@click.option("--name", "run_name", default=None, help="Run name (defaults to a timestamp).")
-@click.option("--run-root", default=None, help=f"Artifact root (default: {runner.default_run_root()}).")
-@click.option("--dry-run", is_flag=True, help="Prepare the run directory and print the plan without executing.")
-def cli(pipeline_key, base_config, assignments, skipped, only, run_name, run_root, dry_run):
+@click.option(
+    "--config",
+    "base_config",
+    default=None,
+    help="Base YAML (defaults to the pipeline's standard config).",
+)
+@click.option(
+    "--set",
+    "assignments",
+    multiple=True,
+    help="Override a config value: dotted.path=value (YAML-parsed).",
+)
+@click.option(
+    "--skip", "skipped", multiple=True, help="Stage key to skip (repeatable)."
+)
+@click.option(
+    "--only", "only", multiple=True, help="Run only these stage keys (repeatable)."
+)
+@click.option(
+    "--name", "run_name", default=None, help="Run name (defaults to a timestamp)."
+)
+@click.option(
+    "--run-root",
+    default=None,
+    help=f"Artifact root (default: {runner.default_run_root()}).",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Prepare the run directory and print the plan without executing.",
+)
+def cli(
+    pipeline_key, base_config, assignments, skipped, only, run_name, run_root, dry_run
+):
     pipeline = PIPELINES[pipeline_key]
     overrides = dict(_parse_override(a) for a in assignments)
 

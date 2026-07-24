@@ -82,10 +82,7 @@ def prepare_grouped_cell_inputs(
     cols = np.asarray(cols, dtype=np.int32)
 
     in_bounds = (
-        (rows >= 0)
-        & (rows < grid_shape[0])
-        & (cols >= 0)
-        & (cols < grid_shape[1])
+        (rows >= 0) & (rows < grid_shape[0]) & (cols >= 0) & (cols < grid_shape[1])
     )
 
     pred_prepped = pred_gdf.loc[in_bounds, ["peak_value", "adjusted_peak"]].copy()

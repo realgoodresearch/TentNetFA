@@ -74,7 +74,9 @@ def spatial_bootstrap_hex(
     # Spatial (block) bootstrap for the regional total: resample whole hexes.
     blocks = hex_gdf[hex_gdf["n_tiles"] > 0].copy()
     if blocks.empty:
-        raise ValueError("No hexes contain annotations; cannot perform block bootstrap.")
+        raise ValueError(
+            "No hexes contain annotations; cannot perform block bootstrap."
+        )
 
     blocks["total_err_hex"] = blocks["mean_err"] * blocks["n_tiles"]
     totals_arr = blocks["total_err_hex"].values
@@ -111,16 +113,20 @@ def spatial_bootstrap_hex(
         significant=significant,
     )
 
-    summary_df = pd.DataFrame([{
-        "region_total_error_estimate": region_total_est,
-        "region_total_error_ci_lo": region_lo,
-        "region_total_error_ci_hi": region_hi,
-        "region_mean_error_estimate": region_mean_obs,
-        "region_mean_error_ci_lo": region_mean_lo,
-        "region_mean_error_ci_hi": region_mean_hi,
-        "n_hex_blocks": nblocks,
-        "n_tiles_used": total_tiles_in_blocks,
-    }])
+    summary_df = pd.DataFrame(
+        [
+            {
+                "region_total_error_estimate": region_total_est,
+                "region_total_error_ci_lo": region_lo,
+                "region_total_error_ci_hi": region_hi,
+                "region_mean_error_estimate": region_mean_obs,
+                "region_mean_error_ci_lo": region_mean_lo,
+                "region_mean_error_ci_hi": region_mean_hi,
+                "n_hex_blocks": nblocks,
+                "n_tiles_used": total_tiles_in_blocks,
+            }
+        ]
+    )
     summary_df.to_csv(out_summary_csv, index=False)
 
     return hex_gdf

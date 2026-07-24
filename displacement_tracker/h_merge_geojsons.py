@@ -137,9 +137,7 @@ def load_zone_geometry(zones_path: str | None, label: str):
         return None
 
     if zones_gdf.crs is None:
-        LOGGER.warning(
-            "%s zones CRS missing, assuming EPSG:4326: %s", label, path
-        )
+        LOGGER.warning("%s zones CRS missing, assuming EPSG:4326: %s", label, path)
         zones_gdf = zones_gdf.set_crs("EPSG:4326")
     else:
         zones_gdf = zones_gdf.to_crs("EPSG:4326")
@@ -228,7 +226,10 @@ def process_geojson_folder(
         pts = filter_points_by_adjusted_peak(pts, threshold, adjustment_factor)
         LOGGER.info(
             "  %s: %d points loaded, %d kept (adj_peak >= %.4f)",
-            path.name, loaded, len(pts), threshold,
+            path.name,
+            loaded,
+            len(pts),
+            threshold,
         )
 
         for label, zone_geom, keep_inside in (

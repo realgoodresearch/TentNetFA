@@ -203,9 +203,7 @@ def cli(annotation_csv, date, master_grid, output, count_column):
     )
 
     with rasterio.open(master_grid) as src:
-        counts = source.counts_on_grid(
-            (src.height, src.width), src.transform, src.crs
-        )
+        counts = source.counts_on_grid((src.height, src.width), src.transform, src.crs)
         profile = src.profile.copy()
 
     profile.update(driver="GTiff", count=1, dtype="float32", nodata=0.0)

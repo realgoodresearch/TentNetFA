@@ -5,6 +5,7 @@ JSON containing the date-filtered tent features. The runtime dataset reads
 tiles from the standardised raster on demand and rasterises labels via
 `create_label_from_feats(...)` against the JSON-stored feature list.
 """
+
 from __future__ import annotations
 
 import json
@@ -64,9 +65,7 @@ def _build_row(
     labels_path: str,
     is_complete: bool,
 ) -> dict[str, Any]:
-    feature_ids = [
-        int(f["_idx"]) for f in feats if isinstance(f, dict) and "_idx" in f
-    ]
+    feature_ids = [int(f["_idx"]) for f in feats if isinstance(f, dict) and "_idx" in f]
     return {
         "tile_id": compute_tile_id(raster_path, tile.r0, tile.c0),
         "raster_path": raster_path,
@@ -170,16 +169,12 @@ def _scan_grouped_tiles(
 ) -> int:
     span_m = core_m + 2.0 * margin_m
     processed_count = 0
-    for (i, j), feats in tqdm(
-        grouped.items(), desc=f"{base_name} processing tiles"
-    ):
+    for (i, j), feats in tqdm(grouped.items(), desc=f"{base_name} processing tiles"):
         if not feats:
             continue
         x_centre = i * core_m
         y_centre = j * core_m
-        tile = compute_tile_window(
-            src, x_centre, y_centre, core_m, margin_m, min_valid
-        )
+        tile = compute_tile_window(src, x_centre, y_centre, core_m, margin_m, min_valid)
         if tile is None:
             continue
         if prewar_src is not None:
@@ -236,9 +231,7 @@ def scan_grouped_coordinates(
     wgs84_to_src = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
 
     src_means, src_stds = compute_standardisation_stats(src)
-    manifest_writer.set_raster_stats(
-        src.name, src_means, src_stds, nodata=src.nodata
-    )
+    manifest_writer.set_raster_stats(src.name, src_means, src_stds, nodata=src.nodata)
 
     prewar_src = open_raster(prewar_path) if prewar_path else None
     if prewar_src is not None:
@@ -313,9 +306,7 @@ def scan_grouped_coordinates(
         LOGGER.info(
             f"[{base_name}] marked as INCOMPLETE - applying quality gating from YAML."
         )
-        LOGGER.info(
-            f"[{base_name}] Found {len(grouped)} coordinate groups with tents."
-        )
+        LOGGER.info(f"[{base_name}] Found {len(grouped)} coordinate groups with tents.")
         LOGGER.info(
             f"GeoTIFF bounds: min_lon={src.bounds.left}, min_lat={src.bounds.bottom}, max_lon={src.bounds.right}, max_lat={src.bounds.top}"
         )

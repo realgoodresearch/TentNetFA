@@ -51,8 +51,8 @@ def evaluate_destruction_vs_non_destruction(
 
     # A tile can match several polygons; it counts as 'Destruction' if any
     # matching polygon was already destroyed by the tile date.
-    joined["active_destruction"] = (
-        joined["date_start"].notna() & (joined["date_start"] <= joined["date"])
+    joined["active_destruction"] = joined["date_start"].notna() & (
+        joined["date_start"] <= joined["date"]
     )
     collapsed = joined.groupby(joined.index).agg(
         {"tile_error": "first", "active_destruction": "max"}

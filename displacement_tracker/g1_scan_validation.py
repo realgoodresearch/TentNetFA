@@ -86,12 +86,13 @@ def _make_evaluator(grouped, scan_metrics, bests, trace, progress=None):
     val_raster_base = grouped["val_raster"]
     mask_array = grouped["mask_array"]
     grid_shape = grouped["grid_shape"]
-    nodata_val = grouped["nodata_val"]
     rows_arr = pred_prepped["row"].to_numpy(dtype=np.int32)
     cols_arr = pred_prepped["col"].to_numpy(dtype=np.int32)
 
     def evaluate(factor: float, cutoff: float) -> Optional[Dict[str, float]]:
-        keep = keep_mask_from_params(pred_prepped, factor=float(factor), cutoff=float(cutoff))
+        keep = keep_mask_from_params(
+            pred_prepped, factor=float(factor), cutoff=float(cutoff)
+        )
         try:
             processed = process_grouped_cells(
                 pred_rows=rows_arr[keep],
@@ -109,8 +110,11 @@ def _make_evaluator(grouped, scan_metrics, bests, trace, progress=None):
             processed["mask_array"],
         )
         trace.append(
-            {"factor": float(factor), "cutoff": float(cutoff),
-             **{m: metrics[m] for m in scan_metrics}}
+            {
+                "factor": float(factor),
+                "cutoff": float(cutoff),
+                **{m: metrics[m] for m in scan_metrics},
+            }
         )
         for m in scan_metrics:
             v = metrics[m]
@@ -233,7 +237,12 @@ def scan_tile(
       ridges[m]  = (a, b) of the fitted ridge cutoff = a*factor + b
     """
     bests = {
-        m: {"value": initial_best_value(m), "factor": None, "cutoff": None, "keep": None}
+        m: {
+            "value": initial_best_value(m),
+            "factor": None,
+            "cutoff": None,
+            "keep": None,
+        }
         for m in scan_metrics
     }
     trace: List[Dict[str, float]] = []
@@ -297,8 +306,12 @@ def plot_search_trace(
         bv = bests[metric]
         if bv["factor"] is not None:
             ax.scatter(
-                bv["factor"], bv["cutoff"],
-                color="white", edgecolor="black", marker="*", s=140,
+                bv["factor"],
+                bv["cutoff"],
+                color="white",
+                edgecolor="black",
+                marker="*",
+                s=140,
                 label=f"best {metric}",
             )
 
@@ -368,8 +381,7 @@ def _scan_settings(params: dict) -> ScanSettings:
     input_path = tuning.get("input") or merge_cfg.get("output")
     if not input_path:
         raise click.ClickException(
-            "Missing required config key: tuning.input "
-            "(or merge.output as fallback)"
+            "Missing required config key: tuning.input (or merge.output as fallback)"
         )
     out_dir = tuning.get("out_dir") or "scan_results"
     metric, scan_metrics = _resolve_metrics(tuning)
@@ -522,10 +534,9 @@ def run_scan(params: dict) -> dict:
         settings.reference, nearest_to=_prediction_date(settings)
     )
 
-    total_evals = (
-        _budget_per_metric(settings.ridge_probes, settings.refine_maxiter)
-        * len(settings.scan_metrics)
-    )
+    total_evals = _budget_per_metric(
+        settings.ridge_probes, settings.refine_maxiter
+    ) * len(settings.scan_metrics)
     pbar = tqdm(total=total_evals, desc="evals", unit="eval")
 
     with rasterio.open(settings.master_grid) as src_grid:
@@ -534,8 +545,7 @@ def run_scan(params: dict) -> dict:
             grouped = prepare_grouped_cell_inputs(pred_gdf, reference, src_grid)
         except Exception as exc:
             raise click.ClickException(
-                f"Could not resolve {settings.input_path} onto the master "
-                f"grid: {exc}"
+                f"Could not resolve {settings.input_path} onto the master grid: {exc}"
             ) from exc
 
         bests, trace, ridges = scan_tile(
@@ -559,7 +569,9 @@ def run_scan(params: dict) -> dict:
         click.echo(f"{settings.base_name} ({len(trace)} evals) -> {best_summary}")
 
         plot_search_trace(
-            trace=trace, bests=bests, ridges=ridges,
+            trace=trace,
+            bests=bests,
+            ridges=ridges,
             factor_bounds=settings.factor_bounds,
             cutoff_bounds=settings.cutoff_bounds,
             out_path=Path(settings.out_dir) / f"{settings.base_name}_search_trace.png",
