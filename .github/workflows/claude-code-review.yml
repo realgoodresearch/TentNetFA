@@ -3,7 +3,7 @@ name: Claude Thermo-Nuclear Code Review
 # Manual-only review to avoid unnecessary token spend:
 #   - Comment "@claude review" on a PR when it's ready for review, OR
 #   - Run the workflow manually from the Actions tab with a PR number.
-# Only PRs targeting `main` are reviewed.
+# Only PRs whose base branch is in ALLOWED_BASES are reviewed.
 #
 # Requires the ANTHROPIC_API_KEY repository secret to be set.
 
@@ -16,6 +16,11 @@ on:
         description: "Pull request number to review"
         required: true
         type: string
+
+env:
+  # Space-separated list of base branches eligible for review. Add a branch
+  # here (in one place) to allow reviewing PRs that target it.
+  ALLOWED_BASES: "main Karim"
 
 jobs:
   claude-review:
@@ -38,23 +43,38 @@ jobs:
           base=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq .baseRefName)
           echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
           echo "base=$base" >> "$GITHUB_OUTPUT"
-          if [ "$base" != "main" ]; then
-            echo "PR #$PR_NUMBER targets '$base', not 'main' — skipping review."
+
+          allowed=false
+          for b in $ALLOWED_BASES; do
+            if [ "$base" = "$b" ]; then
+              allowed=true
+              break
+            fi
+          done
+          echo "allowed=$allowed" >> "$GITHUB_OUTPUT"
+
+          if [ "$allowed" != "true" ]; then
+            echo "PR #$PR_NUMBER targets '$base', which is not in ALLOWED_BASES ($ALLOWED_BASES) — skipping review."
           fi
 
       - name: Checkout PR merge result
-        if: steps.pr.outputs.base == 'main'
+        if: steps.pr.outputs.allowed == 'true'
         uses: actions/checkout@v4
         with:
           ref: refs/pull/${{ steps.pr.outputs.number }}/merge
           fetch-depth: 0
 
       - name: Run thermo-nuclear code review
-        if: steps.pr.outputs.base == 'main'
+        if: steps.pr.outputs.allowed == 'true'
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          track_progress: true
+          # track_progress renders a live checklist comment, but the action
+          # only supports it for PR/issue/comment events — not
+          # workflow_dispatch. Enable it only for the comment path so the
+          # manual-dispatch path (Actions tab / API) works too. The verdict
+          # summary is posted via `gh pr comment` either way.
+          track_progress: ${{ github.event_name == 'issue_comment' }}
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ steps.pr.outputs.number }}
@@ -79,7 +99,8 @@ jobs:
             **Thermo-Nuclear Verdict:** APPROVED
             **Thermo-Nuclear Verdict:** CHANGES REQUIRED
 
-            Use APPROVED only if the PR clears the skill's approval bar.
+            Use APPROVED only if the PR clears the skill's approval bar —
+            that is, only if the only remaining fixes are nits.
           claude_args: |
             --model claude-fable-5
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"

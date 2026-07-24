@@ -171,7 +171,16 @@ Prefer a smaller number of high-conviction comments over a long list of cosmetic
 ## Approval Bar
 
 Do not approve merely because behavior seems correct.
-The bar for approval is:
+
+**Approve only if the only remaining fixes are nits.** A nit is a cosmetic,
+take-it-or-leave-it suggestion — naming preferences, comment wording, trivial
+style choices — that the author could reasonably ignore without leaving the
+codebase worse off. If any remaining finding is more than a nit — anything
+structural, architectural, or maintainability-relevant that you genuinely want
+fixed before merge — the verdict is CHANGES REQUIRED, not an approval with
+caveats. Never downgrade a real finding to a nit in order to approve.
+
+In addition, the bar for approval is:
 
 - no clear structural regression
 - no obvious missed opportunity to make the implementation dramatically simpler when such a path is visible
@@ -191,4 +200,7 @@ Treat these as presumptive blockers unless the author can justify them clearly:
 - the PR adds an unnecessary abstraction, wrapper, or cast-heavy contract that makes the design more indirect
 - the PR duplicates an existing helper or puts logic in the wrong layer when there is a clear canonical home
 
-If those conditions are not met, leave explicit, actionable feedback and push for a cleaner decomposition.
+If those conditions are not met — or any remaining finding rises above nit
+level — do not approve. Leave explicit, actionable feedback and push for a
+cleaner decomposition, and clearly separate blocking findings from nits so
+the author knows exactly what stands between the PR and approval.
