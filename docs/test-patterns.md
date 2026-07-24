@@ -217,8 +217,8 @@ poetry run ruff check .         # lint
 poetry run ruff format .        # formatting
 ```
 
-CI runs all three on every pull request into `main` or `Karim` (see
-`.github/workflows/ci.yml`). Tests install from `requirements-test.txt`, a
+CI runs all three on every pull request into one of the base branches listed
+in `.github/workflows/ci.yml`. Tests install from `requirements-test.txt`, a
 pinned subset that deliberately excludes the torch/selenium/opencv stack —
 if a test needs one of those, it is an integration test and does not belong
 in this suite.
