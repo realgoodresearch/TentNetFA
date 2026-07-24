@@ -77,11 +77,16 @@ def evaluate_municipal_bounds(
     )
 
     _plot_municipal_map(
-        municipal_gdf, results_df, name_column,
+        municipal_gdf,
+        results_df,
+        name_column,
         os.path.join(output_dir, "municipal_bounds_map.png"),
     )
     _plot_municipal_scatter(
-        joined, name_column, manual_column, model_column,
+        joined,
+        name_column,
+        manual_column,
+        model_column,
         os.path.join(output_dir, "municipal_scatter_subplots.png"),
     )
 
@@ -92,7 +97,10 @@ def _plot_municipal_map(municipal_gdf, results_df, name_column, output_map):
     """Choropleth of mean tile error per municipality."""
     map_gdf = municipal_gdf.merge(results_df, on=name_column, how="left")
 
-    if "mean_tile_error" not in map_gdf.columns or not map_gdf["mean_tile_error"].notna().any():
+    if (
+        "mean_tile_error" not in map_gdf.columns
+        or not map_gdf["mean_tile_error"].notna().any()
+    ):
         LOGGER.warning("No valid regional error values available for map plot.")
         return
 
@@ -114,7 +122,9 @@ def _plot_municipal_map(municipal_gdf, results_df, name_column, output_map):
     plt.close()
 
 
-def _plot_municipal_scatter(joined, name_column, manual_column, model_column, output_scatter):
+def _plot_municipal_scatter(
+    joined, name_column, manual_column, model_column, output_scatter
+):
     """Per-municipality manual-vs-model scatter subplots with a 1:1 line."""
     unique_regions = sorted(joined[name_column].dropna().unique())
     if not unique_regions:
@@ -145,7 +155,7 @@ def _plot_municipal_scatter(joined, name_column, manual_column, model_column, ou
         ax.set_xlabel("Manual")
         ax.set_ylabel("Model")
 
-    for ax in axes[len(unique_regions):]:
+    for ax in axes[len(unique_regions) :]:
         ax.axis("off")
 
     plt.tight_layout()

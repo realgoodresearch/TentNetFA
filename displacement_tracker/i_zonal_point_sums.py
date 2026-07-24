@@ -32,7 +32,9 @@ def resolve_path(base_dir: Path, path_value: str) -> Path:
     return path if path.is_absolute() else (base_dir / path)
 
 
-def load_gdf(path: Path, label: str, fallback_crs: str | None = None) -> gpd.GeoDataFrame:
+def load_gdf(
+    path: Path, label: str, fallback_crs: str | None = None
+) -> gpd.GeoDataFrame:
     if not path.exists():
         raise click.ClickException(f"{label} not found: {path}")
     try:
@@ -80,7 +82,9 @@ def summarize_points_by_zone(
     zones_cols = zones_gdf[[zone_id_column, "geometry"]].copy()
     joined = gpd.sjoin(points_gdf, zones_cols, how="left", predicate="within")
 
-    value_cols = [col for col in ["peak_value", "adjusted_peak"] if col in joined.columns]
+    value_cols = [
+        col for col in ["peak_value", "adjusted_peak"] if col in joined.columns
+    ]
     grouped = (
         joined.groupby(zone_id_column, dropna=False)
         .agg({"geometry": "count"})
@@ -117,29 +121,45 @@ def write_zone_summary(
     )
 
     zones_with_summary = zones_gdf.merge(summary_df, on=zone_id_column, how="left")
-    zones_with_summary["tent_count"] = zones_with_summary["tent_count"].fillna(0).astype(int)
+    zones_with_summary["tent_count"] = (
+        zones_with_summary["tent_count"].fillna(0).astype(int)
+    )
     if "peak_value" in value_cols:
-        zones_with_summary["peak_value_median"] = zones_with_summary["peak_value_median"].fillna(0.0)
-        zones_with_summary["peak_value_iqr"] = zones_with_summary["peak_value_iqr"].fillna(0.0)
+        zones_with_summary["peak_value_median"] = zones_with_summary[
+            "peak_value_median"
+        ].fillna(0.0)
+        zones_with_summary["peak_value_iqr"] = zones_with_summary[
+            "peak_value_iqr"
+        ].fillna(0.0)
     if "adjusted_peak" in value_cols:
-        zones_with_summary["adjusted_peak_median"] = zones_with_summary["adjusted_peak_median"].fillna(0.0)
-        zones_with_summary["adjusted_peak_iqr"] = zones_with_summary["adjusted_peak_iqr"].fillna(0.0)
+        zones_with_summary["adjusted_peak_median"] = zones_with_summary[
+            "adjusted_peak_median"
+        ].fillna(0.0)
+        zones_with_summary["adjusted_peak_iqr"] = zones_with_summary[
+            "adjusted_peak_iqr"
+        ].fillna(0.0)
 
     output_csv = output_dir / f"zonal_sum_{zone_name}.csv"
     output_gpkg = output_dir / f"zonal_sum_{zone_name}.gpkg"
-    (zones_with_summary.drop(columns=["geometry"], errors="ignore")).to_csv(output_csv, index=False)
+    (zones_with_summary.drop(columns=["geometry"], errors="ignore")).to_csv(
+        output_csv, index=False
+    )
     zones_with_summary.to_file(output_gpkg, driver="GPKG")
     LOGGER.info("Saved %s zonal summary CSV: %s", zone_name, output_csv)
     LOGGER.info("Saved %s zonal summary GPKG: %s", zone_name, output_gpkg)
 
 
-def write_master_grid_tent_count_tiff(points_gdf: gpd.GeoDataFrame, master_grid_path: Path, output_dir: Path) -> None:
+def write_master_grid_tent_count_tiff(
+    points_gdf: gpd.GeoDataFrame, master_grid_path: Path, output_dir: Path
+) -> None:
     if not master_grid_path.exists():
         raise click.ClickException(f"Master grid raster not found: {master_grid_path}")
 
     with rasterio.open(master_grid_path) as src:
         if src.crs is None:
-            raise click.ClickException(f"Master grid CRS is missing: {master_grid_path}")
+            raise click.ClickException(
+                f"Master grid CRS is missing: {master_grid_path}"
+            )
 
         points_in_grid = points_gdf.to_crs(src.crs)
         xs = points_in_grid.geometry.x.to_numpy()
@@ -148,12 +168,7 @@ def write_master_grid_tent_count_tiff(points_gdf: gpd.GeoDataFrame, master_grid_
 
         rows = np.asarray(rows)
         cols = np.asarray(cols)
-        in_bounds = (
-            (rows >= 0)
-            & (rows < src.height)
-            & (cols >= 0)
-            & (cols < src.width)
-        )
+        in_bounds = (rows >= 0) & (rows < src.height) & (cols >= 0) & (cols < src.width)
 
         counts = np.zeros((src.height, src.width), dtype=np.int32)
         if np.any(in_bounds):
@@ -170,10 +185,20 @@ def write_master_grid_tent_count_tiff(points_gdf: gpd.GeoDataFrame, master_grid_
 
 
 @click.command()
-@click.option("--points-gpkg", default="results/TentNetFA/final/merged_points.gpkg", show_default=True)
-@click.option("--neighbourhood-zones", default="boundaries/neighbourhoods.gpkg", show_default=True)
-@click.option("--municipality-zones", default="boundaries/municipalities.gpkg", show_default=True)
-@click.option("--governorate-zones", default="boundaries/governorates.gpkg", show_default=True)
+@click.option(
+    "--points-gpkg",
+    default="results/TentNetFA/final/merged_points.gpkg",
+    show_default=True,
+)
+@click.option(
+    "--neighbourhood-zones", default="boundaries/neighbourhoods.gpkg", show_default=True
+)
+@click.option(
+    "--municipality-zones", default="boundaries/municipalities.gpkg", show_default=True
+)
+@click.option(
+    "--governorate-zones", default="boundaries/governorates.gpkg", show_default=True
+)
 @click.option(
     "--master-grid",
     default=None,
@@ -183,7 +208,9 @@ def write_master_grid_tent_count_tiff(points_gdf: gpd.GeoDataFrame, master_grid_
 @click.option("--neighbourhood-id-column", default="name", show_default=True)
 @click.option("--municipality-id-column", default="NAME", show_default=True)
 @click.option("--governorate-id-column", default="name", show_default=True)
-@click.option("--output-dir", default="results/TentNetFA/final/zonal_summaries", show_default=True)
+@click.option(
+    "--output-dir", default="results/TentNetFA/final/zonal_summaries", show_default=True
+)
 def cli(
     points_gpkg: str,
     neighbourhood_zones: str,
@@ -206,11 +233,27 @@ def cli(
 
     output_path.mkdir(parents=True, exist_ok=True)
 
-    points_gdf = load_gdf(points_path, "merged point GeoPackage", fallback_crs="EPSG:4326")
+    points_gdf = load_gdf(
+        points_path, "merged point GeoPackage", fallback_crs="EPSG:4326"
+    )
 
-    write_zone_summary(points_gdf, neighbourhood_path, "neighbourhood", neighbourhood_id_column, output_path)
-    write_zone_summary(points_gdf, municipality_path, "municipality", municipality_id_column, output_path)
-    write_zone_summary(points_gdf, governorate_path, "governorate", governorate_id_column, output_path)
+    write_zone_summary(
+        points_gdf,
+        neighbourhood_path,
+        "neighbourhood",
+        neighbourhood_id_column,
+        output_path,
+    )
+    write_zone_summary(
+        points_gdf,
+        municipality_path,
+        "municipality",
+        municipality_id_column,
+        output_path,
+    )
+    write_zone_summary(
+        points_gdf, governorate_path, "governorate", governorate_id_column, output_path
+    )
 
     if master_grid_path is not None:
         write_master_grid_tent_count_tiff(points_gdf, master_grid_path, output_path)

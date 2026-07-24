@@ -7,6 +7,7 @@ the source GeoTIFFs at training/inference time. Per-channel standardisation
 stats live in the Parquet file metadata so the dataset can normalise windows
 on the fly.
 """
+
 from __future__ import annotations
 
 import hashlib

@@ -1,4 +1,5 @@
 """Shared per-TIFF orchestration: file collection, output layout, writer lifecycle."""
+
 from __future__ import annotations
 
 import glob
@@ -21,9 +22,7 @@ def collect_tif_files(geotiff_dir: str, params: dict | None = None) -> list[str]
     if search_files:
         all_tifs = glob.glob(os.path.join(geotiff_dir, "*.tif"))
         return [
-            p
-            for p in all_tifs
-            if any(s in os.path.basename(p) for s in search_files)
+            p for p in all_tifs if any(s in os.path.basename(p) for s in search_files)
         ]
     return glob.glob(os.path.join(geotiff_dir, "*.tif"))
 

@@ -63,11 +63,15 @@ def extract_tile_centroids(probs_np, bounds, threshold, min_area, crop_pixels=0)
     return coords
 
 
-def extract_tile_nms(probs_np, bounds, threshold, factor=1.0, kernel_size=7, sigma=50.0, crop_pixels=0):
+def extract_tile_nms(
+    probs_np, bounds, threshold, factor=1.0, kernel_size=7, sigma=50.0, crop_pixels=0
+):
     """Return interpolated local maxima (lat, lon, peak_value) above threshold."""
     probs_t = torch.as_tensor(probs_np, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
     blurred_np = gaussian_filter(probs_np, sigma=sigma)
-    blurred_t = torch.as_tensor(blurred_np, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+    blurred_t = (
+        torch.as_tensor(blurred_np, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+    )
     score_t = probs_t + blurred_t * factor
 
     # Pad manually so the pooled map always matches score_t's shape: max_pool2d's
@@ -138,7 +142,8 @@ def predict(
     agreement = selection_cfg.get("agreement", False)
     min_distance_m = selection_cfg.get("min_distance_m", 2.0)
     factor = selection_cfg.get("factor", 0.0)
-    LOGGER.info(f"🔹 Prediction selection parameters: method={selection_cfg.get('method', 'centroid')}, "
+    LOGGER.info(
+        f"🔹 Prediction selection parameters: method={selection_cfg.get('method', 'centroid')}, "
         f"threshold={threshold}, min_area={min_area}, nms_kernel_size={nms_kernel_size}, "
         f"crop_pixels={crop_pixels}, nms_sigma={nms_sigma}, agreement={agreement}, "
         f"min_distance_m={min_distance_m}, factor={factor}"
@@ -147,9 +152,7 @@ def predict(
     batch_size = max(1, int(batch_size))
 
     if method not in {"centroid", "nms"}:
-        raise click.ClickException(
-            "selection.method must be one of: 'centroid', 'nms'"
-        )
+        raise click.ClickException("selection.method must be one of: 'centroid', 'nms'")
 
     if method == "nms" and "min_area" in selection_cfg:
         raise click.ClickException(
@@ -224,7 +227,7 @@ def predict(
                         postfix["rss_gb"] = f"{mem_gb:.2f}"
                         if device.type == "cuda":
                             postfix["cuda_gb"] = (
-                                f"{torch.cuda.memory_allocated(device)/(1024**3):.2f}"
+                                f"{torch.cuda.memory_allocated(device) / (1024**3):.2f}"
                             )
 
                     try:
@@ -254,11 +257,21 @@ def predict(
 
                             if method == "nms":
                                 coords = extract_tile_nms(
-                                    probs_np, bounds, threshold, factor=factor, kernel_size=nms_kernel_size, sigma=nms_sigma, crop_pixels=crop_pixels
+                                    probs_np,
+                                    bounds,
+                                    threshold,
+                                    factor=factor,
+                                    kernel_size=nms_kernel_size,
+                                    sigma=nms_sigma,
+                                    crop_pixels=crop_pixels,
                                 )
                             else:
                                 coords = extract_tile_centroids(
-                                    probs_np, bounds, threshold, min_area, crop_pixels=crop_pixels
+                                    probs_np,
+                                    bounds,
+                                    threshold,
+                                    min_area,
+                                    crop_pixels=crop_pixels,
                                 )
 
                             tile_tent_count = len(coords)
@@ -303,13 +316,15 @@ def predict(
         tmp_ndjson.unlink()
     except Exception:
         pass
-    
+
     print("")  # add new line after tqdm bars
 
     LOGGER.info(f"Total number of tents (pre-merge): {len(flat_results)}")
 
     # Only keep points with agreement between overlaps
-    if isinstance(agreement, bool):  # convert to int, False -> 1 point agreement, True -> 2 point agreement
+    if isinstance(
+        agreement, bool
+    ):  # convert to int, False -> 1 point agreement, True -> 2 point agreement
         agreement = 2 if agreement else 1
 
     # global deduplication in meters
@@ -416,7 +431,9 @@ def run_prediction_job(
     num_workers,
     per_tile_standardisation=False,
 ):
-    dataset = PairedImageDataset(str(input_path), per_tile_standardisation=per_tile_standardisation)
+    dataset = PairedImageDataset(
+        str(input_path), per_tile_standardisation=per_tile_standardisation
+    )
     try:
         results = predict(
             dataset,
@@ -456,7 +473,9 @@ def cli(config, flow) -> None:
 
     processing_cfg = params.get("processing", {})
     if "margin_metres" not in processing_cfg:
-        raise click.ClickException("Missing required config key: processing.margin_metres")
+        raise click.ClickException(
+            "Missing required config key: processing.margin_metres"
+        )
     margin_metres = float(processing_cfg["margin_metres"])
     margin_pixels = int(round(margin_metres / PIXEL_METRES))
     selection_cfg["crop_pixels"] = margin_pixels

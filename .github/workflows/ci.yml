@@ -1,0 +1,56 @@
+name: CI
+
+# Runs on PRs into the base branches listed in .github/allowed-bases.txt
+# (shared with the review workflow). Trigger filters are static YAML, so
+# the workflow fires for every PR and a cheap gate job decides from the
+# shared list whether the real jobs run.
+on:
+  pull_request:
+
+jobs:
+  gate:
+    name: Check base branch
+    runs-on: ubuntu-latest
+    outputs:
+      allowed: ${{ steps.check.outputs.allowed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/allowed-bases.txt
+          sparse-checkout-cone-mode: false
+
+      - name: Compare base branch against allowed-bases.txt
+        id: check
+        run: |
+          base="$GITHUB_BASE_REF"
+          allowed=false
+          for b in $(grep -v '^#' .github/allowed-bases.txt); do
+            if [ "$base" = "$b" ]; then
+              allowed=true
+              break
+            fi
+          done
+          echo "allowed=$allowed" >> "$GITHUB_OUTPUT"
+          echo "PR base branch '$base': allowed=$allowed"
+
+  lint:
+    name: Lint & format (ruff)
+    needs: gate
+    if: needs.gate.outputs.allowed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Same constraint as the dev dependency group in pyproject.toml
+      - name: Install ruff
+        run: pip install "ruff>=0.15.0,<0.16.0"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Check formatting
+        run: ruff format --check .

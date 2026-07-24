@@ -55,21 +55,15 @@ def cli(config: str, flow: str) -> None:
 
     input_folder = merge_cfg.get("input_folder")
     if not input_folder:
-        raise click.ClickException(
-            "Missing required config key: merge.input_folder"
-        )
+        raise click.ClickException("Missing required config key: merge.input_folder")
     output = tuning.get("final_output")
     if not output:
-        raise click.ClickException(
-            "Missing required config key: tuning.final_output"
-        )
+        raise click.ClickException("Missing required config key: tuning.final_output")
     best_params_path = tuning.get("best_params")
     if not best_params_path and tuning.get("out_dir"):
         best_params_path = str(Path(tuning["out_dir"]) / "best_params.yaml")
     if not best_params_path:
-        raise click.ClickException(
-            "Missing required config key: tuning.best_params"
-        )
+        raise click.ClickException("Missing required config key: tuning.best_params")
 
     best = load_best_params(best_params_path)
     LOGGER.info(

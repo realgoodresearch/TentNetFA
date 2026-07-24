@@ -156,7 +156,9 @@ def prepare_run(
     with open(config_path, "w") as f:
         yaml.safe_dump(config, f, sort_keys=False)
 
-    return RunContext(pipeline=pipeline, run_dir=run_dir, config_path=config_path, config=config)
+    return RunContext(
+        pipeline=pipeline, run_dir=run_dir, config_path=config_path, config=config
+    )
 
 
 def stage_argv(ctx: RunContext, stage: Stage) -> list[str]:

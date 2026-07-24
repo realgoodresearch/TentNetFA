@@ -50,7 +50,9 @@ def evaluate_total_error(
     # Analytic CI for the mean error per hex, and for the total error
     # extrapolated to every tile the hex could contain.
     hex_gdf["hex_area_m2"] = hex_gdf.geometry.area
-    hex_gdf["N_total_tiles"] = (hex_gdf["hex_area_m2"] / TILE_AREA_M2).round().astype(int)
+    hex_gdf["N_total_tiles"] = (
+        (hex_gdf["hex_area_m2"] / TILE_AREA_M2).round().astype(int)
+    )
 
     hex_gdf["se_mean"] = hex_gdf["std_err"] / np.sqrt(hex_gdf["n_tiles"])
     hex_gdf.loc[hex_gdf["n_tiles"] <= 1, "se_mean"] = np.nan
@@ -64,9 +66,16 @@ def evaluate_total_error(
     hex_gdf["ci_hi_total"] = hex_gdf["total_err_est"] + z * hex_gdf["se_total_est"]
 
     round_cols = [
-        "hex_area_m2", "mean_err", "std_err", "se_mean",
-        "ci_lo_mean", "ci_hi_mean",
-        "total_err_est", "se_total_est", "ci_lo_total", "ci_hi_total",
+        "hex_area_m2",
+        "mean_err",
+        "std_err",
+        "se_mean",
+        "ci_lo_mean",
+        "ci_hi_mean",
+        "total_err_est",
+        "se_total_est",
+        "ci_lo_total",
+        "ci_hi_total",
     ]
     for c in round_cols:
         if pd.api.types.is_numeric_dtype(hex_gdf[c]):

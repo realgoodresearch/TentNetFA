@@ -1,0 +1,6 @@
+# Base branches whose PRs get CI (tests + ruff) and are eligible for the
+# thermo-nuclear review workflow. One branch per line; lines starting
+# with # are ignored. This file is the single source of truth — edit it
+# here to allow a new base branch in both workflows.
+main
+Karim
