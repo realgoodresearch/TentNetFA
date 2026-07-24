@@ -136,8 +136,10 @@ rows share one `tile_px`.
 | 1–5 | nothing | none (byte-identical gates) | yes |
 | 6 | predict manifests, prediction JSONs, merged gpkgs, new `best_params.yaml` | one predict + one tune run on the **existing** checkpoint (fully convolutional, loads at 260 px) | yes; train untouched |
 | 7 | legacy positional `splits.csv` (refused loudly) | next `train-cnn` writes v2 splits | yes |
-| 8 | train manifests, labels JSONs, `balanced.parquet` | rescan `b1` → `resample-manifest`; retrain **recommended, not required** | yes |
-| 9–11 | nothing | none | yes |
+| 8 | train manifests, labels JSONs, `balanced.parquet`, **and `splits.csv`** — the retile changes every train `tile_id`, so any v2 splits written between PR 7 and PR 8 hit PR 7's own hard error, including the resume path `checkpoint.parent/splits.csv` (`d_train_cnn.py:101-116`) | rescan `b1` → `resample-manifest`; next `train-cnn` rewrites splits; retrain **recommended, not required** | yes |
+| 9 | nothing | none | yes |
+| 10 | predict manifests and the per-TIFF prediction JSON set (cheaply — fewer rows); merged gpkg is preserved modulo the boundary band. Anything keyed on row *counts* shifts, notably `prediction.sample` fractions via `create_subsets` (`e_predict_json.py:161-168`) | one predict run | yes |
+| 11 | nothing for legacy annotation rows | none | yes |
 | 12 | labels + decoded positions shift ≤ ~1 px; predictions, tuning | the one paid cycle: rescan → retrain → re-predict → re-tune → optional re-embed | yes |
 | 13–15 | nothing | none | yes |
 
@@ -351,14 +353,29 @@ The first behavior-change PR, deliberately predict-only.
 **Scope** (~330 LOC):
 
 * `util/manifest_writer.py`: schema v2 adds `cell_row`/`cell_col` (int32),
-  `pixel_size` (float32), `tile_px` (int32) at `:22-42`; `compute_tile_id`
-  becomes `blake2b8(f"{origin_image}|{cell_row}|{cell_col}")` (`:49-54`);
-  Parquet metadata gains a `master_grid` provenance key with a read-time
-  mismatch warning.
+  `pixel_size` (float32), `tile_px` (int32) at `:22-42`; Parquet metadata gains
+  a `master_grid` provenance key with a read-time mismatch warning.
 * **Give the new columns writer-side defaults.** `MANIFEST_COLUMNS` derives from
   the schema (`:44`) and `add_row` raises `KeyError` on any missing column
   (`:77-80`), while `b1._build_row` still emits exactly the 17 v1 columns
   (`b1:68-86`) until PR 8 — without defaults, **PR 6 breaks the train scan**.
+* **`compute_tile_id` must dispatch on whether cell indices are present**
+  (`:49-54`). This is the one genuinely blocking hazard in the sequence. `b1`
+  and `b2` share this function, and `b1` stays on the old lattice until PR 8, so
+  if the new formula `blake2b8(origin_image|cell_row|cell_col)` were applied
+  unconditionally, every `b1` row of a raster would hash the same placeholder
+  cell and collapse to **one identical `tile_id` per raster** — which PR 7 then
+  keys split membership on. Keep the legacy `blake2b8(raster_path|r0|c0)` for
+  rows without cell indices and use the geographic id only when they are
+  present. (Equivalent alternatives: move the id change to PR 8, or forbid
+  re-running `b1` in the PR 6→8 window. Dispatching is the least fragile.)
+* **Migrate `c_resample_manifest` in this PR too.** It is a manifest reader the
+  plan otherwise never updates, and it breaks twice in the PR 6→8 window:
+  `pa.concat_tables(selected_tables)` at `:114` has no `promote_options` (unlike
+  `manifest_reader.py:48`), so a folder holding both v1 `b1` and v2 `b2`
+  parquets aborts on schema mismatch; and it rebuilds file metadata with
+  `replace_schema_metadata({raster_stats: …})`, silently **dropping** the new
+  `master_grid` provenance key that the read-time warning depends on.
 * `util/manifest_reader.py:75-79`: treat the new columns as optional. Use
   **null**, not `-1`, for absent cell indices, and have PR 7's splitter refuse
   to group on null cells — a `-1` sentinel would collapse every v1 training tile
@@ -446,8 +463,12 @@ cell appears in two splits; an old positional file errors cleanly.
 **Scope** (~250 LOC):
 
 * `b1_annotated_scanner.py`: `_scan_complete_raster` / `_scan_grouped_tiles`
-  (`:91-211`) iterate grid cells, same pattern as PR 6; `_build_row` (`:57-88`)
-  emits the v2 columns. The boundaries crop (`:230-234`) is **unchanged** here —
+  (`:91-211`) iterate grid cells; `_build_row` (`:57-88`) emits the v2 columns
+  and the geographic `tile_id` now becomes active for train rows. **Extract the
+  cell-enumeration written in PR 6 into a shared helper rather than copying it**
+  — `b1` and `b2` already duplicate row construction and the prewar gate
+  (`b1:57-88` vs `b2:88-108`), and copying the enumeration would add a third
+  duplication that PR 14 then has to undo. The boundaries crop (`:230-234`) is **unchanged** here —
   windows are world-anchored so it stays safe, and replacing it changes
   standardisation stats (they are computed on the cropped handle at `:238`), so
   it is deferred to the retrain cycle.
@@ -771,6 +792,17 @@ Items surfaced by the coupling audit that belong to no other PR:
   rename.
 * `b2` drops a batch's tiles when a worker raises a normal exception
   (`b2:297-302`, counted but not retried) — make it fail loudly or requeue.
+* `visualization/dataset_viewer.py` is used as a verification gate in PR 8 while
+  still drawing thirds-grid lines that encode the legacy 3×3 subtile convention
+  (`:77-80`) — actively misleading once a tile is one cell plus margin. Also
+  drop its hardcoded `/data/projects/gazatents/…` manifest path (`:232-234`).
+* Remove the now-unreachable zero-prewar fallback
+  (`paired_image_dataset.py:144-146`): both live scanners hard-gate on prewar,
+  so it is dead for any manifest produced with `prewar_gaza` set.
+* De-duplicate the hardcoded boundaries default: `e_predict_json.py:330-332`
+  repeats `gaza_boundaries/GazaStrip_MunicipalBoundaries.shp` independently of
+  `shared.boundaries`, so the emission clip and `b2`'s new cell filter (PR 10)
+  can silently diverge.
 
 **Dependencies:** PRs 8, 10. **Size:** small–medium.
 
@@ -805,7 +837,10 @@ Items surfaced by the coupling audit that belong to no other PR:
 run dir on the checked-in config; `pipeline-ui` renders; fresh-clone
 `poetry install`. Scope the grep gate to tracked source and docs — a bare
 repo-wide grep hits `poetry.lock` (`hdf5` extras strings) and this very
-document, so it can never return zero.
+document, so it can never return zero. **Condition the `sample_tif` clause on
+PR 11's outcome:** if that PR's one-time CRS check showed the historic rasters
+do *not* share the grid CRS, the escape hatch is deliberately retained and
+`sample_tif` must stay — the two PRs otherwise assert contradictory gates.
 
 **Dependencies:** all prior. **Size:** docs.
 
@@ -844,3 +879,18 @@ document, so it can never return zero.
    `max_missing_end` date-distribution gating (`b_coordinate_scanner.py:405-459`)
    never made it into `b1` and dies with PR 1. Confirm the loss is intentional —
    it has been absent from every live run already.
+7. **Manifests stay machine-local.** PR 6 makes `tile_id` portable, but
+   `raster_path` / `prewar_path` / `labels_path` remain absolute
+   (`b1:284-286`, `b2:205-207`) and `raster_stats` is keyed by absolute path
+   (`manifest_writer.py:46, :87-101`), so manifests still cannot move between
+   machines. Recommended: accept this deliberately for now (paths must resolve
+   at read time anyway) and record it, rather than half-fixing portability.
+8. **Degree-space matching and dedup are out of scope.** The plan unifies
+   *tiling* on a metric grid but leaves two degree-space conventions standing:
+   `f_evaluate_geojson.py:25-27, :211-215` matches GT to predictions in raw
+   lon/lat with `--dist-deg 0.0005` (anisotropic at Gaza's latitude — ~55 m N–S
+   vs ~47 m E–W), and `util/deduplication.py:53-61` + `util/distance.py:6-18`
+   dedup through a local equirectangular projection. Recommended: convert
+   `f_evaluate` to a metre threshold in the same cycle as PR 12 (it is a
+   reporting tool, so the blast radius is small); leave the dedup projection
+   alone, since it is accurate at this scale and sits in a hot path.
