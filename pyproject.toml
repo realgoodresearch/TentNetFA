@@ -69,13 +69,43 @@ pipeline-run = "displacement_tracker.pipelines.cli:cli"
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [dependency-groups]
 dev = [
     "ruff (>=0.15.0,<0.16.0)",
-    "remote-plot (>=1.2.1,<2.0.0)"
+    "remote-plot (>=1.2.1,<2.0.0)",
+    "pytest (>=9.1.1,<10.0.0)"
 ]
 ui = [
     "streamlit (>=1.40.0,<2.0.0)"
+]
+# What `pytest tests/` needs, and nothing more. The unit tests cover
+# business logic only and never import torch, torchvision, selenium,
+# opencv or the Google API clients, so CI installs this group alone
+# (`poetry install --only test`) and skips a multi-GB download. Versions
+# are deliberately unconstrained here: these packages are already
+# constrained as project dependencies, so poetry.lock resolves one
+# version for both and the subset cannot drift away from the full
+# environment.
+test = [
+    "pytest (>=9.1.1,<10.0.0)",
+    "click",
+    "fiona",
+    "geopandas",
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "pyarrow",
+    "pyogrio",
+    "pyproj",
+    "python-dotenv",
+    "pyyaml",
+    "rasterio",
+    "scipy",
+    "shapely",
+    "tqdm"
 ]
 
 [tool.poetry.group.ui]
