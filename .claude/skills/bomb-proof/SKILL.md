@@ -12,8 +12,9 @@ push, and re-trigger — repeating until approved or a round cap is hit.
 
 ## Prerequisites
 
-- An open PR **targeting `main`** (the review workflow silently skips other
-  base branches — do not loop on a PR with a different base).
+- An open PR **targeting a base branch the review workflow allows** (see
+  `ALLOWED_BASES` in the workflow file; it silently skips other base
+  branches — do not loop on a PR with a different base).
 - The PR branch checked out locally with push access, so findings can be fixed.
 - `gh` CLI (or equivalent GitHub MCP tools) authenticated for this repository.
 - The repository's `ANTHROPIC_API_KEY` secret configured (the workflow fails
@@ -77,10 +78,29 @@ issues first, nits last). The reviewer applies the
 simplification, not cosmetic tweaks — actually restructure; do not paper over
 findings with comments or minimal edits, and do not game the verdict.
 
-If a finding is genuinely wrong or out of scope for the PR, reply to that
-comment explaining why instead of implementing it — but be honest: the bar
-for disagreeing with the reviewer is high, and repeated disagreement is a
-signal to escalate to the user, not to keep looping.
+**Guard the PR's scope.** The reviewer is deliberately harsh and will
+sometimes ask for work this PR should not carry. Before implementing a
+finding, decide whether it actually belongs here:
+
+- **In scope:** problems in code the PR added or changed, and structure the
+  change itself made worse.
+- **Scope creep:** rework of pre-existing code the PR barely touches,
+  codebase-wide restructurings, or "while you're here" improvements that are
+  not needed for this change to land cleanly.
+
+Push back on scope creep and on unreasonable asks (demands disproportionate
+to the size of the change, speculative abstractions, rewrites of working
+code the PR didn't cause): reply to the finding explaining why it doesn't
+belong in this PR, and suggest a follow-up issue or PR when the underlying
+point has merit. Do not implement out-of-scope work just to win approval —
+but be honest in the other direction too: do not label a legitimate finding
+about your own change "scope creep" to dodge the work.
+
+**Fall back to the user's judgement on conflict.** If the reviewer re-raises
+a finding you pushed back on, or you are genuinely unsure whether an ask is
+reasonable, stop and put the question to the user with both positions laid
+out — their call decides whether the finding gets implemented, deferred to a
+follow-up, or dropped. Do not burn rounds arguing with the reviewer.
 
 Verify the code still works (tests, linters, whatever the repo provides),
 commit with a clear message, and push to the PR branch.
@@ -99,3 +119,6 @@ Go back to step 1 for the next round.
 - **Non-converging review** (same findings re-raised after honest fix
   attempts, or contradictory demands between rounds) — stop and escalate to
   the user with both positions laid out.
+- **Scope conflict** — the reviewer insists on a finding you judged
+  out-of-scope or unreasonable. Stop and escalate to the user; do not
+  implement it to force approval, and do not keep looping around it.
