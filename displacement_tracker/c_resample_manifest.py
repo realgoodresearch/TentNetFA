@@ -33,7 +33,7 @@ def resample_and_merge(config_path: str, flow: str | None = "train") -> None:
     loading_files = config.get("loading", {}).get("files", []) or []
     rebal_config = config.get("rebalancing") or {}
 
-    manifest_dir = config.get("manifest_folder") or config.get("hdf5_folder")
+    manifest_dir = config.get("manifest_folder")
     if not manifest_dir:
         raise click.ClickException("Missing required config key: manifest_folder")
     out_path = Path(rebal_config.get("out") or "")

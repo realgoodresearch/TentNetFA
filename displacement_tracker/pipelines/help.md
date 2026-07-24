@@ -157,7 +157,6 @@ manually.
 | `prediction.batch_size`, `num_workers` | Inference batching / data-loader workers. |
 | `prediction.per_tile_standardisation` | Standardise each tile individually instead of per-raster. |
 | `prediction.sample.enable`, `size`, `seed` | Predict only a random sample of tiles (for quick checks). |
-| `prediction.validation_tifs` | Also write prediction rasters for visual validation (keep off for full runs). |
 | `prediction.selection.method` | Point extraction: `nms` (local maxima) or `centroid` (blob centroids). |
 | `prediction.selection.threshold` | Minimum score for a detection. |
 | `prediction.selection.factor` | Weight of the blurred score added during NMS (adjusted peak). |

@@ -2,8 +2,7 @@
 
 Each worker computes tile windows + validity and emits manifest rows. The main
 process aggregates rows and writes a single Parquet manifest at end-of-TIFF.
-The HDF5 materialisation step is gone — the runtime dataset reads tiles
-directly from the standardised raster.
+The runtime dataset reads tiles directly from the standardised raster.
 """
 
 from __future__ import annotations
@@ -353,7 +352,7 @@ def cli(config, flow):
         max_tasks_per_child = int(max_tasks_per_child) or None
     max_pool_restarts = int(proc.get("max_pool_restarts", 3))
 
-    manifest_folder = params.get("manifest_folder") or params.get("hdf5_folder")
+    manifest_folder = params.get("manifest_folder")
     if not manifest_folder:
         raise click.ClickException("Missing required config key: manifest_folder")
 
