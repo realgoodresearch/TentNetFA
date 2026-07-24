@@ -1,47 +1,15 @@
 name: CI
 
-# Runs on PRs into the base branches listed in .github/allowed-bases.txt
-# (shared with the review workflow). Trigger filters are static YAML, so
-# the workflow fires for every PR and a cheap gate job decides from the
-# shared list whether the real jobs run. Jobs skipped this way still count
-# as passing for branch protection.
-#
-# The gate reads the copy of allowed-bases.txt on the PR's own merge ref,
-# whereas the review workflow reads the default-branch copy; see the note
-# in claude-code-review.yml for why they can briefly disagree.
+# Keep the base-branch list here in step with ALLOWED_BASES in
+# claude-code-review.yml — two short static lists beat the machinery it
+# would take to share one.
 on:
   pull_request:
+    branches: [main, Karim]
 
 jobs:
-  gate:
-    name: Check base branch
-    runs-on: ubuntu-latest
-    outputs:
-      allowed: ${{ steps.check.outputs.allowed }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          sparse-checkout: .github/allowed-bases.txt
-          sparse-checkout-cone-mode: false
-
-      - name: Compare base branch against allowed-bases.txt
-        id: check
-        run: |
-          base="$GITHUB_BASE_REF"
-          allowed=false
-          for b in $(grep -v '^#' .github/allowed-bases.txt); do
-            if [ "$base" = "$b" ]; then
-              allowed=true
-              break
-            fi
-          done
-          echo "allowed=$allowed" >> "$GITHUB_OUTPUT"
-          echo "PR base branch '$base': allowed=$allowed"
-
   lint:
     name: Lint & format (ruff)
-    needs: gate
-    if: needs.gate.outputs.allowed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

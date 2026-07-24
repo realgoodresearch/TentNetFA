@@ -152,12 +152,7 @@ def train(
         # pixelwise loss
         mse = torch.nn.functional.mse_loss(x, y)
 
-        # count loss (mass difference) — currently disabled; small weight
-        # would keep spatial quality dominant if re-enabled:
-        # pred_count = x.sum(dim=(1, 2, 3))
-        # true_count = y.sum(dim=(1, 2, 3))
-        # count_loss = torch.nn.functional.mse_loss(pred_count, true_count)
-        # return 1e6 * mse + 0.1 * count_loss
+        # a count loss (mass difference) term was tried here and dropped
         return 1e6 * mse
 
     optimizer = optim.Adam(

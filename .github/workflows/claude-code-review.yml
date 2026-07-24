@@ -3,16 +3,7 @@ name: Claude Thermo-Nuclear Code Review
 # Manual-only review to avoid unnecessary token spend:
 #   - Comment "@claude review" on a PR when it's ready for review, OR
 #   - Run the workflow manually from the Actions tab with a PR number.
-# Only PRs whose base branch is in .github/allowed-bases.txt (shared with
-# the CI workflow) are reviewed.
-#
-# Note the deliberate asymmetry in how the two workflows read that shared
-# file: CI runs per-PR and reads the copy on the PR's own merge ref, while
-# this workflow reads the copy on the default branch (it is triggered by a
-# comment, which carries no PR checkout). So a PR that itself edits
-# allowed-bases.txt enables CI for itself but not review, until it merges.
-# Neither gate protects a secret — this only decides whether a job runs —
-# so the divergence is a known property rather than a hole.
+# Only PRs whose base branch is in ALLOWED_BASES are reviewed.
 #
 # Requires the ANTHROPIC_API_KEY repository secret to be set.
 
@@ -27,11 +18,9 @@ on:
         type: string
 
 env:
-  # TRANSITIONAL — delete this and the `gh api` fallback below once
-  # .github/allowed-bases.txt exists on the default branch (it arrives
-  # there when the branch carrying it merges). Until then this workflow
-  # has no shared file to read and would refuse every PR.
-  ALLOWED_BASES_FALLBACK: "main Karim"
+  # Space-separated list of base branches eligible for review. Add a branch
+  # here (in one place) to allow reviewing PRs that target it.
+  ALLOWED_BASES: "main Karim"
 
 jobs:
   claude-review:
@@ -55,19 +44,8 @@ jobs:
           echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
           echo "base=$base" >> "$GITHUB_OUTPUT"
 
-          # Allowed bases come from .github/allowed-bases.txt on the default
-          # branch (shared with the CI workflow); fall back to the env list
-          # until the file lands there.
-          allowed_bases=""
-          if content=$(gh api "repos/$GITHUB_REPOSITORY/contents/.github/allowed-bases.txt" --jq .content 2>/dev/null); then
-            allowed_bases=$(printf '%s' "$content" | base64 -d | grep -v '^#' | xargs)
-          fi
-          if [ -z "$allowed_bases" ]; then
-            allowed_bases="$ALLOWED_BASES_FALLBACK"
-          fi
-
           allowed=false
-          for b in $allowed_bases; do
+          for b in $ALLOWED_BASES; do
             if [ "$base" = "$b" ]; then
               allowed=true
               break
@@ -76,7 +54,7 @@ jobs:
           echo "allowed=$allowed" >> "$GITHUB_OUTPUT"
 
           if [ "$allowed" != "true" ]; then
-            echo "PR #$PR_NUMBER targets '$base', which is not in the allowed bases ($allowed_bases) — skipping review."
+            echo "PR #$PR_NUMBER targets '$base', which is not in ALLOWED_BASES ($ALLOWED_BASES) — skipping review."
           fi
 
       - name: Checkout PR merge result
