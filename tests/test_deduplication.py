@@ -18,11 +18,9 @@ import math
 
 import pytest
 
+from _helpers import DEG_PER_M, EARTH_RADIUS_M
 from displacement_tracker.util.deduplication import UnionFind, merge_close_points_global
 from displacement_tracker.util.distance import haversine_m, interpolate_centroid
-
-EARTH_RADIUS_M = 6371000.0
-DEG_PER_M = 180.0 / (math.pi * EARTH_RADIUS_M)
 
 
 def test_merge_empty_input_returns_empty_list():

@@ -91,7 +91,7 @@ def test_passes_threshold_is_inclusive_at_the_boundary():
     kept = passes_threshold(value, threshold)
 
     # Then: the value is kept (>= semantics, not strict >)
-    assert kept is True
+    assert kept
 
 
 def test_passes_threshold_rejects_below_and_accepts_above():
@@ -102,13 +102,13 @@ def test_passes_threshold_rejects_below_and_accepts_above():
     below = passes_threshold(0.4999, threshold)
 
     # Then: the value is rejected
-    assert below is False
+    assert not below
 
     # When: passes_threshold runs on the value just above it
     above = passes_threshold(0.5001, threshold)
 
     # Then: the value is accepted
-    assert above is True
+    assert above
 
 
 def test_passes_threshold_elementwise_on_arrays():

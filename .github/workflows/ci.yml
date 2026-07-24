@@ -37,11 +37,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
-          cache-dependency-path: poetry.lock
 
       - name: Install Poetry
         run: pip install "poetry>=2.3,<3.0"
+
+      # Poetry downloads into ~/.cache/pypoetry, not the pip cache that
+      # setup-python knows how to manage — caching the latter would only
+      # ever save re-fetching the Poetry wheel itself.
+      - name: Cache Poetry artifacts
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pypoetry
+          key: pypoetry-${{ runner.os }}-py3.11-${{ hashFiles('poetry.lock') }}
 
       # The `test` dependency group in pyproject.toml is exactly what the
       # suite needs — it leaves out torch, torchvision, selenium, opencv
