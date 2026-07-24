@@ -3,7 +3,12 @@ name: CI
 # Runs on PRs into the base branches listed in .github/allowed-bases.txt
 # (shared with the review workflow). Trigger filters are static YAML, so
 # the workflow fires for every PR and a cheap gate job decides from the
-# shared list whether the real jobs run.
+# shared list whether the real jobs run. Jobs skipped this way still count
+# as passing for branch protection.
+#
+# The gate reads the copy of allowed-bases.txt on the PR's own merge ref,
+# whereas the review workflow reads the default-branch copy; see the note
+# in claude-code-review.yml for why they can briefly disagree.
 on:
   pull_request:
 

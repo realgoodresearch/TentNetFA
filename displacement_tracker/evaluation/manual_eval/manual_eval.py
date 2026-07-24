@@ -141,47 +141,6 @@ def random_tile_within_polygon(src, polygon_gdf):
     raise RuntimeError("Failed to sample valid tile after many attempts.")
 
 
-def count_predictions_in_tile(tile_geom, geojson_path, raster_crs, tif_path):
-    """
-    Count number of prediction points inside tile.
-    Ensures CRS alignment and verifies spatial overlap.
-    """
-
-    if not os.path.exists(geojson_path):
-        print("GeoJSON not found:", geojson_path)
-        return 0
-
-    preds = gpd.read_file(geojson_path)
-
-    if preds.empty:
-        return 0
-
-    # If CRS missing, assume WGS84 (very common for GeoJSON)
-    if preds.crs is None:
-        preds.set_crs("EPSG:4326", inplace=True)
-
-    # Reproject predictions to raster CRS
-    preds = preds.to_crs(raster_crs)
-
-    # Quick sanity check: do predictions overlap raster at all?
-    raster_bounds_geom = box(*rasterio.open(tif_path).bounds)
-
-    if not preds.total_bounds.any():
-        return 0
-
-    # Filter predictions to raster extent first
-    preds = preds[preds.intersects(raster_bounds_geom)]
-
-    if preds.empty:
-        print("Predictions do not overlap raster after reprojection.")
-        return 0
-
-    # Now count points inside tile
-    count = preds.within(tile_geom).sum()
-
-    return int(count)
-
-
 def show_tile_and_get_count(tile_array, prewar_array):
     """
     Display current and prewar tiles side by side.

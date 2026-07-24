@@ -6,6 +6,14 @@ name: Claude Thermo-Nuclear Code Review
 # Only PRs whose base branch is in .github/allowed-bases.txt (shared with
 # the CI workflow) are reviewed.
 #
+# Note the deliberate asymmetry in how the two workflows read that shared
+# file: CI runs per-PR and reads the copy on the PR's own merge ref, while
+# this workflow reads the copy on the default branch (it is triggered by a
+# comment, which carries no PR checkout). So a PR that itself edits
+# allowed-bases.txt enables CI for itself but not review, until it merges.
+# Neither gate protects a secret — this only decides whether a job runs —
+# so the divergence is a known property rather than a hole.
+#
 # Requires the ANTHROPIC_API_KEY repository secret to be set.
 
 on:
@@ -19,8 +27,10 @@ on:
         type: string
 
 env:
-  # Space-separated fallback used only until .github/allowed-bases.txt
-  # (the single source of truth, read from the default branch) exists there.
+  # TRANSITIONAL — delete this and the `gh api` fallback below once
+  # .github/allowed-bases.txt exists on the default branch (it arrives
+  # there when the branch carrying it merges). Until then this workflow
+  # has no shared file to read and would refuse every PR.
   ALLOWED_BASES_FALLBACK: "main Karim"
 
 jobs:
