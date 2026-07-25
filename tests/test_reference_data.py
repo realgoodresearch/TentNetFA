@@ -389,13 +389,14 @@ def test_unosat_source_ambiguous_date_refuses_to_choose(tmp_path):
         UnosatReferenceSource(str(tmp_path), date="2024-01-15")
 
 
-def test_unosat_source_lists_gdb_directories_but_not_other_entries(tmp_path):
-    # Given: one date stamp shared by a nested .geojson export, a .gdb
-    #        directory (a .gdb is a directory on disk, and its internals
-    #        carry no vector suffix), a .txt file and a plain directory
+def test_unosat_source_considers_gdb_directories_as_export_candidates(tmp_path):
+    # Given: one date stamp shared by a nested .geojson export, a .GDB
+    #        directory (a geodatabase is a directory on disk, its internals
+    #        carry no vector suffix, and ArcGIS ships them upper-cased), a
+    #        .txt file and a plain directory
     (tmp_path / "sub").mkdir()
     (tmp_path / "sub" / "exp_20240101.geojson").touch()
-    gdb = tmp_path / "fake_20240101.gdb"
+    gdb = tmp_path / "fake_20240101.GDB"
     gdb.mkdir()
     (gdb / "gdbtable").touch()
     (tmp_path / "notes_20240101.txt").touch()
@@ -405,12 +406,16 @@ def test_unosat_source_lists_gdb_directories_but_not_other_entries(tmp_path):
     with pytest.raises(ValueError, match="found 2") as excinfo:
         UnosatReferenceSource(str(tmp_path), date="2024-01-01")
 
-    # Then: exactly two candidates are reported — the .gdb directory and the
-    #       nested file. The .txt and the plain directory never enter the
-    #       listing even though they carry the same date stamp, and the
-    #       .gdb's own contents are not walked into.
+    # Then: exactly two candidates are reported — the geodatabase directory
+    #       and the nested file. The directory qualifies only via the
+    #       suffix check, which lower-cases before comparing (a directory
+    #       never satisfies the is_file() branch), so a case-sensitive
+    #       comparison there would drop it and leave one match. The .txt and
+    #       the plain directory never enter the listing even though they
+    #       carry the same date stamp, and the geodatabase's own contents
+    #       are not walked into.
     message = str(excinfo.value)
-    assert "fake_20240101.gdb" in message
+    assert "fake_20240101.GDB" in message
     assert "exp_20240101.geojson" in message
     assert "notes_20240101.txt" not in message
     assert "plaindir_20240101" not in message
@@ -527,44 +532,25 @@ def test_raster_source_missing_file_raises(tmp_path):
 
 def test_raster_source_band_selection_and_sanitization(tmp_path):
     # Given: a two-band raster; band 1 is all 7s, band 2 holds
-    #        [[2, -3], [nan, 5]]
+    #        [[2, -3], [nan, 5]] — and the band requested as the string "2",
+    #        which is what a quoted YAML value delivers
     transform = from_origin(0, 200, 100, 100)
     band1 = np.full((2, 2), 7.0, dtype="float32")
     band2 = np.array([[2.0, -3.0], [np.nan, 5.0]], dtype="float32")
     path = tmp_path / "twoband.tif"
     write_geotiff(path, np.stack([band1, band2]), transform)
 
-    # When: counts_on_grid reads band 2
-    out = RasterReferenceSource(str(path), band=2).counts_on_grid(
-        (2, 2), transform, CRS_UTM
-    )
-
-    # Then: NaN becomes 0, the negative is clipped to 0, valid counts stay
-    np.testing.assert_array_equal(
-        out, np.array([[2.0, 0.0], [0.0, 5.0]], dtype="float32")
-    )
-
-
-def test_raster_source_accepts_a_band_given_as_a_string(tmp_path):
-    # Given: a two-band raster (band 1 all 7s, band 2 all 3s) and the band
-    #        given as the string "2", which is what an unquoted-then-quoted
-    #        YAML value delivers
-    transform = from_origin(0, 200, 100, 100)
-    path = tmp_path / "twoband.tif"
-    write_geotiff(
-        path,
-        np.stack([np.full((2, 2), 7.0), np.full((2, 2), 3.0)]),
-        transform,
-    )
-
-    # When: counts_on_grid reads that band
+    # When: counts_on_grid reads it
     out = RasterReferenceSource(str(path), band="2").counts_on_grid(
         (2, 2), transform, CRS_UTM
     )
 
-    # Then: the band is coerced to int at construction, so band 2 is read
-    #       rather than the string reaching rasterio and raising
-    np.testing.assert_array_equal(out, np.full((2, 2), 3.0, dtype="float32"))
+    # Then: the band is coerced to int at construction, so band 2 is the one
+    #       read rather than the string reaching rasterio; NaN becomes 0, the
+    #       negative is clipped to 0, and valid counts stay
+    np.testing.assert_array_equal(
+        out, np.array([[2.0, 0.0], [0.0, 5.0]], dtype="float32")
+    )
 
 
 def test_raster_source_shifted_window_fills_zero_and_clips(tmp_path):
@@ -774,8 +760,10 @@ def test_build_reference_source_explicit_date_beats_nearest_to(tmp_path):
 
 
 def test_build_reference_source_raster_band_option(tmp_path):
-    # Given: a two-band raster (band 1 all 7s, band 2 all 3s) and a raster
-    #        config selecting band 2
+    # Given: a two-band raster (band 1 all 7s, band 2 all 3s) and a config
+    #        selecting band 2 that deliberately carries no 'type' key, so
+    #        the .tif suffix has to drive the inference (the vector half of
+    #        that inference is pinned above)
     transform = from_origin(0, 200, 100, 100)
     path = tmp_path / "twoband.tif"
     write_geotiff(
