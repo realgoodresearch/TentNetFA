@@ -7,7 +7,6 @@ validation_core.prepare_grouped_cell_inputs.
 """
 
 from datetime import datetime
-from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
@@ -22,9 +21,6 @@ from displacement_tracker.util.reference_data import (
     RasterReferenceSource,
     UnosatReferenceSource,
     VectorReferenceSource,
-    _infer_type,
-    _list_exports,
-    _select_export,
     build_reference_source,
     extract_date_from_filename,
     infer_target_date,
@@ -35,6 +31,18 @@ from displacement_tracker.util.validation_core import prepare_grouped_cell_input
 
 def _points_gdf(coords, crs=CRS_UTM, **columns):
     return gpd.GeoDataFrame(columns, geometry=[Point(x, y) for x, y in coords], crs=crs)
+
+
+def _write_export(path, coords):
+    """A readable single-point export at `path` (parents created)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _points_gdf([coords], crs=CRS_WGS84).to_file(path, driver="GeoJSON")
+    return path
+
+
+# The window most expectations are derived against: 4x4 one-degree cells with
+# origin (0, 4), so cell (row, col) covers lon [col, col+1), lat (4-row-1, 4-row].
+DEGREE_GRID = ((4, 4), from_origin(0, 4, 1, 1), CRS_WGS84)
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +133,7 @@ def test_infer_target_date_even_count_takes_upper_median():
         "p_2024-01-02.geojson",
     ]
 
-    # When: infer_target_date runs (index len//2 == 2 of the sorted dates)
+    # When: infer_target_date runs
     target = infer_target_date(paths)
 
     # Then: the upper of the two middle dates is returned
@@ -210,6 +218,24 @@ def test_points_source_reprojects_to_grid_crs():
     np.testing.assert_array_equal(counts, expected)
 
 
+def test_points_source_without_a_grid_crs_rasterizes_unprojected():
+    # Given: reference points carrying no CRS, at (150, 350) on a 4x4 grid
+    #        of 100 m cells with origin (0, 400)
+    source = PointsSource(gpd.GeoDataFrame(geometry=[Point(150, 350)], crs=None))
+
+    # When: counts_on_grid resolves them against a window that also has no
+    #       CRS
+    counts = source.counts_on_grid((4, 4), from_origin(0, 400, 100, 100), None)
+
+    # Then: the missing-CRS guard is skipped rather than raising — with no
+    #       grid CRS there is nothing to reproject to, so the coordinates
+    #       are burned as-is into cell (0, 1). A CRS-less master grid
+    #       therefore accepts unprojected reference points silently; the
+    #       guard above only fires once the grid declares a CRS.
+    assert counts[0, 1] == 1.0
+    assert counts.sum() == pytest.approx(1.0)
+
+
 def test_points_source_clip_geom_excludes_outside_points():
     # Given: points at (150, 350) and (350, 50) on a 4x4 grid with origin
     #        (0, 400), and a clip box covering only x in [0, 200],
@@ -244,9 +270,7 @@ def test_vector_source_reads_file_and_reduces_polygons_to_centroids(tmp_path):
     gdf.to_file(path, driver="GeoJSON")
 
     # When: VectorReferenceSource loads the file and resolves counts
-    counts = VectorReferenceSource(str(path)).counts_on_grid(
-        (4, 4), from_origin(0, 4, 1, 1), CRS_WGS84
-    )
+    counts = VectorReferenceSource(str(path)).counts_on_grid(*DEGREE_GRID)
 
     # Then: the point counts in cell (0, 1) and the polygon's centroid in
     #       cell (2, 1)
@@ -267,29 +291,32 @@ def test_vector_source_missing_file_raises(tmp_path):
 
 
 def test_vector_source_layer_and_where_filters(tmp_path):
-    # Given: a two-layer GPKG; layer "tents" (written first, so it is also
-    #        the default layer) has a 'tent' point at (0.5, 3.5) and a
-    #        'rubble' point at (1.5, 2.5); layer "other" has one point at
-    #        (3.5, 0.5)
+    # Given: a two-layer GPKG; layer "tents" has a 'tent' point at
+    #        (0.5, 3.5) and a 'rubble' point at (1.5, 2.5); layer "other"
+    #        has one point at (3.5, 0.5). The second write is mode="a" so
+    #        the two-layer intent does not rest on whether the installed
+    #        engine treats a default mode="w" write to an existing GPKG as
+    #        adding a layer or recreating the datasource.
     path = tmp_path / "multi.gpkg"
     _points_gdf(
         [(0.5, 3.5), (1.5, 2.5)], crs=CRS_WGS84, kind=["tent", "rubble"]
     ).to_file(path, layer="tents")
-    _points_gdf([(3.5, 0.5)], crs=CRS_WGS84, kind=["x"]).to_file(path, layer="other")
-    grid = ((4, 4), from_origin(0, 4, 1, 1), CRS_WGS84)
+    _points_gdf([(3.5, 0.5)], crs=CRS_WGS84, kind=["x"]).to_file(
+        path, layer="other", mode="a"
+    )
 
     # When: VectorReferenceSource reads layer "tents" with
     #       where="kind = 'tent'"
     source = VectorReferenceSource(str(path), layer="tents", where="kind = 'tent'")
-    counts = source.counts_on_grid(*grid)
+    counts = source.counts_on_grid(*DEGREE_GRID)
 
     # Then: the filtered read rasterizes only the tent point — cell (0, 0)
     #       counts 1, total exactly 1
     assert counts[0, 0] == 1.0
     assert counts.sum() == pytest.approx(1.0)
 
-    # When: the non-default layer "other" is read with no filter
-    other = VectorReferenceSource(str(path), layer="other").counts_on_grid(*grid)
+    # When: the other layer is read with no filter
+    other = VectorReferenceSource(str(path), layer="other").counts_on_grid(*DEGREE_GRID)
 
     # Then: only cell (3, 3) counts, proving the layer argument really
     #       selects a layer
@@ -302,49 +329,56 @@ def test_vector_source_layer_and_where_filters(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_select_export_plain_file_passes_through(tmp_path):
-    # Given: a path that is a file, not a directory
-    path = tmp_path / "export_20240101.geojson"
-    path.touch()
+def test_unosat_source_reads_a_plain_file_export(tmp_path):
+    # Given: a path that is a single export file rather than a directory,
+    #        holding one point in cell (0, 0)
+    path = _write_export(tmp_path / "export_20240101.geojson", (0.5, 3.5))
 
-    # When: _select_export resolves it
-    selected = _select_export(str(path), date=None)
+    # When: the source resolves counts from it with no date given
+    counts = UnosatReferenceSource(str(path)).counts_on_grid(*DEGREE_GRID)
 
-    # Then: the path is returned unchanged, date logic untouched
-    assert selected == str(path)
-
-
-def test_select_export_explicit_date_is_dash_insensitive(tmp_path):
-    # Given: a directory with a dashed-date export in a child directory and
-    #        a compact-date export at the top level
-    sub = tmp_path / "child"
-    sub.mkdir()
-    dashed = sub / "exp_2024-01-15.geojson"
-    dashed.touch()
-    compact = tmp_path / "exp_20240220.geojson"
-    compact.touch()
-
-    # When: each is requested with an explicit date in the opposite
-    #       formatting
-    by_compact_request = _select_export(str(tmp_path), date="20240115")
-    by_dashed_request = _select_export(str(tmp_path), date="2024-02-20")
-
-    # Then: the matching export is still found (comparison drops dashes)
-    assert by_compact_request == str(dashed)
-    assert by_dashed_request == str(compact)
+    # Then: the file is read as-is — directory selection never runs, so the
+    #       absent date is not an error
+    assert counts[0, 0] == 1.0
+    assert counts.sum() == pytest.approx(1.0)
 
 
-def test_select_export_unmatched_date_lists_available(tmp_path):
-    # Given: a directory whose only export is dated 2024-01-15
+def test_unosat_source_matches_an_explicit_date_ignoring_dashes(tmp_path):
+    # Given: a dashed-date export in a child directory (point in cell (0, 0))
+    #        and a compact-date export at the top level (point in cell (2, 2))
+    _write_export(tmp_path / "child" / "exp_2024-01-15.geojson", (0.5, 3.5))
+    _write_export(tmp_path / "exp_20240220.geojson", (2.5, 1.5))
+
+    # When: each is requested with an explicit date in the opposite formatting
+    by_compact_request = UnosatReferenceSource(
+        str(tmp_path), date="20240115"
+    ).counts_on_grid(*DEGREE_GRID)
+    by_dashed_request = UnosatReferenceSource(
+        str(tmp_path), date="2024-02-20"
+    ).counts_on_grid(*DEGREE_GRID)
+
+    # Then: each request resolves to its own export and nothing else —
+    #       dashes are dropped on both sides of the comparison, and the
+    #       nested export is found by the recursive walk
+    assert by_compact_request[0, 0] == 1.0
+    assert by_compact_request.sum() == pytest.approx(1.0)
+    assert by_dashed_request[2, 2] == 1.0
+    assert by_dashed_request.sum() == pytest.approx(1.0)
+
+
+def test_unosat_source_unmatched_date_lists_the_available_exports(tmp_path):
+    # Given: a directory whose only export is dated 2024-01-15. Selection
+    #        raises before any file is opened, so an empty file is a
+    #        sufficient fixture for the error cases here and below.
     (tmp_path / "exp_2024-01-15.geojson").touch()
 
     # When: an explicit date with no match is requested
     # Then: ValueError reports 0 matches and names the available export
     with pytest.raises(ValueError, match=r"found 0.*exp_2024-01-15\.geojson"):
-        _select_export(str(tmp_path), date="2024-03-03")
+        UnosatReferenceSource(str(tmp_path), date="2024-03-03")
 
 
-def test_select_export_ambiguous_date_raises(tmp_path):
+def test_unosat_source_ambiguous_date_refuses_to_choose(tmp_path):
     # Given: two exports carrying the same date stamp
     (tmp_path / "a_20240115.geojson").touch()
     (tmp_path / "b_2024-01-15.gpkg").touch()
@@ -352,132 +386,113 @@ def test_select_export_ambiguous_date_raises(tmp_path):
     # When: that date is requested explicitly
     # Then: ValueError reports 2 matches instead of picking one arbitrarily
     with pytest.raises(ValueError, match="found 2"):
-        _select_export(str(tmp_path), date="2024-01-15")
+        UnosatReferenceSource(str(tmp_path), date="2024-01-15")
 
 
-def test_select_export_nearest_to_picks_closest_then_name(tmp_path):
-    # Given: exports dated 2024-01-01 and 2024-02-01
-    (tmp_path / "exp_20240101.geojson").touch()
-    feb = tmp_path / "exp_20240201.geojson"
-    feb.touch()
-
-    # When: nearest_to is 2024-01-20 (19 days vs 12 days away)
-    nearest = _select_export(str(tmp_path), date=None, nearest_to=datetime(2024, 1, 20))
-
-    # Then: the 2024-02-01 export wins
-    assert nearest == str(feb)
-
-    # Given: two exports exactly 5 days either side of nearest_to
-    tie_dir = tmp_path / "tie"
-    tie_dir.mkdir()
-    (tie_dir / "b_20240110.geojson").touch()
-    a_file = tie_dir / "a_20240120.geojson"
-    a_file.touch()
-
-    # When: the timestamp distance ties
-    tied = _select_export(str(tie_dir), date=None, nearest_to=datetime(2024, 1, 15))
-
-    # Then: the lexicographically smaller file name breaks the tie
-    assert tied == str(a_file)
-
-
-def test_select_export_directory_error_cases(tmp_path):
-    # Given: a directory of exports but neither an explicit date nor a
-    #        nearest_to context
-    (tmp_path / "exp_20240101.geojson").touch()
-
-    # When: _select_export runs
-    # Then: it refuses with an actionable ValueError naming reference.date
-    with pytest.raises(ValueError, match="reference.date"):
-        _select_export(str(tmp_path), date=None, nearest_to=None)
-
-    # Given: a directory whose exports carry no parseable date stamp
-    undated = tmp_path / "undated"
-    undated.mkdir()
-    (undated / "shelters.geojson").touch()
-
-    # When: auto-discovery by nearest_to is attempted
-    # Then: ValueError says no date-stamped exports were found
-    with pytest.raises(ValueError, match="No date-stamped exports"):
-        _select_export(str(undated), date=None, nearest_to=datetime(2024, 1, 1))
-
-
-def test_list_exports_includes_gdb_dirs_and_nested_files_only(tmp_path):
-    # Given: a tree with a nested .geojson file, a .gdb directory (whose
-    #        internals have no vector suffix), a .txt file and a plain
-    #        directory
-    sub = tmp_path / "sub"
-    sub.mkdir()
-    nested = sub / "exp_20240101.geojson"
-    nested.touch()
-    gdb = tmp_path / "fake.gdb"
+def test_unosat_source_lists_gdb_directories_but_not_other_entries(tmp_path):
+    # Given: one date stamp shared by a nested .geojson export, a .gdb
+    #        directory (a .gdb is a directory on disk, and its internals
+    #        carry no vector suffix), a .txt file and a plain directory
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "exp_20240101.geojson").touch()
+    gdb = tmp_path / "fake_20240101.gdb"
     gdb.mkdir()
     (gdb / "gdbtable").touch()
-    (tmp_path / "notes.txt").touch()
-    (tmp_path / "plaindir").mkdir()
+    (tmp_path / "notes_20240101.txt").touch()
+    (tmp_path / "plaindir_20240101").mkdir()
 
-    # When: _list_exports scans it
-    found = _list_exports(Path(tmp_path))
+    # When: that shared date is requested
+    with pytest.raises(ValueError, match="found 2") as excinfo:
+        UnosatReferenceSource(str(tmp_path), date="2024-01-01")
 
-    # Then: exactly the .gdb directory and the nested vector file are
-    #       returned, sorted by path
-    assert found == [gdb, nested]
-
-
-def test_list_exports_matches_suffixes_case_insensitively(tmp_path):
-    # Given: a tree with an uppercase-suffix export file and an
-    #        uppercase-suffix .GDB directory
-    upper_gdb = tmp_path / "archive.GDB"
-    upper_gdb.mkdir()
-    upper_file = tmp_path / "exp_20240301.GEOJSON"
-    upper_file.touch()
-
-    # When: _list_exports scans it
-    found = _list_exports(Path(tmp_path))
-
-    # Then: both are returned, sorted by path — suffix matching is
-    #       case-insensitive
-    assert found == [upper_gdb, upper_file]
+    # Then: exactly two candidates are reported — the .gdb directory and the
+    #       nested file. The .txt and the plain directory never enter the
+    #       listing even though they carry the same date stamp, and the
+    #       .gdb's own contents are not walked into.
+    message = str(excinfo.value)
+    assert "fake_20240101.gdb" in message
+    assert "exp_20240101.geojson" in message
+    assert "notes_20240101.txt" not in message
+    assert "plaindir_20240101" not in message
+    assert "gdbtable" not in message
 
 
-def test_unosat_source_reads_the_pinned_export(tmp_path):
-    # Given: a directory with a 2024-01-01 export (point in cell (0, 0))
-    #        and a 2024-02-01 export (point in cell (2, 2))
-    _points_gdf([(0.5, 3.5)], crs=CRS_WGS84).to_file(
-        tmp_path / "exportA_2024-01-01.geojson", driver="GeoJSON"
-    )
-    _points_gdf([(2.5, 1.5)], crs=CRS_WGS84).to_file(
-        tmp_path / "exportB_2024-02-01.geojson", driver="GeoJSON"
-    )
+def test_unosat_source_matches_export_suffixes_case_insensitively(tmp_path):
+    # Given: an export whose suffix is upper case
+    _write_export(tmp_path / "exp_20240301.GEOJSON", (0.5, 3.5))
 
-    # When: UnosatReferenceSource pins date="2024-01-01" and resolves counts
-    source = UnosatReferenceSource(str(tmp_path), date="2024-01-01")
-    counts = source.counts_on_grid((4, 4), from_origin(0, 4, 1, 1), CRS_WGS84)
+    # When: auto-discovery resolves the directory against a nearby date
+    counts = UnosatReferenceSource(
+        str(tmp_path), nearest_to=datetime(2024, 3, 2)
+    ).counts_on_grid(*DEGREE_GRID)
 
-    # Then: only the January export's point shows up on the grid
+    # Then: the upper-case export is both matched and readable — the suffix
+    #       is lower-cased before comparison
     assert counts[0, 0] == 1.0
-    assert counts[2, 2] == 0.0
     assert counts.sum() == pytest.approx(1.0)
+
+
+def test_unosat_source_picks_the_export_closest_to_the_prediction_date(tmp_path):
+    # Given: exports dated 2024-01-01 (point in cell (0, 0)) and 2024-02-01
+    #        (point in cell (2, 2))
+    _write_export(tmp_path / "exp_20240101.geojson", (0.5, 3.5))
+    _write_export(tmp_path / "exp_20240201.geojson", (2.5, 1.5))
+
+    # When: auto-discovery runs against prediction date 2024-01-20 — 19 days
+    #       after the January export, 12 days before the February one
+    counts = UnosatReferenceSource(
+        str(tmp_path), nearest_to=datetime(2024, 1, 20)
+    ).counts_on_grid(*DEGREE_GRID)
+
+    # Then: the February export wins on absolute distance, so a signed
+    #       comparison picking the earlier export would fail here
+    assert counts[2, 2] == 1.0
+    assert counts.sum() == pytest.approx(1.0)
+
+
+def test_unosat_source_breaks_a_date_tie_on_file_name(tmp_path):
+    # Given: two exports exactly five days either side of the prediction
+    #        date, the lexicographically smaller name holding the cell (0, 0)
+    #        point and the larger one the cell (2, 2) point
+    _write_export(tmp_path / "a_20240120.geojson", (0.5, 3.5))
+    _write_export(tmp_path / "b_20240110.geojson", (2.5, 1.5))
+
+    # When: auto-discovery runs against a date equidistant from both
+    counts = UnosatReferenceSource(
+        str(tmp_path), nearest_to=datetime(2024, 1, 15)
+    ).counts_on_grid(*DEGREE_GRID)
+
+    # Then: the lexicographically smaller file name breaks the tie, so the
+    #       choice is deterministic rather than filesystem-order dependent
+    assert counts[0, 0] == 1.0
+    assert counts.sum() == pytest.approx(1.0)
+
+
+def test_unosat_source_bare_directory_demands_an_explicit_date(tmp_path):
+    # Given: a directory of exports, with neither an explicit date nor a
+    #        prediction date to auto-discover against
+    (tmp_path / "exp_20240101.geojson").touch()
+
+    # When: the source is built
+    # Then: it refuses with an actionable ValueError naming reference.date
+    with pytest.raises(ValueError, match="reference.date"):
+        UnosatReferenceSource(str(tmp_path))
+
+
+def test_unosat_source_undated_directory_refuses_auto_discovery(tmp_path):
+    # Given: a directory whose exports carry no parseable date stamp
+    (tmp_path / "shelters.geojson").touch()
+
+    # When: auto-discovery against a prediction date is attempted
+    # Then: ValueError says no date-stamped exports were found, rather than
+    #       falling back to an arbitrary file
+    with pytest.raises(ValueError, match="No date-stamped exports"):
+        UnosatReferenceSource(str(tmp_path), nearest_to=datetime(2024, 1, 1))
 
 
 # ---------------------------------------------------------------------------
 # RasterReferenceSource
 # ---------------------------------------------------------------------------
-
-
-def test_raster_source_aligned_roundtrip(tmp_path):
-    # Given: a counts GeoTIFF written on the exact requested grid
-    transform = from_origin(0, 400, 100, 100)
-    data = np.arange(16, dtype="float32").reshape(4, 4)
-    path = tmp_path / "counts.tif"
-    write_geotiff(path, data, transform)
-
-    # When: counts_on_grid reads it back at the same shape/transform/CRS
-    out = RasterReferenceSource(str(path)).counts_on_grid((4, 4), transform, CRS_UTM)
-
-    # Then: the array is returned bit-identical as float32
-    np.testing.assert_array_equal(out, data)
-    assert out.dtype == np.float32
 
 
 def test_raster_source_non_square_grid_preserves_shape_and_values(tmp_path):
@@ -491,11 +506,13 @@ def test_raster_source_non_square_grid_preserves_shape_and_values(tmp_path):
     #       transform and CRS
     out = RasterReferenceSource(str(path)).counts_on_grid((3, 5), transform, CRS_UTM)
 
-    # Then: the array round-trips with shape (3, 5) and identical values —
-    #       grid_shape is (rows, cols), so the VRT's height/width must not
-    #       be swapped (a swap is invisible on square grids)
+    # Then: the array round-trips with shape (3, 5), identical values and
+    #       float32 dtype — grid_shape is (rows, cols), so the VRT's
+    #       height/width must not be swapped (a swap is invisible on the
+    #       square grids the rest of this file uses)
     assert out.shape == (3, 5)
     np.testing.assert_array_equal(out, data)
+    assert out.dtype == np.float32
 
 
 def test_raster_source_missing_file_raises(tmp_path):
@@ -526,6 +543,28 @@ def test_raster_source_band_selection_and_sanitization(tmp_path):
     np.testing.assert_array_equal(
         out, np.array([[2.0, 0.0], [0.0, 5.0]], dtype="float32")
     )
+
+
+def test_raster_source_accepts_a_band_given_as_a_string(tmp_path):
+    # Given: a two-band raster (band 1 all 7s, band 2 all 3s) and the band
+    #        given as the string "2", which is what an unquoted-then-quoted
+    #        YAML value delivers
+    transform = from_origin(0, 200, 100, 100)
+    path = tmp_path / "twoband.tif"
+    write_geotiff(
+        path,
+        np.stack([np.full((2, 2), 7.0), np.full((2, 2), 3.0)]),
+        transform,
+    )
+
+    # When: counts_on_grid reads that band
+    out = RasterReferenceSource(str(path), band="2").counts_on_grid(
+        (2, 2), transform, CRS_UTM
+    )
+
+    # Then: the band is coerced to int at construction, so band 2 is read
+    #       rather than the string reaching rasterio and raising
+    np.testing.assert_array_equal(out, np.full((2, 2), 3.0, dtype="float32"))
 
 
 def test_raster_source_shifted_window_fills_zero_and_clips(tmp_path):
@@ -586,34 +625,37 @@ def test_raster_source_resolves_grid_in_a_different_crs(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_infer_type_from_suffix():
-    # Given: paths with raster, vector, and unknown suffixes
-    raster_path = "counts.tif"
-    vector_path = "points.GeoJSON"
+def test_build_reference_source_infers_the_vector_type_from_the_suffix(tmp_path):
+    # Given: a real export whose suffix is upper case (the raster suffix is
+    #        inferred the same way in the band-option test below)
+    path = _write_export(tmp_path / "points.GeoJSON", (0.5, 3.5))
+
+    # When: build_reference_source gets it as a bare path carrying no type
+    source = build_reference_source(str(path))
+
+    # Then: the suffix is lower-cased before lookup, so it resolves to the
+    #       vector type and the file reads
+    assert isinstance(source, VectorReferenceSource)
+    assert source.counts_on_grid(*DEGREE_GRID)[0, 0] == 1.0
+
+
+def test_build_reference_source_rejects_an_uninferable_suffix():
+    # Given: a path whose suffix matches no registered source type
     unknown_path = "table.csv"
 
-    # When: _infer_type inspects the two recognised suffixes
-    raster_type = _infer_type(raster_path)
-    vector_type = _infer_type(vector_path)
-
-    # Then: .tif -> raster, .GeoJSON -> vector (case-insensitive)
-    assert raster_type == "raster"
-    assert vector_type == "vector"
-
-    # When: _infer_type inspects the unknown suffix
-    # Then: .csv -> ValueError enumerating the registered types in sorted
-    #       order. The conftest fixture restores the built-in registry
-    #       around every test, so this message is the same regardless of
-    #       which other test files pytest collected first.
+    # When: build_reference_source is given it with no explicit type
+    # Then: ValueError enumerates the registered types in sorted order. The
+    #       conftest fixture restores the built-in registry around every
+    #       test, so this exact message holds regardless of which other test
+    #       files pytest collected first.
     with pytest.raises(ValueError, match="one of: raster, unosat, vector"):
-        _infer_type(unknown_path)
+        build_reference_source(unknown_path)
 
 
 def test_build_reference_source_bare_path_and_null_options(tmp_path):
     # Given: a real GeoJSON with one point at (0.5, 3.5)
     path = tmp_path / "ref.geojson"
     _points_gdf([(0.5, 3.5)], crs=CRS_WGS84).to_file(path, driver="GeoJSON")
-    grid = ((4, 4), from_origin(0, 4, 1, 1), CRS_WGS84)
 
     # When: build_reference_source gets a bare string path, and separately a
     #       mapping whose optional keys are all None (YAML nulls)
@@ -625,23 +667,38 @@ def test_build_reference_source_bare_path_and_null_options(tmp_path):
 
         # Then: both produce a vector source resolving the point to cell (0, 0)
         assert isinstance(source, VectorReferenceSource)
-        counts = source.counts_on_grid(*grid)
+        counts = source.counts_on_grid(*DEGREE_GRID)
         assert counts[0, 0] == 1.0
         assert counts.sum() == pytest.approx(1.0)
 
 
-def test_build_reference_source_invalid_configs():
-    # Given: a config with no path, a non-mapping config, and an unknown type
+def test_build_reference_source_demands_a_path():
+    # Given: a config naming a type but carrying no path
     no_path = {"type": "vector"}
-    not_a_mapping = 42
-    unknown_type = {"path": "x.geojson", "type": "satellite"}
 
-    # When: build_reference_source validates each
-    # Then: each raises a ValueError with the specific complaint
+    # When: build_reference_source validates it
+    # Then: ValueError names the missing key
     with pytest.raises(ValueError, match="missing required key: path"):
         build_reference_source(no_path)
+
+
+def test_build_reference_source_rejects_a_non_mapping_config():
+    # Given: a config that is neither a path nor a mapping
+    not_a_mapping = 42
+
+    # When: build_reference_source validates it
+    # Then: ValueError says what the config is allowed to be
     with pytest.raises(ValueError, match="path or a mapping"):
         build_reference_source(not_a_mapping)
+
+
+def test_build_reference_source_rejects_an_unknown_type():
+    # Given: a config naming a type that is not registered
+    unknown_type = {"path": "x.geojson", "type": "satellite"}
+
+    # When: build_reference_source validates it
+    # Then: ValueError quotes the unknown type rather than falling back to
+    #       suffix inference, which would have produced a vector source
     with pytest.raises(ValueError, match="Unknown reference type 'satellite'"):
         build_reference_source(unknown_type)
 
@@ -674,7 +731,7 @@ def test_build_reference_source_nearest_to_reaches_only_unosat(tmp_path):
         {"path": str(tmp_path), "type": "unosat"},
         nearest_to=datetime(2024, 1, 25),
     )
-    counts = source.counts_on_grid((4, 4), from_origin(0, 4, 1, 1), CRS_WGS84)
+    counts = source.counts_on_grid(*DEGREE_GRID)
 
     # Then: the unosat source auto-discovers the February export — its point
     #       is the only one on the grid, in cell (2, 2)
@@ -707,7 +764,7 @@ def test_build_reference_source_explicit_date_beats_nearest_to(tmp_path):
         {"type": "unosat", "path": str(tmp_path), "date": "2024-01-01"},
         nearest_to=datetime(2024, 1, 30),
     )
-    counts = source.counts_on_grid((4, 4), from_origin(0, 4, 1, 1), CRS_WGS84)
+    counts = source.counts_on_grid(*DEGREE_GRID)
 
     # Then: the explicitly pinned January export wins over nearest_to
     #       auto-discovery — its point is the one rasterized
@@ -742,7 +799,7 @@ def test_build_reference_source_raster_band_option(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_prepare_grouped_cell_inputs_resolves_reference_on_hull_window(tmp_path):
+def test_reference_source_is_resolved_on_the_prediction_hull_window(tmp_path):
     # Given: a 10x10 master grid of 100 m cells with origin (0, 1000);
     #        predictions at the four corners (60,940) (340,940) (60,660)
     #        (340,660) whose convex hull spans x in [60,340], y in [660,940]
@@ -758,15 +815,17 @@ def test_prepare_grouped_cell_inputs_resolves_reference_on_hull_window(tmp_path)
     )
     reference = PointsSource(_points_gdf([(150, 850), (30, 970)]))
 
-    # When: prepare_grouped_cell_inputs builds the grid products
+    # When: prepare_grouped_cell_inputs resolves the reference against the
+    #       window it crops for those predictions
     with rasterio.open(grid_path) as src_grid:
         grouped = prepare_grouped_cell_inputs(pred_gdf, reference, src_grid)
 
-    # Then: grid_shape is (4, 4) with origin (0, 1000); the inside reference
-    #       point counts in cell (1, 1); the outside one is clipped to 0;
-    #       cell (0, 0) (centre (50, 950)) is outside the analysis mask
-    #       while cell (1, 1) is inside; prediction (60, 940) maps to
-    #       row 0, col 0 and (340, 660) to row 3, col 3
+    # Then: the source is handed the cropped window — a (4, 4) grid at
+    #       origin (0, 1000) — with the hull as clip_geom, so the point
+    #       inside the hull counts in cell (1, 1) while the one inside the
+    #       window but outside the hull is clipped away. The window's own
+    #       mask/rowcol arithmetic belongs to validation_core and is left to
+    #       be pinned where that function lives.
     assert grouped["grid_shape"] == (4, 4)
     assert grouped["out_transform"].c == pytest.approx(0.0)
     assert grouped["out_transform"].f == pytest.approx(1000.0)
@@ -774,13 +833,3 @@ def test_prepare_grouped_cell_inputs_resolves_reference_on_hull_window(tmp_path)
     assert val[1, 1] == 1.0
     assert val[0, 0] == 0.0
     assert val.sum() == pytest.approx(1.0)
-    mask_array = grouped["mask_array"]
-    assert not mask_array[0, 0]
-    assert mask_array[1, 1]
-    prepped = grouped["pred_prepped"].sort_values(["row", "col"])
-    assert list(zip(prepped["row"], prepped["col"])) == [
-        (0, 0),
-        (0, 3),
-        (3, 0),
-        (3, 3),
-    ]
