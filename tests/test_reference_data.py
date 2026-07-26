@@ -640,8 +640,7 @@ def test_build_reference_source_rejects_an_uninferable_suffix():
 
 def test_build_reference_source_bare_path_and_null_options(tmp_path):
     # Given: a real GeoJSON with one point at (0.5, 3.5)
-    path = tmp_path / "ref.geojson"
-    _points_gdf([(0.5, 3.5)], crs=CRS_WGS84).to_file(path, driver="GeoJSON")
+    path = _write_export(tmp_path / "ref.geojson", (0.5, 3.5))
 
     # When: build_reference_source gets a bare string path, and separately a
     #       mapping whose optional keys are all None (YAML nulls)
@@ -692,8 +691,7 @@ def test_build_reference_source_rejects_an_unknown_type():
 def test_build_reference_source_drops_foreign_options(tmp_path):
     # Given: a vector config that still carries a unosat-only 'date' key
     #        (left over from switching types)
-    path = tmp_path / "ref.geojson"
-    _points_gdf([(0.5, 3.5)], crs=CRS_WGS84).to_file(path, driver="GeoJSON")
+    path = _write_export(tmp_path / "ref.geojson", (0.5, 3.5))
     cfg = {"path": str(path), "type": "vector", "date": "2024-01-01"}
 
     # When: build_reference_source dispatches to the vector factory
@@ -705,11 +703,8 @@ def test_build_reference_source_drops_foreign_options(tmp_path):
 
 def test_build_reference_source_nearest_to_reaches_only_unosat(tmp_path):
     # Given: a directory with exports dated 2024-01-01 and 2024-02-01
-    _points_gdf([(0.5, 3.5)], crs=CRS_WGS84).to_file(
-        tmp_path / "exportA_2024-01-01.geojson", driver="GeoJSON"
-    )
-    feb_path = tmp_path / "exportB_2024-02-01.geojson"
-    _points_gdf([(2.5, 1.5)], crs=CRS_WGS84).to_file(feb_path, driver="GeoJSON")
+    _write_export(tmp_path / "exportA_2024-01-01.geojson", (0.5, 3.5))
+    feb_path = _write_export(tmp_path / "exportB_2024-02-01.geojson", (2.5, 1.5))
 
     # When: build_reference_source runs on a unosat config without a date,
     #       with nearest_to=2024-01-25 (24 days vs 7 days away)
@@ -738,12 +733,8 @@ def test_build_reference_source_explicit_date_beats_nearest_to(tmp_path):
     #        (point in cell (2, 2)), a unosat config pinning date
     #        "2024-01-01", and nearest_to=2024-01-30 — which by timestamp
     #        distance (29 days vs 2 days) favours the February export
-    _points_gdf([(0.5, 3.5)], crs=CRS_WGS84).to_file(
-        tmp_path / "exportA_2024-01-01.geojson", driver="GeoJSON"
-    )
-    _points_gdf([(2.5, 1.5)], crs=CRS_WGS84).to_file(
-        tmp_path / "exportB_2024-02-01.geojson", driver="GeoJSON"
-    )
+    _write_export(tmp_path / "exportA_2024-01-01.geojson", (0.5, 3.5))
+    _write_export(tmp_path / "exportB_2024-02-01.geojson", (2.5, 1.5))
 
     # When: build_reference_source builds the source and counts are resolved
     source = build_reference_source(
