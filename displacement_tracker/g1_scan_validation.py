@@ -75,7 +75,7 @@ def _budget_per_metric(n_probes: int, refine_maxiter: int) -> int:
     return n_probes * BRENT_EVAL_BUDGET + BRENT_EVAL_BUDGET + max(refine_maxiter, 0)
 
 
-def _make_evaluator(grouped, scan_metrics, bests, trace, progress=None):
+def make_evaluator(grouped, scan_metrics, bests, trace, progress=None):
     """Return an evaluate(factor, cutoff) -> metrics function.
 
     Side effects: every call appends to `trace`, updates `bests[m]` for any
@@ -132,7 +132,7 @@ def _make_evaluator(grouped, scan_metrics, bests, trace, progress=None):
     return evaluate
 
 
-def _objective(evaluate: Callable, metric: str, factor: float, cutoff: float) -> float:
+def objective(evaluate: Callable, metric: str, factor: float, cutoff: float) -> float:
     """Sign-adjusted scalar objective (always minimized) with penalty on failure."""
     metrics = evaluate(factor, cutoff)
     if metrics is None:
@@ -143,7 +143,7 @@ def _objective(evaluate: Callable, metric: str, factor: float, cutoff: float) ->
     return float(v) if METRIC_DIRECTIONS[metric] == "min" else float(-v)
 
 
-def _optimize_metric(
+def optimize_metric(
     evaluate: Callable,
     metric: str,
     bests: Dict[str, dict],
@@ -167,7 +167,7 @@ def _optimize_metric(
     ridge_pts: List[Tuple[float, float]] = []
     for f in probe_factors:
         res = minimize_scalar(
-            lambda c, _f=float(f): _objective(evaluate, metric, _f, c),
+            lambda c, _f=float(f): objective(evaluate, metric, _f, c),
             bounds=(cb_lo, cb_hi),
             method="bounded",
             options={"xatol": xtol_cutoff},
@@ -185,7 +185,7 @@ def _optimize_metric(
     # --- Phase 3: 1-D search along the fitted ridge ---
     def along_ridge(f: float) -> float:
         c = float(np.clip(a * f + b, cb_lo, cb_hi))
-        return _objective(evaluate, metric, f, c)
+        return objective(evaluate, metric, f, c)
 
     minimize_scalar(
         along_ridge,
@@ -202,7 +202,7 @@ def _optimize_metric(
         def obj2d(x):
             f = float(np.clip(x[0], fb_lo, fb_hi))
             c = float(np.clip(x[1], cb_lo, cb_hi))
-            return _objective(evaluate, metric, f, c)
+            return objective(evaluate, metric, f, c)
 
         minimize(
             obj2d,
@@ -247,10 +247,10 @@ def scan_tile(
     }
     trace: List[Dict[str, float]] = []
 
-    evaluate = _make_evaluator(grouped, scan_metrics, bests, trace, progress=progress)
+    evaluate = make_evaluator(grouped, scan_metrics, bests, trace, progress=progress)
     ridges: Dict[str, Tuple[float, float]] = {}
     for m in scan_metrics:
-        a, b = _optimize_metric(
+        a, b = optimize_metric(
             evaluate=evaluate,
             metric=m,
             bests=bests,
@@ -327,7 +327,7 @@ def plot_search_trace(
     plt.close(fig)
 
 
-def _resolve_metrics(tuning_cfg: dict) -> Tuple[str, List[str]]:
+def resolve_metrics(tuning_cfg: dict) -> Tuple[str, List[str]]:
     """Return (eval metric, metrics to track); the eval metric is always tracked."""
     metric = tuning_cfg.get("metric", "rms")
     metrics = list(tuning_cfg.get("metrics") or SCAN_METRICS_DEFAULT)
@@ -372,54 +372,55 @@ class ScanSettings:
     def base_name(self) -> str:
         return os.path.splitext(os.path.basename(self.input_path))[0]
 
+    @classmethod
+    def from_config(cls, params: dict) -> "ScanSettings":
+        """Extract and validate the scan settings from a resolved (flat) config."""
+        tuning = params.get("tuning") or {}
+        merge_cfg = params.get("merge") or {}
 
-def _scan_settings(params: dict) -> ScanSettings:
-    """Extract and validate the scan settings from a resolved (flat) config."""
-    tuning = params.get("tuning") or {}
-    merge_cfg = params.get("merge") or {}
+        input_path = tuning.get("input") or merge_cfg.get("output")
+        if not input_path:
+            raise click.ClickException(
+                "Missing required config key: tuning.input "
+                "(or merge.output as fallback)"
+            )
+        out_dir = tuning.get("out_dir") or "scan_results"
+        metric, scan_metrics = resolve_metrics(tuning)
 
-    input_path = tuning.get("input") or merge_cfg.get("output")
-    if not input_path:
-        raise click.ClickException(
-            "Missing required config key: tuning.input (or merge.output as fallback)"
+        factor_bounds = (
+            float(tuning.get("factor_min", 0.0)),
+            float(tuning.get("factor_max", 10.0)),
         )
-    out_dir = tuning.get("out_dir") or "scan_results"
-    metric, scan_metrics = _resolve_metrics(tuning)
+        cutoff_bounds = (
+            float(tuning.get("cutoff_min", 0.0001)),
+            float(tuning.get("cutoff_max", 0.01)),
+        )
+        if factor_bounds[0] >= factor_bounds[1] or cutoff_bounds[0] >= cutoff_bounds[1]:
+            raise click.ClickException(
+                "tuning.factor_min/cutoff_min must be strictly less than their max."
+            )
 
-    factor_bounds = (
-        float(tuning.get("factor_min", 0.0)),
-        float(tuning.get("factor_max", 10.0)),
-    )
-    cutoff_bounds = (
-        float(tuning.get("cutoff_min", 0.0001)),
-        float(tuning.get("cutoff_max", 0.01)),
-    )
-    if factor_bounds[0] >= factor_bounds[1] or cutoff_bounds[0] >= cutoff_bounds[1]:
-        raise click.ClickException(
-            "tuning.factor_min/cutoff_min must be strictly less than their max."
+        return cls(
+            input_path=input_path,
+            pred_folder=merge_cfg.get("input_folder"),
+            master_grid=_require(tuning, "tuning", "master_grid"),
+            reference=_require(tuning, "tuning", "reference"),
+            out_dir=out_dir,
+            best_params_path=tuning.get("best_params")
+            or os.path.join(out_dir, "best_params.yaml"),
+            metric=metric,
+            scan_metrics=scan_metrics,
+            factor_bounds=factor_bounds,
+            cutoff_bounds=cutoff_bounds,
+            ridge_probes=int(tuning.get("ridge_probes", 5)),
+            xtol_factor=float(tuning.get("xtol_factor", 1e-3)),
+            xtol_cutoff=float(tuning.get("xtol_cutoff", 1e-6)),
+            refine_maxiter=int(tuning.get("refine_maxiter", 60)),
+            exclusion_zones=tuning.get("exclusion_zones"),
         )
 
-    return ScanSettings(
-        input_path=input_path,
-        pred_folder=merge_cfg.get("input_folder"),
-        master_grid=_require(tuning, "tuning", "master_grid"),
-        reference=_require(tuning, "tuning", "reference"),
-        out_dir=out_dir,
-        best_params_path=tuning.get("best_params")
-        or os.path.join(out_dir, "best_params.yaml"),
-        metric=metric,
-        scan_metrics=scan_metrics,
-        factor_bounds=factor_bounds,
-        cutoff_bounds=cutoff_bounds,
-        ridge_probes=int(tuning.get("ridge_probes", 5)),
-        xtol_factor=float(tuning.get("xtol_factor", 1e-3)),
-        xtol_cutoff=float(tuning.get("xtol_cutoff", 1e-6)),
-        refine_maxiter=int(tuning.get("refine_maxiter", 60)),
-        exclusion_zones=tuning.get("exclusion_zones"),
-    )
 
-
-def _prediction_date(settings: ScanSettings):
+def prediction_date(settings: ScanSettings):
     """Median date stamped on the pre-merge prediction files (None if unknown).
 
     Feeds unosat auto-discovery when reference.date is not set; the merged
@@ -492,7 +493,7 @@ def _write_summary_csv(settings: ScanSettings, bests, ridges, trace, final_metri
     click.echo(f"Summary saved to: {summary_path}")
 
 
-def _write_best_params(settings: ScanSettings, bests, chosen) -> dict:
+def write_best_params(settings: ScanSettings, bests, chosen) -> dict:
     # The merge stage names the pair (adjustment_factor, min_adj_peak);
     # h2_merge_tuned reads exactly these keys back.
     best_params = {
@@ -528,10 +529,10 @@ def run_scan(params: dict) -> dict:
     ``scan_summary.csv``, best-parameter rasters and ``best_params.yaml``
     into ``tuning.out_dir``, and returns the tuned parameters.
     """
-    settings = _scan_settings(params)
+    settings = ScanSettings.from_config(params)
     os.makedirs(settings.out_dir, exist_ok=True)
     reference = build_reference_source(
-        settings.reference, nearest_to=_prediction_date(settings)
+        settings.reference, nearest_to=prediction_date(settings)
     )
 
     total_evals = _budget_per_metric(
@@ -587,7 +588,7 @@ def run_scan(params: dict) -> dict:
         final_metrics = _export_best(settings, grouped, chosen, src_grid)
 
     _write_summary_csv(settings, bests, ridges, trace, final_metrics)
-    return _write_best_params(settings, bests, chosen)
+    return write_best_params(settings, bests, chosen)
 
 
 @click.command()
