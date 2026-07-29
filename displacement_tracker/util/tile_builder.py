@@ -38,7 +38,7 @@ def _compute_valid_fraction(data: np.ndarray, nodata) -> float:
 def tile_pixel_size(src, span_m: float) -> int:
     """Square tile side in pixels given a metric span and raster resolution."""
     px = abs(src.transform.a)
-    return int(round(span_m / px))
+    return round(span_m / px)
 
 
 def compute_tile_window(
@@ -98,8 +98,8 @@ def world_window(src, x: float, y: float, core_m: float, margin_m: float):
             return None
 
         col_f, row_f = (~src.transform) * (x, y)
-        r_center = int(round(row_f))
-        c_center = int(round(col_f))
+        r_center = round(row_f)
+        c_center = round(col_f)
 
         half = tile_px // 2
         r0 = max(0, min(r_center - half, src.height - tile_px))
@@ -127,8 +127,8 @@ def create_label_from_feats(
 
     for feat in feats:
         feat_lon, feat_lat = feat["geometry"]["coordinates"]
-        local_col = int(round((feat_lon - lon_min) / lon_span * (w - 1)))
-        local_row = int(round((lat_max - feat_lat) / lat_span * (h - 1)))
+        local_col = round((feat_lon - lon_min) / lon_span * (w - 1))
+        local_row = round((lat_max - feat_lat) / lat_span * (h - 1))
 
         for dr in (-1, 0, 1):
             for dc in (-1, 0, 1):
@@ -163,8 +163,8 @@ def _read_prewar_tile(
         lat_c = 0.5 * (lat_min + lat_max)
         pxs, pys = transform("EPSG:4326", prewar_src.crs, [lon_c], [lat_c])
         col_f, row_f = (~prewar_src.transform) * (pxs[0], pys[0])
-        r_center = int(round(row_f))
-        c_center = int(round(col_f))
+        r_center = round(row_f)
+        c_center = round(col_f)
 
         half = tile_px // 2
         rpre0 = max(0, min(r_center - half, prewar_src.height - tile_px))

@@ -1,9 +1,10 @@
 import json
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.patheffects as pe
 import random
+
+import matplotlib.patheffects as pe
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
 
 
 class DatasetViewer:
@@ -82,7 +83,7 @@ class DatasetViewer:
     def show_overlay(self, idx: int) -> None:
         arr_feat, arr_prewar, arr_label, meta_text = self._prepare_display_data(idx)
 
-        fig, axes = plt.subplots(
+        _fig, axes = plt.subplots(
             1,
             3,
             figsize=(30, 8),  # bigger figure
@@ -112,7 +113,7 @@ class DatasetViewer:
         if diff_vis.max() > 0:
             diff_vis /= diff_vis.max()
 
-        fig, axes = plt.subplots(
+        _fig, axes = plt.subplots(
             1,
             5,
             figsize=(30, 8),  # bigger figure
@@ -171,7 +172,7 @@ class DatasetViewer:
                 best_scale = scale
 
         figsize = (best_cols * best_scale, best_rows * best_scale)
-        fig, axes = plt.subplots(best_rows, best_cols, figsize=figsize)
+        _fig, axes = plt.subplots(best_rows, best_cols, figsize=figsize)
 
         if not isinstance(axes, np.ndarray):
             axes = np.array([axes])

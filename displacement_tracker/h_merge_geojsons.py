@@ -21,8 +21,8 @@ from pathlib import Path
 
 import click
 import geopandas as gpd
-from shapely.geometry import Point
 import yaml
+from shapely.geometry import Point
 
 from displacement_tracker.util.config import flow_option, load_flow_config
 from displacement_tracker.util.deduplication import merge_close_points_global
@@ -397,15 +397,15 @@ def merge_geojsons(
     exclusion_geom = load_zone_geometry(exclusion_zones_gpkg, "exclusion")
     inclusion_geom = load_zone_geometry(inclusion_zone, "inclusion")
 
-    merge_kwargs = dict(
-        min_distance_m=min_distance_m,
-        agreement=agreement,
-        min_adj_peak=min_adj_peak,
-        adjustment_factor=adjustment_factor,
-        thresholds_data=thresholds_data,
-        exclusion_geom=exclusion_geom,
-        inclusion_geom=inclusion_geom,
-    )
+    merge_kwargs = {
+        "min_distance_m": min_distance_m,
+        "agreement": agreement,
+        "min_adj_peak": min_adj_peak,
+        "adjustment_factor": adjustment_factor,
+        "thresholds_data": thresholds_data,
+        "exclusion_geom": exclusion_geom,
+        "inclusion_geom": inclusion_geom,
+    }
 
     if process_by_date:
         sort_preds_by_date(input_dir)

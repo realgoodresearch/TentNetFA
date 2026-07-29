@@ -1,8 +1,9 @@
 import io
 import os
+
+import click
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
-import click
 
 from displacement_tracker.util.config import flow_option, load_flow_config
 from displacement_tracker.util.env_loader import require_env_file
@@ -88,11 +89,11 @@ def download_tif_files_from_public_folder(search_string: str, download_dir="."):
         done = False
         print(f"Downloading {file_name}...", end="\r")
         while not done:
-            status, done = downloader.next_chunk()
+            _status, done = downloader.next_chunk()
         print(f"Downloaded {file_name}")
 
 
-@click.command(context_settings=dict(help_option_names=["-h", "--help"]))
+@click.command(context_settings={"help_option_names": ["-h", "--help"]})
 @click.argument("config", type=click.Path(exists=True, dir_okay=False))
 @click.option(
     "--download-dir",

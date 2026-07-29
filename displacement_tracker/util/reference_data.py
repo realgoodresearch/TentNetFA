@@ -35,9 +35,9 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple, Union
 
 import geopandas as gpd
 import numpy as np
@@ -56,7 +56,7 @@ RASTER_SUFFIXES = (".tif", ".tiff", ".vrt")
 _DATE_PATTERN = re.compile(r"(\d{4}-\d{2}-\d{2})|(\d{8})")
 
 
-def extract_date_from_filename(path) -> Optional[datetime]:
+def extract_date_from_filename(path) -> datetime | None:
     """Match YYYY-MM-DD or YYYYMMDD in a file name (None if absent/invalid)."""
     match = _DATE_PATTERN.search(Path(path).name)
     if not match:
@@ -67,7 +67,7 @@ def extract_date_from_filename(path) -> Optional[datetime]:
         return None
 
 
-def infer_target_date(paths: Iterable[Union[str, Path]]) -> Optional[datetime]:
+def infer_target_date(paths: Iterable[str | Path]) -> datetime | None:
     """Median of the dates stamped on the given file names (None if none parse).
 
     Used to auto-discover a reference export near the prediction dates; the
@@ -87,7 +87,7 @@ class ReferenceSource(ABC):
     @abstractmethod
     def counts_on_grid(
         self,
-        grid_shape: Tuple[int, int],
+        grid_shape: tuple[int, int],
         transform: rasterio.Affine,
         crs,
         clip_geom=None,
@@ -127,8 +127,8 @@ class VectorReferenceSource(PointsSource):
     def __init__(
         self,
         path: str,
-        layer: Optional[str] = None,
-        where: Optional[str] = None,
+        layer: str | None = None,
+        where: str | None = None,
     ):
         source_path = Path(path)
         if not source_path.exists():
@@ -166,17 +166,17 @@ class UnosatReferenceSource(VectorReferenceSource):
     def __init__(
         self,
         path: str,
-        date: Optional[str] = None,
-        nearest_to: Optional[datetime] = None,
-        layer: Optional[str] = None,
-        where: Optional[str] = None,
+        date: str | None = None,
+        nearest_to: datetime | None = None,
+        layer: str | None = None,
+        where: str | None = None,
     ):
         super().__init__(
             _select_export(path, date, nearest_to), layer=layer, where=where
         )
 
 
-def _list_exports(source_dir: Path) -> List[Path]:
+def _list_exports(source_dir: Path) -> list[Path]:
     """All vector exports under a directory, child directories included.
 
     ``.gdb`` exports are directories on disk, so they are matched by
@@ -193,8 +193,8 @@ def _list_exports(source_dir: Path) -> List[Path]:
 
 def _select_export(
     path: str,
-    date: Optional[str],
-    nearest_to: Optional[datetime] = None,
+    date: str | None,
+    nearest_to: datetime | None = None,
 ) -> str:
     """Resolve a UNOSAT export path.
 
@@ -262,8 +262,9 @@ class RasterReferenceSource(ReferenceSource):
         # A WarpedVRT pinned to the requested window resolves CRS,
         # registration and out-of-bounds fill in one step; for a raster
         # already on the master grid this is a plain aligned read.
-        with rasterio.open(self.path) as src:
-            with WarpedVRT(
+        with (
+            rasterio.open(self.path) as src,
+            WarpedVRT(
                 src,
                 crs=crs,
                 transform=transform,
@@ -271,8 +272,9 @@ class RasterReferenceSource(ReferenceSource):
                 height=grid_shape[0],
                 resampling=Resampling.nearest,
                 nodata=0.0,
-            ) as vrt:
-                data = vrt.read(self.band).astype(np.float32)
+            ) as vrt,
+        ):
+            data = vrt.read(self.band).astype(np.float32)
         data[~np.isfinite(data)] = 0.0
         np.clip(data, 0.0, None, out=data)
         if clip_geom is not None:
@@ -288,7 +290,7 @@ class RasterReferenceSource(ReferenceSource):
 
 def rasterize_point_counts(
     gdf: gpd.GeoDataFrame,
-    out_shape: Tuple[int, int],
+    out_shape: tuple[int, int],
     transform: rasterio.Affine,
 ) -> np.ndarray:
     """Rasterize point geometries into counts per cell."""
@@ -326,9 +328,7 @@ def _infer_type(path: str) -> str:
     )
 
 
-def build_reference_source(
-    cfg, nearest_to: Optional[datetime] = None
-) -> ReferenceSource:
+def build_reference_source(cfg, nearest_to: datetime | None = None) -> ReferenceSource:
     """Build a :class:`ReferenceSource` from config.
 
     ``cfg`` is either a bare path (type inferred from the suffix) or a
@@ -343,8 +343,11 @@ def build_reference_source(
     """
     if isinstance(cfg, (str, Path)):
         cfg = {"path": str(cfg)}
+    # ValueError rather than the TypeError TRY004 asks for: every other
+    # rejection in this function raises ValueError, and callers catch config
+    # errors as one kind.
     if not isinstance(cfg, dict):
-        raise ValueError(
+        raise ValueError(  # noqa: TRY004
             "Reference config must be a path or a mapping with a 'path' key."
         )
     cfg = {k: v for k, v in cfg.items() if v is not None}

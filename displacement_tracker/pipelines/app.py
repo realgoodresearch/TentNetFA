@@ -472,9 +472,8 @@ def main() -> None:
         with open(ctx.config_path, "w") as f:
             yaml.safe_dump(ctx.config, f, sort_keys=False)
 
-    with config_tab:
-        with st.expander("Resolved config (as written to the run directory)"):
-            st.code(yaml.safe_dump(ctx.config, sort_keys=False), language="yaml")
+    with config_tab, st.expander("Resolved config (as written to the run directory)"):
+        st.code(yaml.safe_dump(ctx.config, sort_keys=False), language="yaml")
 
     with logs_tab:
         st.info(f"Run directory: `{ctx.run_dir}`")

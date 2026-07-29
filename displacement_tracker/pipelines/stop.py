@@ -100,7 +100,7 @@ def cli(dry_run: bool, timeout: float) -> None:
             proc.terminate()
         except psutil.NoSuchProcess:
             continue
-    gone, alive = psutil.wait_procs(procs, timeout=timeout)
+    _gone, alive = psutil.wait_procs(procs, timeout=timeout)
     for proc in alive:
         LOGGER.warning("pid %d did not exit within %.0fs — killing", proc.pid, timeout)
         try:

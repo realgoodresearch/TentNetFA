@@ -5,13 +5,13 @@ import os
 import numpy as np
 import pandas as pd
 
-from displacement_tracker.evaluation.scripts.plots import plot_hex_error_map
 from displacement_tracker.evaluation.scripts.common import (
     Z_95,
     ensure_output_dir,
     hex_error_aggregation,
     load_annotation_points,
 )
+from displacement_tracker.evaluation.scripts.plots import plot_hex_error_map
 
 TILE_SIZE_M = 100.0
 TILE_AREA_M2 = TILE_SIZE_M * TILE_SIZE_M

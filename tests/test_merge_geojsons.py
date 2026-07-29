@@ -5,9 +5,9 @@ import json
 import click
 import geopandas as gpd
 import pytest
+from _helpers import write_geojson
 from shapely.geometry import Point, box
 
-from _helpers import write_geojson
 from displacement_tracker.h_merge_geojsons import (
     MERGE_CONFIG_KEYS,
     filter_points_by_zone,
@@ -32,15 +32,15 @@ NEAR_DEG = 1e-5
 
 def default_merge_kwargs(**overrides):
     """Baseline kwargs for process_geojson_folder with no filtering active."""
-    kwargs = dict(
-        min_distance_m=3.0,
-        agreement=1,
-        min_adj_peak=0.0,
-        adjustment_factor=1.0,
-        thresholds_data={},
-        exclusion_geom=None,
-        inclusion_geom=None,
-    )
+    kwargs = {
+        "min_distance_m": 3.0,
+        "agreement": 1,
+        "min_adj_peak": 0.0,
+        "adjustment_factor": 1.0,
+        "thresholds_data": {},
+        "exclusion_geom": None,
+        "inclusion_geom": None,
+    }
     kwargs.update(overrides)
     return kwargs
 

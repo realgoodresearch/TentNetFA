@@ -11,9 +11,9 @@ import os
 # Importing the evaluation plot modules must not need a display.
 os.environ.setdefault("MPLBACKEND", "Agg")
 
-import pytest  # noqa: E402
+import pytest
 
-from displacement_tracker.util import reference_data  # noqa: E402
+from displacement_tracker.util import reference_data
 
 # ``reference_data.SOURCE_TYPES`` is a module-level dict that any importer
 # may extend: importing ``evaluation.annotation_reference`` registers the

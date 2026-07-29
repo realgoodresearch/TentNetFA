@@ -44,7 +44,7 @@ def evaluate_spatial_points(
 
     return {
         "output_path": output_path,
-        "n_points": int(len(df)),
+        "n_points": len(df),
         "n_hexes": n_hexes,
         "mean_tile_error": float(df["tile_error"].mean()),
     }

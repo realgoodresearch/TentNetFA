@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import json
 import os
 import random
@@ -206,7 +207,7 @@ class PairedImageDataset(Dataset):
         save_loc: str | None = None,
         regenerate_splits: bool = False,
         seed: int | None = None,
-    ) -> tuple[list["PairedImageDataset"], list[list[int]]]:
+    ) -> tuple[list[PairedImageDataset], list[list[int]]]:
         if save_loc is None:
             cache_valid = False
         else:
@@ -226,7 +227,7 @@ class PairedImageDataset(Dataset):
                         [int(field.strip()) for field in row.strip().split(",")]
                     )
             else:
-                LOGGER.warn("Cached splits don't match args, ignoring cache")
+                LOGGER.warning("Cached splits don't match args, ignoring cache")
                 cache_valid = False
 
         idcs = list(range(len(self)))

@@ -12,10 +12,10 @@ import geopandas as gpd
 import numpy as np
 import pytest
 import rasterio
+from _helpers import CRS_UTM, CRS_WGS84, write_geotiff
 from rasterio.transform import from_origin
 from shapely.geometry import Point, box
 
-from _helpers import CRS_UTM, CRS_WGS84, write_geotiff
 from displacement_tracker.util.reference_data import (
     PointsSource,
     RasterReferenceSource,

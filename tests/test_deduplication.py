@@ -17,8 +17,8 @@ degrees. At base latitude 0 these constructions are float-exact.
 import math
 
 import pytest
-
 from _helpers import DEG_PER_M, EARTH_RADIUS_M
+
 from displacement_tracker.util.deduplication import UnionFind, merge_close_points_global
 from displacement_tracker.util.distance import haversine_m, interpolate_centroid
 

@@ -24,15 +24,15 @@ import os
 import signal
 import subprocess
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 import yaml
 from dotenv import load_dotenv
 
-from displacement_tracker.util.config import deep_merge, deep_set, load_flow_config
 from displacement_tracker.pipelines.spec import Pipeline, Stage
+from displacement_tracker.util.config import deep_merge, deep_set, load_flow_config
 
 
 class StageFailedError(RuntimeError):
@@ -81,7 +81,7 @@ class StageLoadMonitor:
 
         self._psutil = psutil
         self._root_pid = proc.pid
-        self._procs: dict[int, "psutil.Process"] = {}
+        self._procs: dict[int, psutil.Process] = {}
         self.cpu_count: int = psutil.cpu_count() or 1
         self.total_memory: int = psutil.virtual_memory().total
         self.sample()  # prime the cpu_percent counters

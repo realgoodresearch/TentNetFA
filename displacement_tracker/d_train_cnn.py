@@ -1,12 +1,14 @@
 from __future__ import annotations
+
+import datetime
+import os
 from pathlib import Path
 
 import click
 import torch
+from torch import optim
 from torch.utils.data import DataLoader
-import torch.optim as optim
-import os
-import datetime
+
 from displacement_tracker.paired_image_dataset import PairedImageDataset
 from displacement_tracker.simple_cnn import SimpleCNN
 from displacement_tracker.util.config import flow_option, load_flow_config
@@ -44,7 +46,7 @@ def custom_collate(batch):
     collated_dict = {}
 
     # Iterate over keys in the first dictionary of the batch
-    for key in batch[0].keys():
+    for key in batch[0]:
         entry = [d[key] for d in batch]
 
         if key != "meta":
@@ -101,7 +103,7 @@ def train(
         device = torch.device("cpu")
         LOGGER.info("Using CPU")
     else:
-        raise Exception(f"Could not find device {device}")
+        raise ValueError(f"Could not find device {device}")
 
     if checkpoint:
         checkpoint = Path(checkpoint)
@@ -132,11 +134,11 @@ def train(
     else:
         loader_workers = int(num_workers)
 
-    loader_kwargs = dict(
-        batch_size=batch_size,
-        collate_fn=custom_collate,
-        num_workers=loader_workers,
-    )
+    loader_kwargs = {
+        "batch_size": batch_size,
+        "collate_fn": custom_collate,
+        "num_workers": loader_workers,
+    }
     if loader_workers > 0:
         loader_kwargs["worker_init_fn"] = PairedImageDataset.worker_init_fn
         loader_kwargs["persistent_workers"] = True
@@ -167,8 +169,9 @@ def train(
     # caching splits for future use
     with open(os.path.join(run_dir, "splits.csv"), "w") as split_file:
         split_file.write(",".join([str(split) for split in splits]) + "\n")
-        for idcs in idcs_list:
-            split_file.write(",".join([str(idx) for idx in idcs]) + "\n")
+        split_file.writelines(
+            ",".join([str(idx) for idx in idcs]) + "\n" for idcs in idcs_list
+        )
 
     best_eval = float("inf")
 

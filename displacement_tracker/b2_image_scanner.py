@@ -11,10 +11,11 @@ import inspect
 import math
 import os
 import sys
+from collections.abc import Iterable, Iterator
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from concurrent.futures.process import BrokenProcessPool
 from itertools import islice
-from typing import Any, Iterable, Iterator
+from typing import Any
 
 import click
 import rasterio
@@ -304,9 +305,8 @@ def scan_all_coordinates(
                         completed += 1
                         pbar.update(1)
 
-                    if pool_broken:
-                        if not _restart_pool("future"):
-                            return
+                    if pool_broken and not _restart_pool("future"):
+                        return
         finally:
             try:
                 executor.shutdown(wait=False, cancel_futures=True)

@@ -1,24 +1,25 @@
-import click
-import torch
+import gc
 import json
+import os
+import tempfile
 from pathlib import Path
-from scipy.ndimage import label, center_of_mass, gaussian_filter
+
+import click
 import geopandas as gpd
+import psutil
+import torch
+from scipy.ndimage import center_of_mass, gaussian_filter, label
 from shapely.geometry import Point
 from torch.utils.data import DataLoader
-import gc
-import os
-import psutil
-import tempfile
 from tqdm.auto import tqdm
-# import matplotlib.pyplot as plt
 
+# import matplotlib.pyplot as plt
 from displacement_tracker.paired_image_dataset import PairedImageDataset
 from displacement_tracker.simple_cnn import SimpleCNN
 from displacement_tracker.util.config import flow_option, load_flow_config
-from displacement_tracker.util.logging_config import setup_logging
-from displacement_tracker.util.distance import interpolate_centroid
 from displacement_tracker.util.deduplication import merge_close_points_global
+from displacement_tracker.util.distance import interpolate_centroid
+from displacement_tracker.util.logging_config import setup_logging
 from displacement_tracker.util.thresholding import passes_threshold
 
 LOGGER = setup_logging("predict_json")
@@ -179,19 +180,19 @@ def predict(
             except Exception:
                 LOGGER.warning(f"Could not remove existing tmp file {tmp_ndjson}")
     else:
-        tmp_handle = tempfile.NamedTemporaryFile(
-            prefix="pred_points_", suffix=".ndjson", delete=False
-        )
-        tmp_handle.close()
-        tmp_ndjson = Path(tmp_handle.name)
+        # mkstemp rather than NamedTemporaryFile(delete=False): the file has
+        # to outlive this block, so there is no context manager to open.
+        tmp_fd, tmp_name = tempfile.mkstemp(prefix="pred_points_", suffix=".ndjson")
+        os.close(tmp_fd)
+        tmp_ndjson = Path(tmp_name)
 
-    loader_kwargs: dict = dict(
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        pin_memory=(device.type == "cuda"),
-        persistent_workers=False,
-    )
+    loader_kwargs: dict = {
+        "batch_size": batch_size,
+        "shuffle": True,
+        "num_workers": num_workers,
+        "pin_memory": (device.type == "cuda"),
+        "persistent_workers": False,
+    }
     if num_workers and num_workers > 0:
         loader_kwargs["worker_init_fn"] = PairedImageDataset.worker_init_fn
     loader = DataLoader(subset, **loader_kwargs)
@@ -313,7 +314,7 @@ def predict(
     except Exception:
         pass
 
-    print("")  # add new line after tqdm bars
+    print()  # add new line after tqdm bars
 
     LOGGER.info(f"Total number of tents (pre-merge): {len(flat_results)}")
 
@@ -471,7 +472,7 @@ def cli(config, flow) -> None:
             "Missing required config key: processing.margin_metres"
         )
     margin_metres = float(processing_cfg["margin_metres"])
-    margin_pixels = int(round(margin_metres / PIXEL_METRES))
+    margin_pixels = round(margin_metres / PIXEL_METRES)
     selection_cfg["crop_pixels"] = margin_pixels
     selection_cfg["nms_sigma"] = NMS_SIGMA_FRACTION * margin_pixels
     LOGGER.info(
