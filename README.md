@@ -415,27 +415,27 @@ hex-aggregated error (analytic and bootstrap CIs), error by municipality,
 month, building density, agriculture and destruction areas, and
 manual-vs-model correlations.
 
-Run the full suite from a JSON config:
+Run the full suite from the `evaluation` section of the config, like any
+other stage:
 
 ```bash
-poetry run run-evaluation --config displacement_tracker/evaluation/analysis_config.json
+poetry run run-evaluation config.yaml
 ```
 
-Relative paths in the config are resolved against the config file's
-directory.
-
-The evaluation suite deliberately uses its own JSON config rather than the
-pipeline `config.yaml`: it is a standalone analysis layer rather than a
-pipeline stage — typically run with several parallel configs (one per
-evaluated model), against assets that live next to the config instead of
-under `${DATA_DIR}`.
+The section lives under `predict`, so `--flow` defaults to `predict` and the
+municipal boundaries come from `shared.boundaries` — the same layer the scan
+stages tile against. Paths are used as configured: relative ones resolve
+against the working directory, so pointing the command at the resolved
+`config.yaml` a pipeline run writes into its run directory evaluates that
+run.
 
 The three spatial context layers the analyses read (`agriculture.json`,
 `h3_density.json`, `destruction.json`) are deliberately **not committed**
-(~20 MB even minified). Obtain them from the team data share — or from the
-original evaluation branch, which still carries them:
+(~40 MB). Obtain them from the team data share — or from the original
+evaluation branch, which still carries them:
 
 ```bash
+git fetch origin eval-postprocessing-pipeline
 git checkout origin/eval-postprocessing-pipeline -- \
   displacement_tracker/evaluation/spatial_data/layers/agriculture.json \
   displacement_tracker/evaluation/spatial_data/layers/h3_density.json \
@@ -443,19 +443,27 @@ git checkout origin/eval-postprocessing-pipeline -- \
 git restore --staged displacement_tracker/evaluation/spatial_data/layers/
 ```
 
-The directory is gitignored, so the files stay local. `run-evaluation`
-checks for them up front and lists anything missing.
+The fetch is needed because a fresh clone has no
+`origin/eval-postprocessing-pipeline` ref to check out from, and the
+`git restore --staged` keeps the 40 MB out of your next commit. The
+directory is gitignored, so the files stay local. `run-evaluation` checks
+for them up front and lists anything missing.
 
-By default the suite evaluates the `model_column` already present
-in the annotation CSV. To evaluate a new model instead, set
-`prediction_dir` (a folder of per-date `YYYYMMDD.gpkg` files produced by
-`merge-geojsons` with `merge.process_by_date: true`), `sample_tif` (any GeoTIFF with the
-prediction CRS) and `new_model_column` in the config; the new model's counts
-are then joined onto the annotations before the analyses run.
+By default the suite evaluates the `model_column` already present in the
+annotation CSV. To evaluate a new model instead, uncomment
+`evaluation.new_model` and set `column` (the name for the added count
+column), `sample_tif` (any GeoTIFF with the prediction CRS) and
+`output_csv`; the new model's counts are joined onto the annotations before
+the analyses run. `prediction_dir` — a folder of per-date `YYYYMMDD.gpkg`
+files produced by `merge-geojsons` with `merge.process_by_date: true` —
+defaults to `prediction.output_folder`, so evaluation chains onto a
+prediction run without restating the path.
 
-Results are written to the config's `output_dir`
+Results are written to `evaluation.output_dir`
 (`displacement_tracker/evaluation/results/` by default, which is
-gitignored).
+gitignored). Note that the shared config references `${DATA_DIR}` in other
+sections, so the `.env` from the setup step above has to be in place even
+though the evaluation keys themselves need no data share.
 
 #### Using the manual annotations as validation reference data
 

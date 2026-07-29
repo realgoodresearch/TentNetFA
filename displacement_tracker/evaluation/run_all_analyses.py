@@ -1,18 +1,23 @@
-"""Run the full model-evaluation suite from a JSON config file.
+"""Run the full model-evaluation suite from the shared pipeline config.
 
 Usage:
-    poetry run run-evaluation --config displacement_tracker/evaluation/analysis_config.json
+    poetry run run-evaluation config.yaml
 
-All relative paths in the config are resolved against the directory that
-contains the config file, so the command can be run from anywhere.
+All settings come from the ``evaluation`` section of the config, except the
+municipal boundaries, which are read from ``boundaries`` so the suite scores
+predictions against the same boundary layer the scan stages tile against.
 
-If the config contains `prediction_dir`, `sample_tif` and `new_model_column`,
-the new model's counts are first joined onto the annotation CSV (see
-scripts/add_new_model_results.py) and evaluated. Otherwise the existing
-`model_column` of the annotation CSV is evaluated directly.
+Paths are used as configured — relative ones resolve against the working
+directory, as in every other stage — so a run directory's resolved
+``config.yaml`` evaluates that run.
+
+If the ``evaluation.new_model`` section sets anything, the new model's counts
+are first joined onto the annotation CSV (see
+scripts/add_new_model_results.py) and the added column is evaluated;
+otherwise the existing ``model_column`` of the annotation CSV is evaluated
+directly.
 """
 
-import json
 from pathlib import Path
 
 import click
@@ -45,71 +50,87 @@ from displacement_tracker.evaluation.scripts.spatial_bootstrap_hex import (
     spatial_bootstrap_hex,
 )
 from displacement_tracker.evaluation.scripts.total_error import evaluate_total_error
+from displacement_tracker.util.config import deep_get, flow_option, load_flow_config
 
-PATH_KEYS = (
-    "annotation_csv",
-    "output_csv",
-    "prediction_dir",
-    "sample_tif",
-    "output_dir",
-    "boundary_shp",
-    "agriculture_geojson",
-    "h3_geojson",
-    "destruction_geojson",
-)
+# Spatial context layers, keyed by the analysis that reads each one.
+LAYER_NAMES = ("agriculture", "h3_density", "destruction")
 
-NEW_MODEL_KEYS = ("prediction_dir", "sample_tif", "new_model_column")
+# Column overrides forwarded to every analysis. Keys the config leaves unset
+# are omitted so the analyses' own signature defaults apply.
+COLUMN_KEYS = ("manual_column", "model_column")
 
-
-def load_config(config_path: Path) -> dict:
-    with config_path.open("r", encoding="utf-8") as f:
-        cfg = json.load(f)
-
-    # Resolve relative paths against the config file's directory.
-    base = config_path.parent
-    for key in PATH_KEYS:
-        if cfg.get(key):
-            cfg[key] = str((base / cfg[key]).resolve())
-    return cfg
+# Any of these being set marks the run as a new-model run; prediction_dir is
+# excluded because it falls back to prediction.output_folder, which a predict
+# config always sets.
+NEW_MODEL_TRIGGER_KEYS = ("column", "sample_tif", "output_csv")
 
 
-def require(cfg: dict, key: str):
-    if not cfg.get(key):
-        raise click.ClickException(f"Missing required config key: {key}")
-    return cfg[key]
+def require(cfg: dict, dotted: str):
+    """Return the value at dotted path ``dotted``, or fail naming the key."""
+    value = deep_get(cfg, dotted)
+    if not value:
+        raise click.ClickException(f"Missing required config key: {dotted}")
+    return value
+
+
+def column_kwargs(eval_cfg: dict) -> dict:
+    """The column overrides the config sets, dropping the ones it does not."""
+    return {key: eval_cfg[key] for key in COLUMN_KEYS if eval_cfg.get(key) is not None}
+
+
+def hex_kwargs(eval_cfg: dict) -> dict:
+    """``hex_size_m`` if the config sets it, for the two hex analyses."""
+    if eval_cfg.get("hex_size_m") is None:
+        return {}
+    return {"hex_size_m": float(eval_cfg["hex_size_m"])}
+
+
+def resolve_new_model(params: dict) -> dict | None:
+    """The new-model join arguments, or None for a plain model_column run."""
+    new_model_cfg = deep_get(params, "evaluation.new_model") or {}
+    if not any(new_model_cfg.get(key) for key in NEW_MODEL_TRIGGER_KEYS):
+        return None
+
+    prediction_dir = new_model_cfg.get("prediction_dir") or deep_get(
+        params, "prediction.output_folder"
+    )
+    if not prediction_dir:
+        raise click.ClickException(
+            "Missing required config key: evaluation.new_model.prediction_dir "
+            "(or prediction.output_folder as fallback)"
+        )
+
+    return {
+        "output_csv": require(params, "evaluation.new_model.output_csv"),
+        "prediction_dir": prediction_dir,
+        "sample_tif": require(params, "evaluation.new_model.sample_tif"),
+        "new_model_column": require(params, "evaluation.new_model.column"),
+    }
 
 
 @click.command()
-@click.option(
-    "--config",
-    "config_path",
-    required=True,
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    help="Path to JSON config file.",
-)
-def cli(config_path: Path) -> None:
-    """Run all evaluation analyses from a config file."""
-    cfg = load_config(config_path)
+@click.argument("config", type=click.Path(exists=True, dir_okay=False))
+@flow_option(default="predict")
+def cli(config: str, flow: str) -> None:
+    """Run all evaluation analyses from the YAML config.
 
-    annotation_csv = require(cfg, "annotation_csv")
-    output_dir = require(cfg, "output_dir")
-    boundary_shp = require(cfg, "boundary_shp")
-    agriculture_geojson = require(cfg, "agriculture_geojson")
-    h3_geojson = require(cfg, "h3_geojson")
-    destruction_geojson = require(cfg, "destruction_geojson")
+    Reads the ``evaluation`` section; the municipal boundaries come from
+    ``boundaries`` and the new-model prediction folder defaults to
+    ``prediction.output_folder``.
+    """
+    params = load_flow_config(config, flow)
+    eval_cfg = params.get("evaluation") or {}
 
-    manual_column = cfg.get("manual_column", "manual_tent_count")
-    hex_size_m = float(cfg.get("hex_size_m", 1000.0))
+    boundary_shp = require(params, "boundaries")
+    annotation_csv = require(params, "evaluation.annotation_csv")
+    output_dir = require(params, "evaluation.output_dir")
+    layers = {
+        name: require(params, f"evaluation.layers.{name}") for name in LAYER_NAMES
+    }
 
     missing = [
         p
-        for p in (
-            annotation_csv,
-            boundary_shp,
-            agriculture_geojson,
-            h3_geojson,
-            destruction_geojson,
-        )
+        for p in (annotation_csv, boundary_shp, *layers.values())
         if not Path(p).exists()
     ]
     if missing:
@@ -121,53 +142,49 @@ def cli(config_path: Path) -> None:
             "README for how to obtain them."
         )
 
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    new_model = resolve_new_model(params)
 
-    if any(cfg.get(key) for key in NEW_MODEL_KEYS):
-        # Join the new model's per-date predictions onto the annotations
-        # first, then evaluate the newly added column.
-        for key in NEW_MODEL_KEYS:
-            require(cfg, key)
-        annotation_csv, model_column = add_new_model_results(
-            annotation_csv=annotation_csv,
-            output_csv=require(cfg, "output_csv"),
-            prediction_dir=cfg["prediction_dir"],
-            sample_tif=cfg["sample_tif"],
-            new_model_column=cfg["new_model_column"],
-        )
-    else:
-        model_column = cfg.get("model_column", "model_tent_count")
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     common = {
         "annotation_csv": annotation_csv,
         "output_dir": output_dir,
-        "manual_column": manual_column,
-        "model_column": model_column,
+        **column_kwargs(eval_cfg),
     }
 
+    if new_model is not None:
+        # Join the new model's per-date predictions onto the annotations
+        # first, then evaluate the newly added column instead of whichever
+        # model_column the config or the CSV already carries.
+        common["annotation_csv"], common["model_column"] = add_new_model_results(
+            annotation_csv=annotation_csv, **new_model
+        )
+
+    hexes = hex_kwargs(eval_cfg)
+
     click.echo("Running total error analysis...")
-    evaluate_total_error(boundary_shp=boundary_shp, hex_size_m=hex_size_m, **common)
+    evaluate_total_error(boundary_shp=boundary_shp, **hexes, **common)
 
     click.echo("Running spatial points analysis...")
     evaluate_spatial_points(**common)
 
     click.echo("Running spatial bootstrap analysis...")
-    spatial_bootstrap_hex(boundary_shp=boundary_shp, hex_size_m=hex_size_m, **common)
+    spatial_bootstrap_hex(boundary_shp=boundary_shp, **hexes, **common)
 
     click.echo("Running tile correlation analysis...")
     evaluate_tile_correlation(**common)
 
     click.echo("Running agriculture analysis...")
     evaluate_agriculture_vs_non_agriculture(
-        agriculture_geojson=agriculture_geojson, **common
+        agriculture_geojson=layers["agriculture"], **common
     )
 
     click.echo("Running building density analysis...")
-    evaluate_h3_density_bins(h3_geojson=h3_geojson, **common)
+    evaluate_h3_density_bins(h3_geojson=layers["h3_density"], **common)
 
     click.echo("Running destruction analysis...")
     evaluate_destruction_vs_non_destruction(
-        destruction_geojson=destruction_geojson, **common
+        destruction_geojson=layers["destruction"], **common
     )
 
     click.echo("Running municipal bounds analysis...")

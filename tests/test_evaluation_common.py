@@ -2,7 +2,6 @@
 config-resolution/preflight logic of displacement_tracker/evaluation/run_all_analyses.py.
 """
 
-import json
 import math
 import os
 
@@ -13,10 +12,17 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pytest
+from _helpers import write_annotation_csv, write_yaml
 from click.testing import CliRunner
 from shapely.geometry import Point, box
 
-from displacement_tracker.evaluation.run_all_analyses import cli, load_config, require
+from displacement_tracker.evaluation.run_all_analyses import (
+    cli,
+    column_kwargs,
+    hex_kwargs,
+    require,
+    resolve_new_model,
+)
 from displacement_tracker.evaluation.scripts.common import (
     build_hex_grid,
     choose_utm_crs_from_gdf,
@@ -374,117 +380,209 @@ def test_hex_error_aggregation_empty_boundary_raises(tmp_path):
 # ==========================================================
 
 
-def test_load_config_resolves_relative_paths_against_config_dir(tmp_path):
-    # Given: a config file in tmp/cfgdir with a relative annotation_csv, an
-    #        absolute boundary_shp, a null prediction_dir and a non-path key
-    cfg_dir = tmp_path / "cfgdir"
-    cfg_dir.mkdir()
-    cfg_file = cfg_dir / "analysis.json"
-    absolute_boundary = str(tmp_path / "elsewhere" / "bounds.shp")
-    cfg_file.write_text(
-        json.dumps(
-            {
-                "annotation_csv": "data/ann.csv",
-                "boundary_shp": absolute_boundary,
-                "prediction_dir": None,
-                "model_column": "model_tent_count",
-            }
-        )
-    )
-
-    # When: load_config loads it
-    cfg = load_config(cfg_file)
-
-    # Then: the relative path resolves against cfgdir (not the CWD), the
-    #       absolute path is preserved, null stays None and non-path keys
-    #       are untouched
-    assert cfg["annotation_csv"] == str((cfg_dir / "data" / "ann.csv").resolve())
-    assert cfg["boundary_shp"] == absolute_boundary
-    assert cfg["prediction_dir"] is None
-    assert cfg["model_column"] == "model_tent_count"
-
-
 def test_require_rejects_missing_and_falsy_values():
-    # Given: a config where key "a" is present, "b" is empty and "c" is absent
-    cfg = {"a": "value", "b": ""}
+    # Given: a config where a dotted path is set, another is empty and a
+    #        third is absent entirely
+    cfg = {"evaluation": {"annotation_csv": "ann.csv", "output_dir": ""}}
 
-    # When: require is called for the present key "a"
-    value = require(cfg, "a")
+    # When: require is asked for the dotted path that is set
+    value = require(cfg, "evaluation.annotation_csv")
 
     # Then: its value is returned
-    assert value == "value"
+    assert value == "ann.csv"
 
-    # When: require is called for the empty "b" and for the absent "c"
-    # Then: both raise ClickException naming the offending key
-    with pytest.raises(click.ClickException, match="b"):
-        require(cfg, "b")
-    with pytest.raises(click.ClickException, match="c"):
-        require(cfg, "c")
+    # When: require is asked for the empty value and for the absent key
+    # Then: both raise ClickException naming the dotted path to fix
+    with pytest.raises(click.ClickException, match="evaluation.output_dir"):
+        require(cfg, "evaluation.output_dir")
+    with pytest.raises(click.ClickException, match="boundaries"):
+        require(cfg, "boundaries")
+
+
+def test_column_kwargs_forwards_only_the_columns_the_config_sets():
+    # Given: an evaluation section naming model_column, leaving manual_column
+    #        null, and carrying a key that is not a column override
+    eval_cfg = {
+        "model_column": "model_beta2",
+        "manual_column": None,
+        "output_dir": "results",
+    }
+
+    # When: the column overrides are collected for the analyses
+    kwargs = column_kwargs(eval_cfg)
+
+    # Then: only the set column is forwarded, so each analysis' own signature
+    #       default supplies the rest instead of a second copy of it here
+    assert kwargs == {"model_column": "model_beta2"}
+
+
+def test_hex_kwargs_omitted_when_unset_and_floated_when_set():
+    # Given: one evaluation section leaving hex_size_m unset, and one setting
+    #        it to the integer a YAML author would naturally write
+    unset = {"manual_column": "manual_tent_count"}
+    integral = {"hex_size_m": 500}
+
+    # When: the hex-grid argument is collected for each
+    hexes_unset = hex_kwargs(unset)
+    hexes_integral = hex_kwargs(integral)
+
+    # Then: nothing is forwarded for the first, and the second reaches the hex
+    #       analyses as the float their grid maths expects
+    assert hexes_unset == {}
+    assert hexes_integral == {"hex_size_m": 500.0}
+
+
+def test_resolve_new_model_returns_none_unless_a_trigger_key_is_set():
+    # Given: a predict config with a prediction output folder, and evaluation
+    #        sections with no new_model block and with an all-null one
+    prediction = {"output_folder": "/run/preds"}
+    absent_block = {"prediction": prediction, "evaluation": {}}
+    null_block = {
+        "prediction": prediction,
+        "evaluation": {
+            "new_model": {"column": None, "sample_tif": None, "output_csv": None}
+        },
+    }
+
+    # When: the new-model arguments are resolved for both shapes
+    absent = resolve_new_model(absent_block)
+    nulled = resolve_new_model(null_block)
+
+    # Then: neither counts as a new-model run, so the annotation CSV's existing
+    #       model_column is evaluated rather than a join being attempted just
+    #       because prediction.output_folder happens to be set
+    assert absent is None
+    assert nulled is None
+
+
+def test_resolve_new_model_defaults_prediction_dir_to_the_prediction_output():
+    # Given: a fully specified new_model block that omits prediction_dir,
+    #        alongside a prediction.output_folder in the same flow
+    params = {
+        "prediction": {"output_folder": "/run/preds"},
+        "evaluation": {
+            "new_model": {
+                "column": "model_beta2",
+                "sample_tif": "/run/tiffs/a.tif",
+                "output_csv": "/run/eval/ann.csv",
+            }
+        },
+    }
+
+    # When: the new-model arguments are resolved
+    resolved = resolve_new_model(params)
+
+    # Then: the join reads the prediction stage's output folder, so evaluation
+    #       chains onto a predict run without restating the path
+    assert resolved == {
+        "output_csv": "/run/eval/ann.csv",
+        "prediction_dir": "/run/preds",
+        "sample_tif": "/run/tiffs/a.tif",
+        "new_model_column": "model_beta2",
+    }
+
+    # When: the block names a prediction_dir of its own
+    params["evaluation"]["new_model"]["prediction_dir"] = "/elsewhere/preds"
+    overridden = resolve_new_model(params)
+
+    # Then: it wins over the fallback
+    assert overridden["prediction_dir"] == "/elsewhere/preds"
+
+
+def test_resolve_new_model_partial_config_fails_naming_the_missing_key():
+    # Given: a new_model block naming a column and an output CSV but omitting
+    #        sample_tif
+    params = {
+        "prediction": {"output_folder": "/run/preds"},
+        "evaluation": {
+            "new_model": {"column": "model_beta2", "output_csv": "/run/eval/ann.csv"}
+        },
+    }
+
+    # When: the new-model arguments are resolved
+    # Then: it aborts naming the key to fix, instead of silently falling back
+    #       to evaluating the annotation CSV's old model_column
+    with pytest.raises(click.ClickException, match="evaluation.new_model.sample_tif"):
+        resolve_new_model(params)
+
+
+def test_resolve_new_model_without_any_prediction_folder_names_both_sources():
+    # Given: a fully specified new_model block but no prediction section to
+    #        fall back to
+    params = {
+        "evaluation": {
+            "new_model": {
+                "column": "model_beta2",
+                "sample_tif": "/run/tiffs/a.tif",
+                "output_csv": "/run/eval/ann.csv",
+            }
+        }
+    }
+
+    # When: the new-model arguments are resolved
+    # Then: the error names both the key and the fallback the user could set
+    with pytest.raises(click.ClickException) as excinfo:
+        resolve_new_model(params)
+    assert "evaluation.new_model.prediction_dir" in str(excinfo.value)
+    assert "prediction.output_folder" in str(excinfo.value)
 
 
 def test_cli_preflight_lists_exactly_the_missing_inputs(tmp_path):
-    # Given: a config whose annotation_csv exists but whose four spatial
-    #        layers point at nonexistent relative paths
+    # Given: a sectioned config whose annotation CSV exists, whose boundary
+    #        layer is declared in the shared section only, and whose boundary
+    #        and three spatial layers point at files that do not exist
     ann = tmp_path / "ann.csv"
-    ann.write_text("date,latitude,longitude,manual_tent_count,model_tent_count\n")
-    cfg_file = tmp_path / "config.json"
-    cfg_file.write_text(
-        json.dumps(
-            {
-                "annotation_csv": "ann.csv",
-                "output_dir": "results",
-                "boundary_shp": "missing/bounds.shp",
-                "agriculture_geojson": "missing/agri.json",
-                "h3_geojson": "missing/h3.json",
-                "destruction_geojson": "missing/destr.json",
-            }
-        )
+    write_annotation_csv(ann, [], extra_columns=("model_tent_count",))
+    missing = tmp_path / "missing"
+    cfg_file = tmp_path / "config.yaml"
+    write_yaml(
+        cfg_file,
+        {
+            "shared": {"boundaries": str(missing / "bounds.shp")},
+            "predict": {
+                "evaluation": {
+                    "annotation_csv": str(ann),
+                    "output_dir": str(tmp_path / "results"),
+                    "layers": {
+                        "agriculture": str(missing / "agri.json"),
+                        "h3_density": str(missing / "h3.json"),
+                        "destruction": str(missing / "destr.json"),
+                    },
+                }
+            },
+        },
     )
 
-    # When: the run-evaluation CLI runs its preflight check
-    result = CliRunner().invoke(cli, ["--config", str(cfg_file)])
+    # When: the run-evaluation CLI runs against it, defaulting to the predict
+    #       flow so the shared boundary layer is merged in
+    result = CliRunner().invoke(cli, [str(cfg_file)])
 
-    # Then: it fails listing each missing resolved path, does not list the
-    #       existing annotation CSV, and does not create output_dir
+    # Then: it fails listing each missing input including the shared boundary,
+    #       does not list the annotation CSV that exists, and leaves the output
+    #       directory uncreated
     assert result.exit_code != 0
-    for rel in ("bounds.shp", "agri.json", "h3.json", "destr.json"):
-        assert str((tmp_path / "missing" / rel).resolve()) in result.output
-    assert str(ann.resolve()) not in result.output
+    for name in ("bounds.shp", "agri.json", "h3.json", "destr.json"):
+        assert str(missing / name) in result.output
+    assert str(ann) not in result.output
     assert not (tmp_path / "results").exists()
 
 
-def test_cli_partial_new_model_config_fails_naming_missing_key(tmp_path):
-    # Given: a config whose preflight input files all exist as tiny dummies
-    #        and which sets prediction_dir but omits sample_tif and
-    #        new_model_column — a partially specified new-model run; this
-    #        exercises the fail-fast misconfiguration guard, not click
-    #        argument plumbing
-    ann = tmp_path / "ann.csv"
-    ann.write_text("date,latitude,longitude,manual_tent_count,model_tent_count\n")
-    for dummy in ("bounds.shp", "agri.json", "h3.json", "destr.json"):
-        (tmp_path / dummy).write_text("dummy")
-    (tmp_path / "preds").mkdir()
-    cfg_file = tmp_path / "config.json"
-    cfg_file.write_text(
-        json.dumps(
-            {
-                "annotation_csv": "ann.csv",
-                "output_dir": "results",
-                "boundary_shp": "bounds.shp",
-                "agriculture_geojson": "agri.json",
-                "h3_geojson": "h3.json",
-                "destruction_geojson": "destr.json",
-                "prediction_dir": "preds",
-            }
-        )
+def test_cli_reports_an_evaluation_section_missing_from_the_resolved_flow(tmp_path):
+    # Given: a config with an evaluation section under predict only, run for
+    #        the tune flow, which resolves without one
+    cfg_file = tmp_path / "config.yaml"
+    write_yaml(
+        cfg_file,
+        {
+            "shared": {"boundaries": str(tmp_path / "bounds.shp")},
+            "predict": {"evaluation": {"annotation_csv": str(tmp_path / "ann.csv")}},
+            "tune": {"tuning": {"metric": "rms"}},
+        },
     )
 
-    # When: the run-evaluation CLI resolves the config
-    result = CliRunner().invoke(cli, ["--config", str(cfg_file)])
+    # When: the CLI is pointed at the flow that has no evaluation section
+    result = CliRunner().invoke(cli, [str(cfg_file), "--flow", "tune"])
 
-    # Then: because ANY new-model key being set marks the run as a new-model
-    #       run, it aborts with "Missing required config key" naming
-    #       sample_tif instead of silently falling back to evaluating the
-    #       old model_column
+    # Then: it names the missing key rather than failing later on an empty path
     assert result.exit_code != 0
-    assert "Missing required config key: sample_tif" in result.output
+    assert "Missing required config key: evaluation.annotation_csv" in result.output
