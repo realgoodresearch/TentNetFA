@@ -40,8 +40,6 @@ class DatasetViewer:
             arr_label = arr_label[0]
 
         meta = sample["meta"]
-        if isinstance(meta, bytes):
-            meta = meta.decode("utf-8")
 
         try:
             meta_dict = json.loads(str(meta))

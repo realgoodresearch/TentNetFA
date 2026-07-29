@@ -18,9 +18,9 @@ This automated detection supports population nowcasting in the Gaza strip in col
 
 -   **Data Ingestion**: Processes Planet GeoTIFF satellite images and GeoJSON files containing labeled tent locations.
 -   **Data Processing**:
-    -   Scans satellite imagery based on geographic coordinates to extract image tiles.
+    -   Scans satellite imagery on a metric tile lattice to extract image tiles.
     -   Generates paired datasets of image patches and corresponding label masks indicating tent locations.
-    -   Creates HDF5 datasets for efficient handling during training.
+    -   Records tiles in per-TIFF Parquet manifests, which the runtime dataset streams from the source GeoTIFFs.
 -   **Model Training**: Trains a custom CNN (`SimpleCNN`) for pixel-wise semantic segmentation to predict tent presence as a density map.
 -   **Prediction & Evaluation**:
     -   Generates GeoJSON point clouds of predicted tent locations from new satellite imagery.
@@ -487,7 +487,7 @@ annotated areas.
 
 ## Output
 
--   **HDF5 Datasets**: The `coordinate-scanner` script produces HDF5 files containing `feature`, `prewar`, `label`, and `meta` datasets for training and prediction.
+-   **Tile Manifests**: The `annotated-scanner` and `image-scanner` scripts produce per-TIFF Parquet manifests (one row per tile: raster path, pixel window, bbox and standardisation stats), plus a labels JSON alongside the training manifests.
 -   **Model Checkpoints**: The training script saves the best-performing model (`best_model.pth`) and dataset split information in the `runs/<timestamp>/` directory.
 -   **Prediction GeoJSONs**: The prediction script generates GeoJSON files with point coordinates for each detected tent, including a `peak_value` property.
 -   **Evaluation Reports**: Validation and evaluation scripts produce CSV reports and difference rasters summarizing model performance.

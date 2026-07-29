@@ -1,8 +1,7 @@
 """Per-TIFF Parquet manifest writer.
 
-Replaces the gzip-chunked HDF5 tile dump with a small columnar manifest. Each
-row describes a tile by reference (raster path + pixel window + bbox) rather
-than carrying the raw pixels, so the dataset can stream tiles directly from
+A tile is described by reference (raster path + pixel window + bbox) rather
+than by carrying the raw pixels, so the dataset can stream tiles directly from
 the source GeoTIFFs at training/inference time. Per-channel standardisation
 stats live in the Parquet file metadata so the dataset can normalise windows
 on the fly.
@@ -64,7 +63,7 @@ def labels_sibling_path(manifest_path: str | os.PathLike[str]) -> Path:
 class ManifestWriter:
     """Buffer manifest rows in memory, atomically write Parquet on close.
 
-    For per-TIFF outputs the row count is bounded (raster_extent / step)^2 —
+    For per-TIFF outputs the row count is bounded (raster_extent / core_m)^2 —
     well below memory limits — so a single end-of-TIFF write is simpler than
     incremental flushing and keeps the on-disk file a single Parquet object.
     """
