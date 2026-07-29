@@ -28,9 +28,9 @@ validation at a single fixed (factor, cutoff), see g2_validate_geojson.py.
 """
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
 
 import click
 import geopandas as gpd
@@ -89,7 +89,7 @@ def make_evaluator(grouped, scan_metrics, bests, trace, progress=None):
     rows_arr = pred_prepped["row"].to_numpy(dtype=np.int32)
     cols_arr = pred_prepped["col"].to_numpy(dtype=np.int32)
 
-    def evaluate(factor: float, cutoff: float) -> Optional[Dict[str, float]]:
+    def evaluate(factor: float, cutoff: float) -> dict[str, float] | None:
         keep = keep_mask_from_params(
             pred_prepped, factor=float(factor), cutoff=float(cutoff)
         )
@@ -146,14 +146,14 @@ def objective(evaluate: Callable, metric: str, factor: float, cutoff: float) -> 
 def optimize_metric(
     evaluate: Callable,
     metric: str,
-    bests: Dict[str, dict],
-    factor_bounds: Tuple[float, float],
-    cutoff_bounds: Tuple[float, float],
+    bests: dict[str, dict],
+    factor_bounds: tuple[float, float],
+    cutoff_bounds: tuple[float, float],
     n_probes: int,
     xtol_factor: float,
     xtol_cutoff: float,
     refine_maxiter: int,
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     """Ridge-aware search for one metric. Returns the fitted ridge (a, b).
 
     The "best" is tracked via side effects in `bests` — callers can read
@@ -164,7 +164,7 @@ def optimize_metric(
 
     # --- Phase 1: probe the ridge at n_probes factors ---
     probe_factors = np.linspace(fb_lo, fb_hi, n_probes)
-    ridge_pts: List[Tuple[float, float]] = []
+    ridge_pts: list[tuple[float, float]] = []
     for f in probe_factors:
         res = minimize_scalar(
             lambda c, _f=float(f): objective(evaluate, metric, _f, c),
@@ -220,8 +220,8 @@ def optimize_metric(
 
 def scan_tile(
     grouped,
-    factor_bounds: Tuple[float, float],
-    cutoff_bounds: Tuple[float, float],
+    factor_bounds: tuple[float, float],
+    cutoff_bounds: tuple[float, float],
     scan_metrics,
     n_probes: int,
     xtol_factor: float,
@@ -245,10 +245,10 @@ def scan_tile(
         }
         for m in scan_metrics
     }
-    trace: List[Dict[str, float]] = []
+    trace: list[dict[str, float]] = []
 
     evaluate = make_evaluator(grouped, scan_metrics, bests, trace, progress=progress)
-    ridges: Dict[str, Tuple[float, float]] = {}
+    ridges: dict[str, tuple[float, float]] = {}
     for m in scan_metrics:
         a, b = optimize_metric(
             evaluate=evaluate,
@@ -291,7 +291,7 @@ def plot_search_trace(
         values = np.array([t[metric] for t in trace], dtype=float)
         finite = np.isfinite(values)
         cmap = "viridis" if METRIC_DIRECTIONS[metric] == "max" else "viridis_r"
-        kwargs = dict(cmap=cmap, s=14)
+        kwargs = {"cmap": cmap, "s": 14}
         if metric == "spearman":
             kwargs.update(vmin=-1, vmax=1)
         sc = ax.scatter(factors[finite], cutoffs[finite], c=values[finite], **kwargs)
@@ -327,7 +327,7 @@ def plot_search_trace(
     plt.close(fig)
 
 
-def resolve_metrics(tuning_cfg: dict) -> Tuple[str, List[str]]:
+def resolve_metrics(tuning_cfg: dict) -> tuple[str, list[str]]:
     """Return (eval metric, metrics to track); the eval metric is always tracked."""
     metric = tuning_cfg.get("metric", "rms")
     metrics = list(tuning_cfg.get("metrics") or SCAN_METRICS_DEFAULT)
@@ -353,20 +353,20 @@ class ScanSettings:
     """Validated inputs of one threshold scan, extracted from the config."""
 
     input_path: str
-    pred_folder: Optional[str]  # pre-merge prediction files (date-stamped)
+    pred_folder: str | None  # pre-merge prediction files (date-stamped)
     master_grid: str
     reference: object  # config for build_reference_source
     out_dir: str
     best_params_path: str
     metric: str
-    scan_metrics: List[str]
-    factor_bounds: Tuple[float, float]
-    cutoff_bounds: Tuple[float, float]
+    scan_metrics: list[str]
+    factor_bounds: tuple[float, float]
+    cutoff_bounds: tuple[float, float]
     ridge_probes: int
     xtol_factor: float
     xtol_cutoff: float
     refine_maxiter: int
-    exclusion_zones: Optional[str]
+    exclusion_zones: str | None
 
     @property
     def base_name(self) -> str:
@@ -444,7 +444,7 @@ def _load_predictions(settings: ScanSettings, raster_crs) -> gpd.GeoDataFrame:
     return pred_gdf
 
 
-def _export_best(settings: ScanSettings, grouped, chosen, src_grid) -> Dict[str, float]:
+def _export_best(settings: ScanSettings, grouped, chosen, src_grid) -> dict[str, float]:
     """Write the rasters at the chosen optimum; return its final metrics."""
     pred_prepped = grouped["pred_prepped"]
     processed = process_grouped_cells(

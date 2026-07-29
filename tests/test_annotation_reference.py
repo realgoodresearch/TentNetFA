@@ -2,10 +2,10 @@
 
 import numpy as np
 import pytest
+from _helpers import CRS_UTM, CRS_WGS84, utm_to_lonlat, write_annotation_csv
 from rasterio.transform import from_origin
 from shapely.geometry import box
 
-from _helpers import CRS_UTM, CRS_WGS84, utm_to_lonlat, write_annotation_csv
 from displacement_tracker.evaluation.annotation_reference import (
     ManualAnnotationReferenceSource,
     _select_date,

@@ -21,13 +21,13 @@ from displacement_tracker.pipelines.spec import PREDICT, TRAIN, TUNE, Pipeline
 
 
 def _make_pipeline(**kwargs) -> Pipeline:
-    defaults = dict(
-        key="predict",
-        label="Test pipeline",
-        base_config="config.yaml",
-        stages=(),
-        params=(),
-    )
+    defaults = {
+        "key": "predict",
+        "label": "Test pipeline",
+        "base_config": "config.yaml",
+        "stages": (),
+        "params": (),
+    }
     defaults.update(kwargs)
     return Pipeline(**defaults)
 

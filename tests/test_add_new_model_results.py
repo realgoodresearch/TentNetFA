@@ -5,10 +5,10 @@ import numpy as np
 import pandas as pd
 import pytest
 import rasterio
-from shapely.geometry import Point
-
 from _helpers import CRS_UTM as UTM
 from _helpers import annotation_header, utm_to_lonlat, write_geotiff
+from shapely.geometry import Point
+
 from displacement_tracker.evaluation.scripts.add_new_model_results import (
     _unique_column_name,
     add_new_model_results,
