@@ -331,7 +331,7 @@ def cli(config, flow):
     """Run the image-only (no annotations) scan flow from a YAML config."""
     params = load_flow_config(config, flow)
     try:
-        require_keys(params, ("geotiff_dir", "processing"))
+        require_keys(params, ("geotiff_dir", "processing", "manifest_folder"))
     except KeyError as e:
         raise click.ClickException(str(e))
 
@@ -352,9 +352,7 @@ def cli(config, flow):
         max_tasks_per_child = int(max_tasks_per_child) or None
     max_pool_restarts = int(proc.get("max_pool_restarts", 3))
 
-    manifest_folder = params.get("manifest_folder")
-    if not manifest_folder:
-        raise click.ClickException("Missing required config key: manifest_folder")
+    manifest_folder = params["manifest_folder"]
 
     tif_files = collect_tif_files(params["geotiff_dir"], params)
     if not tif_files:
