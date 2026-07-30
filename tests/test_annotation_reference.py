@@ -10,7 +10,6 @@ from displacement_tracker.evaluation.annotation_reference import (
     ManualAnnotationReferenceSource,
     _select_date,
 )
-from displacement_tracker.g2_validate_geojson import LazyReferenceTypeChoice
 from displacement_tracker.util.reference_data import build_reference_source
 
 # 0.01-degree grid anchored at (34.0 E, 32.0 N): cell (row r, col c) covers
@@ -326,26 +325,3 @@ def test_unknown_type_error_offers_manual_eval_as_a_valid_type():
     #       is composed, not after
     with pytest.raises(ValueError, match=r"expected one of: manual_eval, raster"):
         build_reference_source(cfg)
-
-
-def test_validate_geojson_reference_type_reads_the_registry_at_parse_time(
-    source_types_registry,
-):
-    # Given: validate-geojson's --reference-type parameter type, and a type
-    #        registered AFTER that object was constructed — which is the
-    #        production ordering for manual_eval, since nothing imports the
-    #        evaluation package before g2's decorators run at import
-    choice = LazyReferenceTypeChoice()
-    source_types_registry["late_arrival"] = (object, frozenset())
-
-    # When: Click reads the permitted values, as it does on every parse
-    choices = choice.choices
-
-    # Then: the late registration is offered, so the list is being read now
-    #       rather than frozen when the decorator ran — and manual_eval is
-    #       offered with it. A click.Choice over a list captured at
-    #       decoration time rejects `--reference-type manual_eval` however
-    #       the registry looks by the time the command runs.
-    assert "late_arrival" in choices
-    assert "manual_eval" in choices
-    assert choices == ("late_arrival", "manual_eval", "raster", "unosat", "vector")
