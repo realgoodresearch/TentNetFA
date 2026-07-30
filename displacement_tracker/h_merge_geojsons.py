@@ -88,7 +88,8 @@ def load_points_from_geojson(path: Path) -> list[PredictedPoint]:
             continue
         lon, lat = float(coords[0]), float(coords[1])
         props = feat.get("properties") or {}
-        peak = float(props.get("peak_value", 0.0))
+        peak_raw = props.get("peak_value")
+        peak = float(peak_raw) if peak_raw is not None else 0.0
         adj_raw = props.get("adjusted_peak")
         # A point with no adjusted peak recorded was never adjusted.
         adj_peak = float(adj_raw) if adj_raw is not None else peak

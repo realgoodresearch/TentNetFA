@@ -405,7 +405,9 @@ def cli(
                 continue
 
             try:
-                grouped = prepare_grouped_cell_inputs(pred_gdf, val_gdf, src_grid)
+                grouped = prepare_grouped_cell_inputs(
+                    pred_gdf, val_gdf, src_grid, source=pred_file
+                )
             except Exception:
                 click.echo(f"Skipping {pred_file}: no overlap with master grid.")
                 continue

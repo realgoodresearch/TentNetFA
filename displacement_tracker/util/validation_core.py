@@ -70,8 +70,12 @@ def prepare_grouped_cell_inputs(
     val_gdf: gpd.GeoDataFrame,
     src_grid: rasterio.io.DatasetReader,
     nodata_val: float = -9999.0,
+    source: str | None = None,
 ) -> Dict[str, object]:
-    """Build one-time geometry/grid products and per-point cell assignments."""
+    """Build one-time geometry/grid products and per-point cell assignments.
+
+    ``source`` names the prediction file in fallback warnings.
+    """
     prediction_extent_geom = pred_gdf.union_all().convex_hull
 
     out_image, out_transform = mask.mask(
@@ -105,27 +109,30 @@ def prepare_grouped_cell_inputs(
         & (cols < grid_shape[1])
     )
 
-    # reindex materialises a missing column as NaN, so an absent
-    # adjustment_signal and a null one take the same path. The missing-field
-    # rules are the ones documented on PredictedPoint.
-    score_cols = ["peak_value", "adjusted_peak", "adjustment_signal"]
-    pred_prepped = pred_gdf.reindex(columns=score_cols).loc[in_bounds].copy()
-    pred_prepped["adjusted_peak"] = pred_prepped["adjusted_peak"].fillna(
-        pred_prepped["peak_value"]
+    # peak_value is required — selecting it by label keeps a file that lacks it
+    # raising, so callers go on skipping that tile instead of scoring it against
+    # an all-NaN column. reindex then materialises whichever of the optional
+    # columns the file omits as NaN, so "column absent" and "value null" take
+    # one path. The missing-field rules are the ones on PredictedPoint.
+    optional_cols = ["adjusted_peak", "adjustment_signal"]
+    in_bounds_gdf = pred_gdf.loc[in_bounds]
+    pred_prepped = in_bounds_gdf[["peak_value"]].join(
+        in_bounds_gdf.reindex(columns=optional_cols)
     )
+    adjusted_peak = pred_prepped.pop("adjusted_peak").fillna(pred_prepped["peak_value"])
+
     missing_signal = pred_prepped["adjustment_signal"].isna()
     if missing_signal.any():
         LOGGER.warning(
-            "%d/%d predictions carry no adjustment_signal; deriving it as "
+            "%s%d/%d predictions carry no adjustment_signal; deriving it as "
             "(adjusted_peak - peak_value), which assumes the predictions were "
             "made with selection.factor=1.0",
+            f"{source}: " if source else "",
             int(missing_signal.sum()),
             len(pred_prepped),
         )
         pred_prepped["adjustment_signal"] = pred_prepped["adjustment_signal"].fillna(
-            adjustment_signal_from_peaks(
-                pred_prepped["peak_value"], pred_prepped["adjusted_peak"]
-            )
+            adjustment_signal_from_peaks(pred_prepped["peak_value"], adjusted_peak)
         )
     pred_prepped["row"] = rows[in_bounds]
     pred_prepped["col"] = cols[in_bounds]

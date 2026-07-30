@@ -31,9 +31,10 @@ def validate_one_tile(
     src_grid: rasterio.io.DatasetReader,
     factor: float,
     cutoff: float,
+    source: str | None = None,
 ):
     """Run the full validation pipeline for one prediction/reference pair."""
-    grouped = prepare_grouped_cell_inputs(pred_gdf, val_gdf, src_grid)
+    grouped = prepare_grouped_cell_inputs(pred_gdf, val_gdf, src_grid, source=source)
     pred_prepped = grouped["pred_prepped"]
     keep = keep_mask_from_params(pred_prepped, factor=factor, cutoff=cutoff)
 
@@ -107,7 +108,8 @@ def cli(pred_dir, val_dir, master_grid, out_dir, exclusion_zones, factor, cutoff
 
             try:
                 grouped, processed, metrics = validate_one_tile(
-                    pred_gdf, val_gdf, src_grid, factor=factor, cutoff=cutoff
+                    pred_gdf, val_gdf, src_grid, factor=factor, cutoff=cutoff,
+                    source=pred_file,
                 )
             except Exception as exc:
                 click.echo(f"Skipping {pred_file}: {exc}")

@@ -6,6 +6,7 @@ from scipy.spatial import cKDTree
 
 from displacement_tracker.util.distance import haversine_m
 from displacement_tracker.util.logging_config import setup_logging
+from displacement_tracker.util.thresholding import PredictedPoint
 
 LOGGER = setup_logging("deduplication")
 
@@ -27,7 +28,9 @@ class UnionFind:
             self.parent[rb] = ra
 
 
-def merge_close_points_global(flat, min_distance_m=2.0, agreement: int = 1):
+def merge_close_points_global(
+    flat: list[PredictedPoint], min_distance_m=2.0, agreement: int = 1
+) -> list[PredictedPoint]:
     """
     Merge nearby PredictedPoints into one point per cluster.
     Each merged point sits at the cluster's centroid and carries the scores of
