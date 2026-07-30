@@ -58,6 +58,7 @@ from displacement_tracker.util.validation_core import (
     process_grouped_cells,
     write_output_rasters,
 )
+from displacement_tracker.util.zones import load_zone_geometry
 
 SCAN_METRICS_DEFAULT = ("rms", "mae", "abs_total_diff")
 LARGE_PENALTY = 1e12
@@ -376,8 +377,9 @@ class ScanSettings:
                 "tuning.exclusion_zones has been renamed to "
                 "tuning.inclusion_zones: the zones are the area predictions "
                 "are clipped *to*, not dropped inside. Rename the key in your "
-                "config (merge.exclusion_zones_gpkg is unrelated and keeps "
-                "its name)."
+                "config, or delete it if it is unset — archived run configs "
+                "carry it as null. (merge.exclusion_zones_gpkg is unrelated "
+                "and keeps its name.)"
             )
 
         input_path = require(params, "tuning.input", "merge.output")
@@ -429,10 +431,12 @@ def prediction_date(settings: ScanSettings):
 
 
 def _load_predictions(settings: ScanSettings, raster_crs) -> gpd.GeoDataFrame:
-    """Read the merged raw predictions, optionally clipped to the scan zones."""
+    """Read the merged raw predictions, optionally clipped to the inclusion zones."""
     pred_gdf = gpd.read_file(settings.input_path).to_crs(raster_crs)
-    if settings.inclusion_zones:
-        inclusion_geom = gpd.read_file(settings.inclusion_zones).geometry.union_all()
+    inclusion_geom = load_zone_geometry(
+        settings.inclusion_zones, "inclusion", raster_crs
+    )
+    if inclusion_geom is not None:
         pred_gdf = pred_gdf.clip(inclusion_geom)
     if pred_gdf.empty:
         raise click.ClickException(

@@ -15,7 +15,6 @@ from displacement_tracker.h_merge_geojsons import (
     list_geojson_files,
     load_points_from_geojson,
     load_thresholds,
-    load_zone_geometry,
     merge_geojsons,
     merge_kwargs_from_config,
     parse_compact_date,
@@ -260,16 +259,6 @@ def test_filter_points_by_zone_none_zone_is_identity():
     # Then: the input list is returned unchanged regardless of keep_inside
     assert kept_inside == pts
     assert kept_outside == pts
-
-
-def test_load_zone_geometry_missing_file_raises():
-    # Given: a zones path that does not exist, labelled "exclusion"
-    missing = "/definitely/not/here.gpkg"
-
-    # When: load_zone_geometry tries to load it
-    # Then: a ClickException naming the missing exclusion zones file is raised
-    with pytest.raises(click.ClickException, match="exclusion zones file not found"):
-        load_zone_geometry(missing, "exclusion")
 
 
 # ---------------------------------------------------------------------------

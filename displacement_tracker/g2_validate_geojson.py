@@ -31,6 +31,7 @@ from displacement_tracker.util.validation_core import (
     process_grouped_cells,
     write_output_rasters,
 )
+from displacement_tracker.util.zones import load_zone_geometry
 
 
 def validate_one_tile(
@@ -150,14 +151,13 @@ def cli(
         nearest_to=infer_target_date(pred_paths),
     )
 
-    inclusion_geom = None
-    if inclusion_zones:
-        inclusion_geom = gpd.read_file(inclusion_zones).geometry.union_all()
-
     results = []
 
     with rasterio.open(master_grid) as src_grid:
         raster_crs = src_grid.crs
+        # Loaded here, not before the open: the zones have to be reprojected
+        # onto the grid CRS the predictions are clipped in.
+        inclusion_geom = load_zone_geometry(inclusion_zones, "inclusion", raster_crs)
 
         for pred_path in pred_paths:
             pred_file = os.path.basename(pred_path)

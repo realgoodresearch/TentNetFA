@@ -120,7 +120,14 @@ PREDICT = Pipeline(
             "Processing",
             help="Minimum non-black/NaN fraction for a tile to be kept.",
         ),
-        Param("processing.max_workers", "Scan workers", "int", "Processing"),
+        Param(
+            "processing.max_workers",
+            "Scan workers",
+            "int",
+            "Processing",
+            help="Worker processes for the prediction scan "
+            "(0 = one per core, minus one).",
+        ),
         Param(
             "processing.max_tasks_per_child",
             "Tasks per worker",
