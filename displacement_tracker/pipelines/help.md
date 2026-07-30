@@ -72,7 +72,7 @@ flowchart TB
 ```mermaid
 flowchart TB
     preds["Prediction GeoJSONs<br/>(merge.input_folder — the preds/ folder<br/>of an earlier prediction run)"]
-    refdata["Reference data<br/>(tuning.reference:<br/>vector | unosat | raster)"]
+    refdata["Reference data<br/>(tuning.reference:<br/>vector | unosat | raster | manual_eval)"]
     grid["Master grid raster<br/>(tuning.master_grid)"]
     merge_raw["<b>merge_raw</b> — h_merge_geojsons<br/>merges & deduplicates WITHOUT thresholding<br/>(min_adj_peak 0, adjustment_factor 1)"]
     scan["<b>scan</b> — g1_scan_validation<br/>rasterizes predictions vs. reference on the master grid,<br/>ridge-aware search over (adjustment_factor, min_adj_peak)<br/>optimising tuning.metric"]
@@ -187,9 +187,9 @@ point and the tuned global threshold cannot be shadowed:
 | `merge.output` | Unthresholded merged predictions the scan runs on. **Runner-managed** → `merged_raw/merged_raw.gpkg`. |
 | `merge.min_distance_m`, `agreement`, zones | Same semantics as in the prediction pipeline; applied to both merge passes. |
 | `tuning.master_grid` | Grid raster the predictions and the reference data are resolved onto. |
-| `tuning.reference.type` | Reference source: `vector` (point annotations in any OGR-readable file), `unosat` (an export file, or a directory of exports + explicit `date`), or `raster` (counts already resolved on the master grid). |
-| `tuning.reference.path` | The annotation file / export / directory / raster. |
-| `tuning.reference.date` | Pins one export when the path is a directory (`unosat`; child directories are searched). Unset: the export dated closest to the dates stamped on the pre-merge prediction files is auto-discovered — logged with a warning so the implicit choice is visible. |
+| `tuning.reference.type` | Reference source: `vector` (point annotations in any OGR-readable file), `unosat` (an export file, or a directory of exports + explicit `date`), `raster` (counts already resolved on the master grid), or `manual_eval` (the manual tile annotations CSV). Unset: inferred from the path suffix. |
+| `tuning.reference.path` | The annotation file / export / directory / raster / annotation CSV. |
+| `tuning.reference.date` | Pins one export when the path is a directory (`unosat`; child directories are searched), or one acquisition date out of the annotation CSV (`manual_eval`, where it is required whenever the CSV spans several). Unset for `unosat`: the export dated closest to the dates stamped on the pre-merge prediction files is auto-discovered — logged with a warning so the implicit choice is visible. |
 | `tuning.reference.layer`, `where` | Optional layer name and OGR SQL attribute filter for vector sources. |
 | `tuning.metric` | Evaluation metric whose optimum becomes the tuned `(min_adj_peak, adjustment_factor)`: `rms`, `mae`, `rmsle`, `abs_total_diff`, `abs_total_pdiff` or `spearman`. |
 | `tuning.metrics` | Metrics tracked during the scan (the evaluation metric is always included). |

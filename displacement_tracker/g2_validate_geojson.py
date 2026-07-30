@@ -1,12 +1,12 @@
 """Direct validation of predicted GeoJSON/GPKG point sets against reference data.
 
 Every prediction file is validated against one explicitly selected reference
-source (point annotations, a UNOSAT export, or a counts raster resolved on
-the master grid — see ``util/reference_data.py``), rasterized onto the
-master grid restricted to the convex hull of the predictions. Per-file RMS,
-MAE, RMSLE, Spearman correlation, total counts and total difference are
-reported. A single (factor, cutoff) is applied to the predictions; for
-optimizing that parameter pair see g1_scan_validation.py.
+source (point annotations, a UNOSAT export, a counts raster resolved on the
+master grid, or the manual tile annotations — see ``util/reference_data.py``),
+rasterized onto the master grid restricted to the convex hull of the
+predictions. Per-file RMS, MAE, RMSLE, Spearman correlation, total counts and
+total difference are reported. A single (factor, cutoff) is applied to the
+predictions; for optimizing that parameter pair see g1_scan_validation.py.
 """
 
 import os
@@ -18,8 +18,8 @@ import pandas as pd
 import rasterio
 
 from displacement_tracker.util.reference_data import (
-    SOURCE_TYPES,
     ReferenceSource,
+    available_source_types,
     build_reference_source,
     infer_target_date,
 )
@@ -31,6 +31,28 @@ from displacement_tracker.util.validation_core import (
     process_grouped_cells,
     write_output_rasters,
 )
+
+
+class LazyReferenceTypeChoice(click.Choice):
+    """The reference-type registry as a Click choice, read at parse time.
+
+    ``SOURCE_TYPES`` gains its optional types when their modules are
+    imported, which ``available_source_types`` does on demand — after the
+    decorators below have already built this option object at import time.
+    A plain ``click.Choice(sorted(SOURCE_TYPES))`` freezes the list before
+    that happens, so Click rejects ``manual_eval`` however the registry
+    looks by the time the command runs.
+
+    ``click.Choice.__init__`` assigns ``choices``, which a property
+    forbids, so the two attributes it sets are set here instead.
+    """
+
+    def __init__(self, case_sensitive: bool = True) -> None:
+        self.case_sensitive = case_sensitive
+
+    @property
+    def choices(self) -> tuple[str, ...]:
+        return tuple(available_source_types())
 
 
 def validate_one_tile(
@@ -70,12 +92,13 @@ def validate_one_tile(
     type=click.Path(exists=True),
     required=True,
     help="Reference data: vector annotations (GeoJSON/GPKG/SHP), a UNOSAT "
-    "export (file, or directory + --reference-date), or a counts raster "
-    "on the master grid.",
+    "export (file, or directory + --reference-date), a counts raster "
+    "on the master grid, or the manual annotation CSV "
+    "(+ --reference-date to pick one acquisition date).",
 )
 @click.option(
     "--reference-type",
-    type=click.Choice(sorted(SOURCE_TYPES)),
+    type=LazyReferenceTypeChoice(),
     default=None,
     help="Reference source type (default: inferred from the path suffix).",
 )

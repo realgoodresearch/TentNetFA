@@ -626,15 +626,17 @@ def test_build_reference_source_infers_the_vector_type_from_the_suffix(tmp_path)
 
 
 def test_build_reference_source_rejects_an_uninferable_suffix():
-    # Given: a path whose suffix matches no registered source type
-    unknown_path = "table.csv"
+    # Given: a path whose suffix matches no source type at all — .csv is not
+    #        one of those, it infers the manual annotations (pinned in
+    #        test_annotation_reference.py)
+    unknown_path = "table.txt"
 
     # When: build_reference_source is given it with no explicit type
-    # Then: ValueError enumerates the registered types in sorted order. The
-    #       conftest fixture restores the built-in registry around every
-    #       test, so this exact message holds regardless of which other test
-    #       files pytest collected first.
-    with pytest.raises(ValueError, match="one of: raster, unosat, vector"):
+    # Then: ValueError enumerates every type the user may set, in sorted
+    #       order and including manual_eval — which lives outside
+    #       reference_data and is registered on demand, so this exact
+    #       message holds regardless of which files pytest collected first
+    with pytest.raises(ValueError, match="one of: manual_eval, raster, unosat, vector"):
         build_reference_source(unknown_path)
 
 
