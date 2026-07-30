@@ -24,7 +24,10 @@ import yaml
 from displacement_tracker.util.config import flow_option, load_flow_config
 from displacement_tracker.util.deduplication import merge_close_points_global
 from displacement_tracker.util.logging_config import setup_logging
-from displacement_tracker.util.thresholding import filter_points_by_adjusted_peak
+from displacement_tracker.util.thresholding import (
+    adjustment_signal_from_peaks,
+    filter_points_by_adjusted_peak,
+)
 
 LOGGER = setup_logging("merge_geojsons")
 
@@ -67,8 +70,10 @@ def resolve_threshold(
 def load_points_from_geojson(path: Path) -> list[tuple]:
     """
     Load all Point features from a GeoJSON file.
-    Returns a list of (lat, lon, peak_value, adjusted_peak) tuples.
-    adjusted_peak defaults to 0.0 when the field is absent.
+    Returns a list of (lat, lon, peak_value, adjusted_peak, adjustment_signal)
+    tuples. adjusted_peak defaults to 0.0 when the field is absent; the raw
+    adjustment signal falls back to (adjusted_peak - peak_value) for prediction
+    files written before it was carried through.
     """
     with path.open("r", encoding="utf-8") as f:
         gj = json.load(f)
@@ -86,7 +91,13 @@ def load_points_from_geojson(path: Path) -> list[tuple]:
         peak = float(props.get("peak_value", 0.0))
         adj_raw = props.get("adjusted_peak", 0.0)
         adj_peak = float(adj_raw) if adj_raw is not None else 0.0
-        points.append([lat, lon, peak, adj_peak])
+        signal_raw = props.get("adjustment_signal")
+        adj_signal = (
+            float(signal_raw)
+            if signal_raw is not None
+            else adjustment_signal_from_peaks(peak, adj_peak)
+        )
+        points.append([lat, lon, peak, adj_peak, adj_signal])
 
     return points
 
@@ -130,11 +141,11 @@ def filter_points_by_exclusion(points: list[tuple], exclusion_geom) -> list[tupl
         return points
 
     kept = []
-    for lat, lon, peak, adj_peak in points:
+    for lat, lon, peak, adj_peak, adj_signal in points:
         pt = Point(lon, lat)
         if exclusion_geom.contains(pt):
             continue
-        kept.append((lat, lon, peak, adj_peak))
+        kept.append((lat, lon, peak, adj_peak, adj_signal))
     return kept
 
 
@@ -144,16 +155,16 @@ def filter_points_by_inclusion(points: list[tuple], inclusion_geom) -> list[tupl
         return points
 
     kept = []
-    for lat, lon, peak, adj_peak in points:
+    for lat, lon, peak, adj_peak, adj_signal in points:
         pt = Point(lon, lat)
         if not inclusion_geom.contains(pt):
             continue
-        kept.append((lat, lon, peak, adj_peak))
+        kept.append((lat, lon, peak, adj_peak, adj_signal))
     return kept
 
 
 def save_merged_gpkg(points: list[tuple], out_path: Path) -> None:
-    """Save merged (lat, lon, peak, adj_peak) tuples to a GeoPackage file."""
+    """Save merged (lat, lon, peak, adj_peak, adj_signal) tuples to a GeoPackage."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     rows = [
@@ -162,8 +173,9 @@ def save_merged_gpkg(points: list[tuple], out_path: Path) -> None:
             "name": "tents",
             "peak_value": peak,
             "adjusted_peak": adj_peak,
+            "adjustment_signal": adj_signal,
         }
-        for lat, lon, peak, adj_peak in points
+        for lat, lon, peak, adj_peak, adj_signal in points
     ]
 
     gdf = gpd.GeoDataFrame(rows, crs="EPSG:4326")
@@ -247,8 +259,8 @@ def merge_geojsons(
         loaded = len(pts)
         pts = filter_points_by_adjusted_peak(pts, threshold, adjustment_factor)
         LOGGER.info(
-            "  %s: %d points loaded, %d kept (adj_peak >= %.4f)",
-            path.name, loaded, len(pts), threshold,
+            "  %s: %d points loaded, %d kept (peak + %.4g * adjustment_signal >= %.4f)",
+            path.name, loaded, len(pts), adjustment_factor, threshold,
         )
 
         if exclusion_geom is not None:

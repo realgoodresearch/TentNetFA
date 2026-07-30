@@ -29,9 +29,11 @@ class UnionFind:
 
 def merge_close_points_global(flat, min_distance_m=2.0, agreement: int = 1):
     """
-    Merge points across all flat (lat, lon, peak, adjusted_peak) centroids.
-    Returns a flat list of merged (lat, lon, peak, adjusted_peak) centroids.
-    Peak is the max peak within each cluster.
+    Merge points across all flat (lat, lon, peak, adjusted_peak, adjustment_signal)
+    centroids. Returns a flat list of merged centroids in the same shape.
+    Peak is the max peak within each cluster; the adjusted peak and the raw
+    adjustment signal are taken from that same max-peak member so the three
+    values stay consistent with each other.
     """
     n = len(flat)
     if n == 0:
@@ -73,8 +75,8 @@ def merge_close_points_global(flat, min_distance_m=2.0, agreement: int = 1):
         pair_log_every = 10_000
 
     for idx, (i, j) in enumerate(candidate_pairs, start=1):
-        lat_i, lon_i, _, _ = flat[i]
-        lat_j, lon_j, _, _ = flat[j]
+        lat_i, lon_i = flat[i][0], flat[i][1]
+        lat_j, lon_j = flat[j][0], flat[j][1]
         if haversine_m(lat_i, lon_i, lat_j, lon_j) <= min_distance_m:
             uf.union(i, j)
             unions += 1
@@ -113,20 +115,24 @@ def merge_close_points_global(flat, min_distance_m=2.0, agreement: int = 1):
         sum_lon = 0.0
         max_peak = 0.0
         max_adj_peak = 0.0
+        max_adj_signal = 0.0
 
         if len(members) < agreement:
             continue
 
         for m in members:
-            lat, lon, peak, adj_peak = flat[m]
+            lat, lon, peak, adj_peak, adj_signal = flat[m]
             sum_lat += lat
             sum_lon += lon
             if peak > max_peak:
                 max_peak = peak
                 max_adj_peak = adj_peak
+                max_adj_signal = adj_signal
 
         cnt = len(members)
-        merged.append((sum_lat / cnt, sum_lon / cnt, max_peak, max_adj_peak))
+        merged.append(
+            (sum_lat / cnt, sum_lon / cnt, max_peak, max_adj_peak, max_adj_signal)
+        )
 
     elapsed_s = time.perf_counter() - start_t
     LOGGER.info(

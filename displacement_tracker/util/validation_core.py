@@ -19,6 +19,7 @@ from rasterio.transform import rowcol
 from scipy.stats import spearmanr
 
 from displacement_tracker.util.thresholding import (
+    adjustment_signal_from_peaks,
     passes_threshold,
     rescale_adjusted_peak,
 )
@@ -102,6 +103,17 @@ def prepare_grouped_cell_inputs(
     )
 
     pred_prepped = pred_gdf.loc[in_bounds, ["peak_value", "adjusted_peak"]].copy()
+    # Fall back to the derived signal for prediction files written before the raw
+    # adjustment signal was carried through.
+    derived_signal = adjustment_signal_from_peaks(
+        pred_prepped["peak_value"], pred_prepped["adjusted_peak"]
+    )
+    if "adjustment_signal" in pred_gdf.columns:
+        pred_prepped["adjustment_signal"] = (
+            pred_gdf.loc[in_bounds, "adjustment_signal"].fillna(derived_signal)
+        )
+    else:
+        pred_prepped["adjustment_signal"] = derived_signal
     pred_prepped["row"] = rows[in_bounds]
     pred_prepped["col"] = cols[in_bounds]
 
@@ -150,11 +162,11 @@ def process_grouped_cells(
 def keep_mask_from_params(pred_prepped, factor: float, cutoff: float) -> np.ndarray:
     """Return a boolean keep-mask for predictions given a rescaling factor and cutoff.
 
-    The rescaled peak is `peak_value + factor * (adjusted_peak - peak_value)`;
-    a point is kept iff its rescaled peak is >= `cutoff`.
+    The rescaled peak is `peak_value + factor * adjustment_signal`; a point is
+    kept iff its rescaled peak is >= `cutoff`.
     """
     rescaled = rescale_adjusted_peak(
-        pred_prepped["peak_value"], pred_prepped["adjusted_peak"], factor
+        pred_prepped["peak_value"], pred_prepped["adjustment_signal"], factor
     )
     return passes_threshold(rescaled, cutoff).to_numpy()
 
