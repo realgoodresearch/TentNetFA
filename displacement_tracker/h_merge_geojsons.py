@@ -364,8 +364,9 @@ def merge_geojsons(
         raise click.ClickException(f"Input folder not found: {input_dir}")
 
     thresholds_data = load_thresholds(thresholds_config)
-    exclusion_geom = load_zone_geometry(exclusion_zones_gpkg, "exclusion")
-    inclusion_geom = load_zone_geometry(inclusion_zone, "inclusion")
+    # Merged prediction points are in lon/lat, so the zones are clipped there.
+    exclusion_geom = load_zone_geometry(exclusion_zones_gpkg, "exclusion", "EPSG:4326")
+    inclusion_geom = load_zone_geometry(inclusion_zone, "inclusion", "EPSG:4326")
 
     merge_kwargs = {
         "min_distance_m": min_distance_m,

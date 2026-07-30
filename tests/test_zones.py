@@ -31,8 +31,8 @@ def test_no_path_returns_none():
     # Given: no zones configured -- the shipped default for every zone key
     # When: the loader runs on None and on the empty string
     # Then: both mean "no clipping", not "clip to nothing"
-    assert load_zone_geometry(None, "inclusion") is None
-    assert load_zone_geometry("", "inclusion") is None
+    assert load_zone_geometry(None, "inclusion", GRID_CRS) is None
+    assert load_zone_geometry("", "inclusion", GRID_CRS) is None
 
 
 def test_missing_file_raises_naming_the_label(tmp_path):
@@ -42,7 +42,7 @@ def test_missing_file_raises_naming_the_label(tmp_path):
     # When: the loader tries to load it
     # Then: a ClickException names the missing exclusion zones file
     with pytest.raises(click.ClickException, match="exclusion zones file not found"):
-        load_zone_geometry(missing, "exclusion")
+        load_zone_geometry(missing, "exclusion", GRID_CRS)
 
 
 def test_empty_file_returns_none(tmp_path):
@@ -53,7 +53,7 @@ def test_empty_file_returns_none(tmp_path):
     # When: the loader runs
     # Then: it degrades to "no clipping" rather than to an empty mask, which
     #       would silently discard every prediction
-    assert load_zone_geometry(str(path), "inclusion") is None
+    assert load_zone_geometry(str(path), "inclusion", GRID_CRS) is None
 
 
 def test_geometry_is_reprojected_to_the_requested_crs(tmp_path):
@@ -73,15 +73,15 @@ def test_geometry_is_reprojected_to_the_requested_crs(tmp_path):
     assert len(preds.clip(geom)) == 2
 
 
-def test_default_crs_is_wgs84_for_the_merge_stage(tmp_path):
-    # Given: the same zone file, in a projected CRS this time
+def test_reprojects_a_projected_file_to_wgs84(tmp_path):
+    # Given: a zone file stored in the projected grid CRS this time
     points = [Point(636000, 3475000), Point(636500, 3475500)]
     path = tmp_path / "zones_utm.gpkg"
     _write_zone_around(path, points, GRID_CRS, buffer_deg=1000)
 
-    # When: the loader runs without a crs argument, as the merge stage calls
-    #       it -- merged predictions are in lon/lat
-    geom = load_zone_geometry(str(path), "exclusion")
+    # When: EPSG:4326 is requested, as the merge stage does -- merged
+    #       prediction points are in lon/lat
+    geom = load_zone_geometry(str(path), "exclusion", FILE_CRS)
 
     # Then: the geometry comes back in EPSG:4326. Gaza sits near 34.4E/31.4N,
     #       so degrees and UTM metres are unmistakable from the bounds.
