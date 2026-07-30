@@ -25,8 +25,9 @@ from displacement_tracker.util.config import flow_option, load_flow_config
 from displacement_tracker.util.deduplication import merge_close_points_global
 from displacement_tracker.util.logging_config import setup_logging
 from displacement_tracker.util.thresholding import (
+    PredictedPoint,
     adjustment_signal_from_peaks,
-    filter_points_by_adjusted_peak,
+    filter_points_by_rescaled_peak,
 )
 
 LOGGER = setup_logging("merge_geojsons")
@@ -67,18 +68,17 @@ def resolve_threshold(
     return global_threshold
 
 
-def load_points_from_geojson(path: Path) -> list[tuple]:
+def load_points_from_geojson(path: Path) -> list[PredictedPoint]:
     """
-    Load all Point features from a GeoJSON file.
-    Returns a list of (lat, lon, peak_value, adjusted_peak, adjustment_signal)
-    tuples. adjusted_peak defaults to 0.0 when the field is absent; the raw
-    adjustment signal falls back to (adjusted_peak - peak_value) for prediction
-    files written before it was carried through.
+    Load all Point features from a GeoJSON file, applying the missing-field
+    rules documented on PredictedPoint. Logs once per file when any point's
+    raw adjustment signal had to be derived rather than read.
     """
     with path.open("r", encoding="utf-8") as f:
         gj = json.load(f)
 
     points = []
+    derived_signals = 0
     for feat in gj.get("features", []):
         geom = feat.get("geometry") or {}
         if geom.get("type") != "Point":
@@ -89,15 +89,24 @@ def load_points_from_geojson(path: Path) -> list[tuple]:
         lon, lat = float(coords[0]), float(coords[1])
         props = feat.get("properties") or {}
         peak = float(props.get("peak_value", 0.0))
-        adj_raw = props.get("adjusted_peak", 0.0)
-        adj_peak = float(adj_raw) if adj_raw is not None else 0.0
+        adj_raw = props.get("adjusted_peak")
+        # A point with no adjusted peak recorded was never adjusted.
+        adj_peak = float(adj_raw) if adj_raw is not None else peak
         signal_raw = props.get("adjustment_signal")
-        adj_signal = (
-            float(signal_raw)
-            if signal_raw is not None
-            else adjustment_signal_from_peaks(peak, adj_peak)
+        if signal_raw is None:
+            adj_signal = adjustment_signal_from_peaks(peak, adj_peak)
+            derived_signals += 1
+        else:
+            adj_signal = float(signal_raw)
+        points.append(PredictedPoint(lat, lon, peak, adj_peak, adj_signal))
+
+    if derived_signals:
+        LOGGER.warning(
+            "  %s: %d/%d points carry no adjustment_signal; derived it as "
+            "(adjusted_peak - peak_value), which assumes the predictions were "
+            "made with selection.factor=1.0",
+            path.name, derived_signals, len(points),
         )
-        points.append([lat, lon, peak, adj_peak, adj_signal])
 
     return points
 
@@ -135,47 +144,33 @@ def load_zone_geometry(zones_path: str | None, label: str):
     return geom
 
 
-def filter_points_by_exclusion(points: list[tuple], exclusion_geom) -> list[tuple]:
-    """Drop points that lie inside exclusion geometry."""
-    if exclusion_geom is None:
+def filter_points_by_geometry(
+    points: list[PredictedPoint], geom, *, keep_inside: bool
+) -> list[PredictedPoint]:
+    """Keep points inside (or outside) ``geom``; a null geometry keeps everything."""
+    if geom is None:
         return points
 
-    kept = []
-    for lat, lon, peak, adj_peak, adj_signal in points:
-        pt = Point(lon, lat)
-        if exclusion_geom.contains(pt):
-            continue
-        kept.append((lat, lon, peak, adj_peak, adj_signal))
-    return kept
+    return [
+        point
+        for point in points
+        if bool(geom.contains(Point(point.lon, point.lat))) == keep_inside
+    ]
 
 
-def filter_points_by_inclusion(points: list[tuple], inclusion_geom) -> list[tuple]:
-    """Drop points that lie outside inclusion geometry."""
-    if inclusion_geom is None:
-        return points
-
-    kept = []
-    for lat, lon, peak, adj_peak, adj_signal in points:
-        pt = Point(lon, lat)
-        if not inclusion_geom.contains(pt):
-            continue
-        kept.append((lat, lon, peak, adj_peak, adj_signal))
-    return kept
-
-
-def save_merged_gpkg(points: list[tuple], out_path: Path) -> None:
-    """Save merged (lat, lon, peak, adj_peak, adj_signal) tuples to a GeoPackage."""
+def save_merged_gpkg(points: list[PredictedPoint], out_path: Path) -> None:
+    """Save merged points to a GeoPackage file."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     rows = [
         {
-            "geometry": Point(lon, lat),
+            "geometry": Point(point.lon, point.lat),
             "name": "tents",
-            "peak_value": peak,
-            "adjusted_peak": adj_peak,
-            "adjustment_signal": adj_signal,
+            "peak_value": point.peak_value,
+            "adjusted_peak": point.adjusted_peak,
+            "adjustment_signal": point.adjustment_signal,
         }
-        for lat, lon, peak, adj_peak, adj_signal in points
+        for point in points
     ]
 
     gdf = gpd.GeoDataFrame(rows, crs="EPSG:4326")
@@ -252,46 +247,29 @@ def merge_geojsons(
     exclusion_geom = load_zone_geometry(exclusion_zones_gpkg, "exclusion")
     inclusion_geom = load_zone_geometry(inclusion_zone, "inclusion")
 
-    flat: list[tuple] = []
+    flat: list[PredictedPoint] = []
     for path in geojson_files:
         pts = load_points_from_geojson(path)
         threshold = resolve_threshold(path.name, thresholds_data, min_adj_peak)
         loaded = len(pts)
-        pts = filter_points_by_adjusted_peak(pts, threshold, adjustment_factor)
+        pts = filter_points_by_rescaled_peak(pts, threshold, adjustment_factor)
         LOGGER.info(
             "  %s: %d points loaded, %d kept (peak + %.4g * adjustment_signal >= %.4f)",
             path.name, loaded, len(pts), adjustment_factor, threshold,
         )
 
-        if exclusion_geom is not None:
-            before_exclusion = len(pts)
-            pts = filter_points_by_exclusion(pts, exclusion_geom)
+        for geom, keep_inside, label in (
+            (exclusion_geom, False, "inside exclusion zones"),
+            (inclusion_geom, True, "outside the inclusion zone"),
+        ):
+            if geom is None:
+                continue
+            before = len(pts)
+            pts = filter_points_by_geometry(pts, geom, keep_inside=keep_inside)
             LOGGER.info(
-                "  %s: %d kept after exclusion filtering",
-                path.name,
-                len(pts),
+                "  %s: %d kept, %d removed %s",
+                path.name, len(pts), before - len(pts), label,
             )
-            if before_exclusion != len(pts):
-                LOGGER.info(
-                    "  %s: %d points removed by exclusion zones",
-                    path.name,
-                    before_exclusion - len(pts),
-                )
-
-        if inclusion_geom is not None:
-            before_inclusion = len(pts)
-            pts = filter_points_by_inclusion(pts, inclusion_geom)
-            LOGGER.info(
-                "  %s: %d kept after inclusion filtering",
-                path.name,
-                len(pts),
-            )
-            if before_inclusion != len(pts):
-                LOGGER.info(
-                    "  %s: %d points removed outside inclusion zone",
-                    path.name,
-                    before_inclusion - len(pts),
-                )
 
         flat.extend(pts)
 

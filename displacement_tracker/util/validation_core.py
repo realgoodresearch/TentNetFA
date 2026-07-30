@@ -18,11 +18,14 @@ from rasterio import features, mask
 from rasterio.transform import rowcol
 from scipy.stats import spearmanr
 
+from displacement_tracker.util.logging_config import setup_logging
 from displacement_tracker.util.thresholding import (
+    adjusted_peak_from_signal,
     adjustment_signal_from_peaks,
     passes_threshold,
-    rescale_adjusted_peak,
 )
+
+LOGGER = setup_logging("validation_core")
 
 
 # Direction of optimization for each metric: "min" = lower is better.
@@ -102,18 +105,28 @@ def prepare_grouped_cell_inputs(
         & (cols < grid_shape[1])
     )
 
-    pred_prepped = pred_gdf.loc[in_bounds, ["peak_value", "adjusted_peak"]].copy()
-    # Fall back to the derived signal for prediction files written before the raw
-    # adjustment signal was carried through.
-    derived_signal = adjustment_signal_from_peaks(
-        pred_prepped["peak_value"], pred_prepped["adjusted_peak"]
+    # reindex materialises a missing column as NaN, so an absent
+    # adjustment_signal and a null one take the same path. The missing-field
+    # rules are the ones documented on PredictedPoint.
+    score_cols = ["peak_value", "adjusted_peak", "adjustment_signal"]
+    pred_prepped = pred_gdf.reindex(columns=score_cols).loc[in_bounds].copy()
+    pred_prepped["adjusted_peak"] = pred_prepped["adjusted_peak"].fillna(
+        pred_prepped["peak_value"]
     )
-    if "adjustment_signal" in pred_gdf.columns:
-        pred_prepped["adjustment_signal"] = (
-            pred_gdf.loc[in_bounds, "adjustment_signal"].fillna(derived_signal)
+    missing_signal = pred_prepped["adjustment_signal"].isna()
+    if missing_signal.any():
+        LOGGER.warning(
+            "%d/%d predictions carry no adjustment_signal; deriving it as "
+            "(adjusted_peak - peak_value), which assumes the predictions were "
+            "made with selection.factor=1.0",
+            int(missing_signal.sum()),
+            len(pred_prepped),
         )
-    else:
-        pred_prepped["adjustment_signal"] = derived_signal
+        pred_prepped["adjustment_signal"] = pred_prepped["adjustment_signal"].fillna(
+            adjustment_signal_from_peaks(
+                pred_prepped["peak_value"], pred_prepped["adjusted_peak"]
+            )
+        )
     pred_prepped["row"] = rows[in_bounds]
     pred_prepped["col"] = cols[in_bounds]
 
@@ -165,7 +178,7 @@ def keep_mask_from_params(pred_prepped, factor: float, cutoff: float) -> np.ndar
     The rescaled peak is `peak_value + factor * adjustment_signal`; a point is
     kept iff its rescaled peak is >= `cutoff`.
     """
-    rescaled = rescale_adjusted_peak(
+    rescaled = adjusted_peak_from_signal(
         pred_prepped["peak_value"], pred_prepped["adjustment_signal"], factor
     )
     return passes_threshold(rescaled, cutoff).to_numpy()

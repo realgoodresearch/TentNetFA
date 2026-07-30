@@ -29,11 +29,9 @@ class UnionFind:
 
 def merge_close_points_global(flat, min_distance_m=2.0, agreement: int = 1):
     """
-    Merge points across all flat (lat, lon, peak, adjusted_peak, adjustment_signal)
-    centroids. Returns a flat list of merged centroids in the same shape.
-    Peak is the max peak within each cluster; the adjusted peak and the raw
-    adjustment signal are taken from that same max-peak member so the three
-    values stay consistent with each other.
+    Merge nearby PredictedPoints into one point per cluster.
+    Each merged point sits at the cluster's centroid and carries the scores of
+    its highest-peak member, so its three values stay consistent with each other.
     """
     n = len(flat)
     if n == 0:
@@ -52,8 +50,8 @@ def merge_close_points_global(flat, min_distance_m=2.0, agreement: int = 1):
 
     # Build a local metric projection so spatial indexing can cheaply find
     # candidate neighbors within min_distance_m.
-    lats = np.array([pt[0] for pt in flat], dtype=np.float64)
-    lons = np.array([pt[1] for pt in flat], dtype=np.float64)
+    lats = np.array([pt.lat for pt in flat], dtype=np.float64)
+    lons = np.array([pt.lon for pt in flat], dtype=np.float64)
 
     lat0_rad = math.radians(float(lats.mean()))
     meters_per_deg = (math.pi / 180.0) * 6371000.0
@@ -75,9 +73,8 @@ def merge_close_points_global(flat, min_distance_m=2.0, agreement: int = 1):
         pair_log_every = 10_000
 
     for idx, (i, j) in enumerate(candidate_pairs, start=1):
-        lat_i, lon_i = flat[i][0], flat[i][1]
-        lat_j, lon_j = flat[j][0], flat[j][1]
-        if haversine_m(lat_i, lon_i, lat_j, lon_j) <= min_distance_m:
+        pt_i, pt_j = flat[i], flat[j]
+        if haversine_m(pt_i.lat, pt_i.lon, pt_j.lat, pt_j.lon) <= min_distance_m:
             uf.union(i, j)
             unions += 1
 
@@ -111,27 +108,16 @@ def merge_close_points_global(flat, min_distance_m=2.0, agreement: int = 1):
     # compute centroid for each cluster (simple average of lat/lon)
     merged = []
     for members in clusters.values():
-        sum_lat = 0.0
-        sum_lon = 0.0
-        max_peak = 0.0
-        max_adj_peak = 0.0
-        max_adj_signal = 0.0
-
         if len(members) < agreement:
             continue
 
-        for m in members:
-            lat, lon, peak, adj_peak, adj_signal = flat[m]
-            sum_lat += lat
-            sum_lon += lon
-            if peak > max_peak:
-                max_peak = peak
-                max_adj_peak = adj_peak
-                max_adj_signal = adj_signal
-
-        cnt = len(members)
+        cluster = [flat[m] for m in members]
+        best = max(cluster, key=lambda pt: pt.peak_value)
         merged.append(
-            (sum_lat / cnt, sum_lon / cnt, max_peak, max_adj_peak, max_adj_signal)
+            best._replace(
+                lat=sum(pt.lat for pt in cluster) / len(cluster),
+                lon=sum(pt.lon for pt in cluster) / len(cluster),
+            )
         )
 
     elapsed_s = time.perf_counter() - start_t

@@ -143,7 +143,7 @@ manually.
 | `merge.min_distance_m` | Points closer than this (m) are merged into one tent. |
 | `merge.agreement` | Minimum cluster size to keep after merging (overlapping tiles vote). |
 | `merge.min_adj_peak` | Global adjusted-peak threshold applied before merging. |
-| `merge.adjustment_factor` | Factor applied to the raw `adjustment_signal` when filtering (`peak + factor × signal`). |
+| `merge.adjustment_factor` | Factor applied to the raw `adjustment_signal` when deciding what to keep (`peak + factor × signal`); the recorded values are not rewritten. |
 | `merge.thresholds_config` | Optional YAML with per-file adjusted-peak thresholds. |
 | `merge.exclusion_zones_gpkg`, `inclusion_zone` | Drop points inside / outside these geometries. |
 | `merge.input_folder` | Prediction GeoJSONs to merge; defaults to `prediction.output_folder`. |

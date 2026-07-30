@@ -70,7 +70,8 @@ def validate_one_tile(
     type=float,
     default=1.0,
     show_default=True,
-    help="Peak rescaling factor: 0 -> peak_value, 1 -> adjusted_peak.",
+    help="Weight of the raw adjustment signal: the peak is adjusted to "
+    "peak_value + factor * adjustment_signal (0 -> the raw peak).",
 )
 @click.option(
     "--cutoff",
