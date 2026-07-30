@@ -114,6 +114,15 @@ PREDICT = Pipeline(
         Param("processing.core_metres", "Tile core size (m)", "int", "Processing"),
         Param("processing.margin_metres", "Tile margin (m)", "int", "Processing"),
         Param(
+            "processing.pixel_metres",
+            "Pixel size (m)",
+            "float",
+            "Processing",
+            help="Ground sample distance of the imagery. Sets the prediction "
+            "crop and NMS sigma; rasters at a different resolution are "
+            "skipped by the scan stage.",
+        ),
+        Param(
             "processing.quality_thresholds.min_valid_fraction",
             "Min valid fraction",
             "float",
@@ -233,6 +242,14 @@ TRAIN = Pipeline(
         Param("prewar_gaza", "Pre-war reference raster", "path", "Inputs"),
         Param("processing.core_metres", "Tile core size (m)", "int", "Processing"),
         Param("processing.margin_metres", "Tile margin (m)", "int", "Processing"),
+        Param(
+            "processing.pixel_metres",
+            "Pixel size (m)",
+            "float",
+            "Processing",
+            help="Ground sample distance of the imagery. Rasters at a "
+            "different resolution are skipped by the scan stage.",
+        ),
         Param("processing.max_workers", "Scan workers", "int", "Processing"),
         Param(
             "processing.quality_thresholds.min_valid_fraction",

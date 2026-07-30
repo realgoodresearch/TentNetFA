@@ -127,6 +127,7 @@ manually.
 |---|---|
 | `processing.core_metres` | Side length (m) of a tile's core area — the region whose predictions/labels count. |
 | `processing.margin_metres` | Extra context (m) around the core; tiles overlap by this margin. Also drives the prediction crop (`crop_pixels`) and NMS sigma. |
+| `processing.pixel_metres` | Ground sample distance of the imagery (m/pixel, default `0.5`). Converts `margin_metres` into `crop_pixels` and the NMS sigma; the scan stages skip any raster whose own resolution differs from it by more than 0.25%, since its tiles would not be the same pixel size as the rest. |
 | `processing.quality_thresholds.min_valid_fraction` | Minimum non-black/NaN fraction for a tile to be kept (train: strict ~0.9; predict: loose ~0.1). |
 | `processing.max_workers`, `max_tasks_per_child`, `max_pool_restarts` | Scan parallelism (training scanner). |
 | `processing.complete` | Filenames processed in full, ignoring quality gates. |

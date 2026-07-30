@@ -13,6 +13,22 @@ from displacement_tracker.util.raster_processing import read_rgb
 
 LOGGER = setup_logging("tile_builder")
 
+# Ground sample distance of the imagery, in metres per pixel. Configured at
+# ``processing.pixel_metres``; this default keeps legacy flat configs — which
+# predate the key — resolving to the value they were written against.
+DEFAULT_PIXEL_METRES = 0.5
+
+# NMS blur sigma as a fraction of the margin, in pixels.
+NMS_SIGMA_FRACTION = 0.75
+
+# How far a raster's resolution may drift from ``pixel_metres`` before its
+# tiles stop being a fixed pixel size. Tiles are sized by
+# ``round(span_m / pixel_size)`` (see ``tile_pixel_size``), so at the 100 m
+# span in use this band tracks the one that still rounds to 200 px — the two
+# agree to within ~3e-6 m at the endpoints. A looser 1 % would admit
+# 198–202 px and let non-uniform batches through.
+PIXEL_METRES_TOLERANCE = 0.0025
+
 
 @dataclass(frozen=True)
 class TileWindow:
@@ -39,6 +55,54 @@ def tile_pixel_size(src, span_m: float) -> int:
     """Square tile side in pixels given a metric span and raster resolution."""
     px = abs(src.transform.a)
     return round(span_m / px)
+
+
+def resolve_pixel_metres(processing_cfg: dict | None) -> float:
+    """``processing.pixel_metres``, or the default when the key is absent."""
+    value = (processing_cfg or {}).get("pixel_metres")
+    if value is None:
+        return DEFAULT_PIXEL_METRES
+    pixel_metres = float(value)
+    if pixel_metres <= 0:
+        raise ValueError(
+            f"processing.pixel_metres must be positive, got {pixel_metres}."
+        )
+    return pixel_metres
+
+
+def derive_selection_geometry(
+    margin_metres: float, pixel_metres: float
+) -> tuple[int, float]:
+    """Return ``(crop_pixels, nms_sigma)`` for a margin, both in pixels.
+
+    ``crop_pixels`` is the margin expressed in pixels: prediction peaks inside
+    that band are discarded, so emission regions tile the map exactly.
+    """
+    crop_pixels = round(margin_metres / pixel_metres)
+    return crop_pixels, NMS_SIGMA_FRACTION * crop_pixels
+
+
+def pixel_size_mismatch(
+    src: rasterio.io.DatasetReader,
+    pixel_metres: float,
+    *,
+    tolerance: float = PIXEL_METRES_TOLERANCE,
+) -> str | None:
+    """Describe how ``src``'s resolution departs from ``pixel_metres``.
+
+    Returns ``None`` when the raster is within tolerance. Callers use the
+    message to warn and skip: a raster at a different resolution yields tiles
+    of a different pixel size, which nothing downstream batches together.
+    """
+    pixel_size = abs(src.transform.a)
+    if abs(pixel_size - pixel_metres) <= tolerance * pixel_metres:
+        return None
+    return (
+        f"pixel size {pixel_size:.6g} m departs from "
+        f"processing.pixel_metres={pixel_metres:.6g} m by more than "
+        f"{tolerance:.2%}; its tiles would not match the rest of the scan. "
+        "Resample the raster, or set processing.pixel_metres to its resolution."
+    )
 
 
 def compute_tile_window(

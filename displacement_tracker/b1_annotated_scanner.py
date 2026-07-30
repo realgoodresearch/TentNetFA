@@ -42,8 +42,11 @@ from displacement_tracker.util.scan_orchestrator import (
     run_scans,
 )
 from displacement_tracker.util.tile_builder import (
+    DEFAULT_PIXEL_METRES,
     _read_prewar_tile,
     compute_tile_window,
+    pixel_size_mismatch,
+    resolve_pixel_metres,
 )
 
 LOGGER = setup_logging("annotated_scanner")
@@ -217,9 +220,18 @@ def scan_grouped_coordinates(
     prewar_path: str | None = None,
     boundaries_path: str | None = None,
     complete_list: list[str] | None = None,
+    pixel_metres: float = DEFAULT_PIXEL_METRES,
 ) -> None:
     src = open_raster(geotiff_path)
     if src is None:
+        return
+
+    # Checked before the boundaries crop, which rewrites the source GeoTIFF
+    # in place — no point paying that for a raster we are about to skip.
+    mismatch = pixel_size_mismatch(src, pixel_metres)
+    if mismatch:
+        LOGGER.warning(f"Skipping {os.path.basename(geotiff_path)}: {mismatch}")
+        src.close()
         return
 
     if boundaries_path:
@@ -350,6 +362,10 @@ def cli(config, flow):
     proc = params["processing"]
     core_m = float(proc["core_metres"])
     margin_m = float(proc["margin_metres"])
+    try:
+        pixel_m = resolve_pixel_metres(proc)
+    except ValueError as exc:
+        raise click.ClickException(str(exc))
     quality_thresholds = proc["quality_thresholds"]
     complete_list = proc.get("complete", []) or []
     prewar_path = params.get("prewar_gaza")
@@ -378,6 +394,7 @@ def cli(config, flow):
             prewar_path,
             boundaries_path,
             complete_list,
+            pixel_m,
         )
 
     run_scans(tif_files, scan_one, manifest_folder=manifest_folder)
