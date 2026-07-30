@@ -61,9 +61,7 @@ from displacement_tracker.util.config import (
 # Spatial context layers, one per analysis that reads one.
 LAYER_NAMES = ("agriculture", "h3_density", "destruction")
 
-# Any of these being set marks the run as a new-model run; prediction_dir is
-# excluded because it falls back to prediction.output_folder, which a predict
-# config always sets.
+# prediction_dir excluded: it always resolves via its own fallback.
 NEW_MODEL_TRIGGER_KEYS = ("column", "sample_tif", "output_csv")
 
 
@@ -128,15 +126,12 @@ def cli(config: str, flow: str) -> None:
     }
 
     if new_model is not None:
-        # Join the new model's per-date predictions onto the annotations
-        # first, then evaluate the newly added column instead of whichever
-        # model_column the config or the CSV already carries.
+        # Evaluate the newly joined column instead of the CSV's own.
         common["annotation_csv"], common["model_column"] = add_new_model_results(
             annotation_csv=annotation_csv, **new_model
         )
 
-    # hex_size_m, if the config sets it; omitted lets the two hex analyses
-    # use their own signature default.
+    # hex_size_m, if the config sets it.
     hexes = forwarded(eval_cfg, "hex_size_m")
 
     click.echo("Running total error analysis...")
