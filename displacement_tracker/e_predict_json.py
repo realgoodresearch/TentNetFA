@@ -21,11 +21,12 @@ from displacement_tracker.util.deduplication import merge_close_points_global
 from displacement_tracker.util.distance import interpolate_centroid
 from displacement_tracker.util.logging_config import setup_logging
 from displacement_tracker.util.thresholding import passes_threshold
+from displacement_tracker.util.tile_builder import (
+    derive_selection_geometry,
+    resolve_pixel_metres,
+)
 
 LOGGER = setup_logging("predict_json")
-
-PIXEL_METRES = 0.5
-NMS_SIGMA_FRACTION = 0.75
 
 
 def extract_tile_centroids(probs_np, bounds, threshold, min_area, crop_pixels=0):
@@ -472,12 +473,16 @@ def cli(config, flow) -> None:
             "Missing required config key: processing.margin_metres"
         )
     margin_metres = float(processing_cfg["margin_metres"])
-    margin_pixels = round(margin_metres / PIXEL_METRES)
-    selection_cfg["crop_pixels"] = margin_pixels
-    selection_cfg["nms_sigma"] = NMS_SIGMA_FRACTION * margin_pixels
+    try:
+        pixel_metres = resolve_pixel_metres(processing_cfg)
+    except ValueError as exc:
+        raise click.ClickException(str(exc))
+    crop_pixels, nms_sigma = derive_selection_geometry(margin_metres, pixel_metres)
+    selection_cfg["crop_pixels"] = crop_pixels
+    selection_cfg["nms_sigma"] = nms_sigma
     LOGGER.info(
-        f"🔹 Derived crop_pixels={margin_pixels} and nms_sigma={selection_cfg['nms_sigma']:.2f} "
-        f"from processing.margin_metres={margin_metres}m (pixel size {PIXEL_METRES}m)."
+        f"🔹 Derived crop_pixels={crop_pixels} and nms_sigma={nms_sigma:.2f} "
+        f"from processing.margin_metres={margin_metres}m (pixel size {pixel_metres}m)."
     )
     batch_size = pred_cfg.get("batch_size", 12)
     num_workers = pred_cfg.get("num_workers", 4)

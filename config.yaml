@@ -23,6 +23,10 @@ shared:
     # so it is defined once here.
     core_metres: 70
     margin_metres: 15
+    # Ground sample distance of the imagery (metres per pixel). Sets the
+    # prediction crop and NMS sigma, and rasters whose resolution differs
+    # from it are skipped by both scan stages.
+    pixel_metres: 0.5
 
 train:
   # Annotated GeoTIFFs (download stage writes here, scan stage reads).

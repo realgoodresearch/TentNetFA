@@ -38,8 +38,11 @@ from displacement_tracker.util.scan_orchestrator import (
     run_scans,
 )
 from displacement_tracker.util.tile_builder import (
+    DEFAULT_PIXEL_METRES,
     _read_prewar_tile,
     compute_tile_window,
+    pixel_size_mismatch,
+    resolve_pixel_metres,
 )
 
 LOGGER = setup_logging("image_scanner")
@@ -158,6 +161,7 @@ def scan_all_coordinates(
     batch_size: int = 64,
     max_tasks_per_child: int | None = 32,
     max_pool_restarts: int = 3,
+    pixel_metres: float = DEFAULT_PIXEL_METRES,
 ) -> None:
     base_name = os.path.basename(geotiff_path)
     LOGGER.info(
@@ -167,6 +171,12 @@ def scan_all_coordinates(
 
     src = open_raster(geotiff_path)
     if src is None:
+        return
+
+    mismatch = pixel_size_mismatch(src, pixel_metres)
+    if mismatch:
+        LOGGER.warning(f"Skipping {base_name}: {mismatch}")
+        src.close()
         return
 
     src_means, src_stds = compute_standardisation_stats(src)
@@ -338,6 +348,10 @@ def cli(config, flow):
     proc = params["processing"]
     core_m = float(proc["core_metres"])
     margin_m = float(proc["margin_metres"])
+    try:
+        pixel_m = resolve_pixel_metres(proc)
+    except ValueError as exc:
+        raise click.ClickException(str(exc))
     quality_thresholds = proc.get("quality_thresholds") or {}
     min_valid_fraction = (
         quality_thresholds.get("min_valid_fraction", 0.0)
@@ -375,6 +389,7 @@ def cli(config, flow):
             batch_size=batch_size,
             max_tasks_per_child=max_tasks_per_child,
             max_pool_restarts=max_pool_restarts,
+            pixel_metres=pixel_m,
         )
 
     run_scans(tif_files, scan_one, manifest_folder=manifest_folder)
