@@ -331,7 +331,8 @@ TUNE = Pipeline(
             optional=True,
             help="YYYY-MM-DD; pins one export when the path is a directory, "
             "or one acquisition date out of the annotation CSV "
-            "(manual_eval). Empty: the export closest to the dates "
+            "(manual_eval, where it is required whenever the CSV spans "
+            "several). Empty for unosat: the export closest to the dates "
             "stamped on the prediction files is auto-discovered (with a "
             "warning).",
         ),
