@@ -3,10 +3,10 @@
 
 The unthresholded merged predictions (``merge.output`` of the tune flow) are
 validated against an explicitly configured reference source (point
-annotations, a UNOSAT export, or a counts raster on the master grid — see
-``util/reference_data.py``) while sweeping the thresholding pair the merge
-stage calls (``adjustment_factor``, ``min_adj_peak``) and the scan calls
-(factor, cutoff).
+annotations, a UNOSAT export, a counts raster on the master grid, or the
+manual tile annotations — see ``util/reference_data.py``) while sweeping the
+thresholding pair the merge stage calls (``adjustment_factor``,
+``min_adj_peak``) and the scan calls (factor, cutoff).
 
 For a fixed factor, the best cutoff is approximately linear in factor; off that
 ridge the metric degrades on either side. We exploit that structure instead of

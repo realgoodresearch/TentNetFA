@@ -133,7 +133,7 @@ Hyperparameter tuning pipeline (the `tune` section of `config.yaml`) — the typ
 ```mermaid
 flowchart TB
     preds["Prediction GeoJSONs<br/>(merge.input_folder — the preds/ folder<br/>of an earlier prediction run)"]
-    refdata["Reference data<br/>(tuning.reference:<br/>vector | unosat | raster)"]
+    refdata["Reference data<br/>(tuning.reference:<br/>vector | unosat | raster | manual_eval)"]
     grid["Master grid raster<br/>(tuning.master_grid)"]
     merge_raw["<b>merge_raw</b> — h_merge_geojsons<br/>merges & deduplicates WITHOUT thresholding"]
     scan["<b>scan</b> — g1_scan_validation<br/>rasterizes predictions vs. reference on the master grid,<br/>searches (adjustment_factor, min_adj_peak) optimising tuning.metric"]
@@ -300,7 +300,7 @@ tune:
     adjustment_factor: 1.0
   tuning:
     master_grid: ${DATA_DIR}/data/master_grid_100m.tif
-    reference:                  # vector | unosat | raster ground truth
+    reference:                  # vector | unosat | raster | manual_eval
       type: unosat
       path: ${DATA_DIR}/data/reference/unosat
       date: 2026-02-15          # explicit selection — no timestamp inference

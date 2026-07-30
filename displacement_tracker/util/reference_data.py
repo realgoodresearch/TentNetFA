@@ -358,9 +358,9 @@ def build_reference_source(cfg, nearest_to: datetime | None = None) -> Reference
     """Build a :class:`ReferenceSource` from config.
 
     ``cfg`` is either a bare path (type inferred from the suffix) or a
-    mapping with ``path``, optional ``type`` and any type-specific keys
-    (``date``, ``layer``, ``where``, ``band``). ``None`` values are treated
-    as unset so optional keys can be left as ``null`` in YAML.
+    mapping with ``path``, optional ``type`` and any of the type-specific
+    keys :data:`SOURCE_TYPES` lists for that type. ``None`` values are
+    treated as unset so optional keys can be left as ``null`` in YAML.
 
     ``nearest_to`` is runtime context from the calling code — the date
     stamped on the prediction files being validated; it is never read from

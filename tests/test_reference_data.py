@@ -633,9 +633,7 @@ def test_build_reference_source_rejects_an_uninferable_suffix():
 
     # When: build_reference_source is given it with no explicit type
     # Then: ValueError enumerates every type the user may set, in sorted
-    #       order and including manual_eval — which lives outside
-    #       reference_data and is registered on demand, so this exact
-    #       message holds regardless of which files pytest collected first
+    #       order and including manual_eval
     with pytest.raises(ValueError, match="one of: manual_eval, raster, unosat, vector"):
         build_reference_source(unknown_path)
 

@@ -83,9 +83,10 @@ def validate_one_tile(
 @click.option(
     "--reference-date",
     default=None,
-    help="Selects one export when --reference is a directory (unosat type). "
-    "If omitted, the export closest to the dates stamped on the "
-    "prediction files is auto-discovered (with a warning).",
+    help="Selects one export when --reference is a directory (unosat), or "
+    "one acquisition date out of the annotation CSV (manual_eval). "
+    "If omitted for unosat, the export closest to the dates stamped on "
+    "the prediction files is auto-discovered (with a warning).",
 )
 @click.option(
     "--reference-layer",
