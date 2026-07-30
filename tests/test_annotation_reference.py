@@ -255,14 +255,6 @@ def test_custom_count_column(tmp_path):
 # ==========================================================
 # Reachability as the "manual_eval" reference type
 # ==========================================================
-#
-# Every test below runs with "manual_eval" ABSENT from
-# reference_data.SOURCE_TYPES: the conftest fixture restores the registry to
-# the types reference_data defines itself, and this module is already
-# imported by then, so its import side effects cannot put the type back.
-# That is the production situation too — a config-driven flow imports
-# nothing from the evaluation package — so these pin the on-demand
-# registration, not just the tuple shape.
 
 
 def test_manual_eval_config_builds_a_source_matching_direct_construction(tmp_path):
@@ -279,7 +271,8 @@ def test_manual_eval_config_builds_a_source_matching_direct_construction(tmp_pat
     direct = ManualAnnotationReferenceSource(csv, date="2024-10-14")
 
     # When: the same source is resolved through the config interface, which
-    #       unpacks the registry entry as (factory, allowed options)
+    #       unpacks the registry entry as (factory, allowed options) and
+    #       threads the type-specific options through to the constructor
     built = build_reference_source(
         {"type": "manual_eval", "path": csv, "date": "2024-10-14"}
     )
@@ -312,16 +305,3 @@ def test_csv_suffix_infers_the_manual_eval_type(tmp_path):
     assert isinstance(source, ManualAnnotationReferenceSource)
     assert counts[0, 0] == pytest.approx(5.0)
     assert counts.sum() == pytest.approx(5.0)
-
-
-def test_unknown_type_error_offers_manual_eval_as_a_valid_type():
-    # Given: a config naming a type that no module registers
-    cfg = {"path": "x.geojson", "type": "satellite"}
-
-    # When: build_reference_source rejects it
-    # Then: the message names manual_eval among the types the user may set
-    #       instead — the list is built from the registry, so a type living
-    #       outside reference_data has to be registered before the message
-    #       is composed, not after
-    with pytest.raises(ValueError, match=r"expected one of: manual_eval, raster"):
-        build_reference_source(cfg)

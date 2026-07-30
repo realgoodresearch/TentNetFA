@@ -14,11 +14,8 @@ Two ways to consume it:
    reference type — useful for handing one date's counts to external
    tooling, or pinning them as a fixed input.
 
-2. Directly, as reference type ``manual_eval``. Importing this module
-   registers the type in ``util/reference_data.py``'s ``SOURCE_TYPES``, and
-   ``build_reference_source`` imports this module on demand, so the type is
-   reachable from config- and CLI-driven flows without anything importing
-   the evaluation package first::
+2. Directly, as reference type ``manual_eval``, which
+   ``util/reference_data.py`` resolves to the class below::
 
        reference:
          type: manual_eval
@@ -49,10 +46,7 @@ from rasterio.enums import MergeAlg
 
 from displacement_tracker.evaluation.scripts.common import as_points, read_annotations
 from displacement_tracker.util.logging_config import setup_logging
-from displacement_tracker.util.reference_data import (
-    SOURCE_TYPES,
-    ReferenceSource,
-)
+from displacement_tracker.util.reference_data import ReferenceSource
 
 LOGGER = setup_logging("annotation_reference")
 
@@ -145,29 +139,6 @@ def _select_date(
             f"No annotations dated {date} in {csv_path}. Available: {available}"
         )
     return selected
-
-
-def register() -> None:
-    """Register ``manual_eval`` in ``reference_data.SOURCE_TYPES``.
-
-    The value is `(factory, options accepted besides path)` — the same tuple
-    contract ``build_reference_source`` unpacks for every built-in type. The
-    option set is every constructor keyword, so a CSV that does not use the
-    default column names is still configurable.
-
-    This is a function rather than a bare assignment at import so that
-    ``reference_data._ensure_optional_types`` can *re-establish* the
-    registration, not merely trigger it: importing an already-imported
-    module runs no side effects, so an import alone cannot restore a
-    registry something else has cleared. Calling it repeatedly is a no-op.
-    """
-    SOURCE_TYPES["manual_eval"] = (
-        ManualAnnotationReferenceSource,
-        frozenset({"date", "count_column", "lat_column", "lon_column", "date_column"}),
-    )
-
-
-register()
 
 
 @click.command()

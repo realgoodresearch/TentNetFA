@@ -18,8 +18,8 @@ import pandas as pd
 import rasterio
 
 from displacement_tracker.util.reference_data import (
+    SOURCE_TYPES,
     ReferenceSource,
-    available_source_types,
     build_reference_source,
     infer_target_date,
 )
@@ -31,28 +31,6 @@ from displacement_tracker.util.validation_core import (
     process_grouped_cells,
     write_output_rasters,
 )
-
-
-class LazyReferenceTypeChoice(click.Choice):
-    """The reference-type registry as a Click choice, read at parse time.
-
-    ``SOURCE_TYPES`` gains its optional types when their modules are
-    imported, which ``available_source_types`` does on demand — after the
-    decorators below have already built this option object at import time.
-    A plain ``click.Choice(sorted(SOURCE_TYPES))`` freezes the list before
-    that happens, so Click rejects ``manual_eval`` however the registry
-    looks by the time the command runs.
-
-    ``click.Choice.__init__`` assigns ``choices``, which a property
-    forbids, so the two attributes it sets are set here instead.
-    """
-
-    def __init__(self, case_sensitive: bool = True) -> None:
-        self.case_sensitive = case_sensitive
-
-    @property
-    def choices(self) -> tuple[str, ...]:
-        return tuple(available_source_types())
 
 
 def validate_one_tile(
@@ -98,7 +76,7 @@ def validate_one_tile(
 )
 @click.option(
     "--reference-type",
-    type=LazyReferenceTypeChoice(),
+    type=click.Choice(sorted(SOURCE_TYPES)),
     default=None,
     help="Reference source type (default: inferred from the path suffix).",
 )

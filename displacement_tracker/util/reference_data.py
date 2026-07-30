@@ -34,15 +34,11 @@ Source types (see ``SOURCE_TYPES``):
     The manually annotated tiles
     (``evaluation/manual_eval/manual_annotation_results.csv``): each
     annotated tile's count lands in the cell containing its centroid.
-    Registered by ``evaluation.annotation_reference``, which
-    :func:`_ensure_optional_types` imports on demand — so config-driven
-    flows reach it without importing the evaluation package themselves.
     ``date`` picks one acquisition date; the CSV spans several.
 """
 
 from __future__ import annotations
 
-import importlib
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
@@ -64,7 +60,7 @@ VECTOR_SUFFIXES = (".geojson", ".json", ".gpkg", ".shp", ".fgb", ".gdb")
 RASTER_SUFFIXES = (".tif", ".tiff", ".vrt")
 # The manual annotation CSV is the only tabular reference format, so a .csv
 # reference is unambiguously the manual_eval type.
-ANNOTATION_SUFFIXES = (".csv",)
+CSV_SUFFIX = ".csv"
 
 _DATE_PATTERN = re.compile(r"(\d{4}-\d{2}-\d{2})|(\d{8})")
 
@@ -320,50 +316,28 @@ def rasterize_point_counts(
     )
 
 
+def _manual_annotation_source(path: str, **options) -> ReferenceSource:
+    # Imported here, not at module scope: the class reads the evaluation
+    # package's annotation CSV, so it lives there, and that package imports
+    # this one for `ReferenceSource`.
+    from displacement_tracker.evaluation.annotation_reference import (
+        ManualAnnotationReferenceSource,
+    )
+
+    return ManualAnnotationReferenceSource(path, **options)
+
+
 # type name -> (factory, options it accepts besides `path`). The option
 # sets are the whole config contract, stated in one place.
 SOURCE_TYPES = {
     "vector": (VectorReferenceSource, frozenset({"layer", "where"})),
     "unosat": (UnosatReferenceSource, frozenset({"date", "layer", "where"})),
     "raster": (RasterReferenceSource, frozenset({"band"})),
+    "manual_eval": (
+        _manual_annotation_source,
+        frozenset({"date", "count_column", "lat_column", "lon_column", "date_column"}),
+    ),
 }
-
-
-# Modules implementing source types that cannot live here. `manual_eval`
-# reads the evaluation package's annotation CSV, so it belongs in that
-# package — and this module cannot import it at module level without a
-# cycle. Each exposes a `register()` that adds its types to SOURCE_TYPES.
-_OPTIONAL_TYPE_MODULES = ("displacement_tracker.evaluation.annotation_reference",)
-
-
-def _ensure_optional_types() -> None:
-    """Register the source types implemented outside this module.
-
-    Called before the registry is consulted for a type it does not hold, and
-    before it is enumerated for the user, so ``manual_eval`` is both
-    reachable from a plain ``reference:`` block and listed among the valid
-    types — without anything in a config-driven flow having to import the
-    evaluation package itself.
-
-    ``register()`` is called explicitly rather than relying on the import's
-    side effects: importing an already-imported module runs nothing, so an
-    import alone could not restore a registry something else had cleared.
-    Both calls are idempotent, so this costs a ``sys.modules`` lookup and a
-    dict assignment per call.
-    """
-    for module in _OPTIONAL_TYPE_MODULES:
-        importlib.import_module(module).register()
-
-
-def available_source_types() -> list[str]:
-    """Every reference type a config or CLI may name, in sorted order.
-
-    Registers the optional types first, so the answer does not depend on
-    what has already been imported — which is what lets a CLI offer
-    ``manual_eval`` and an error message list it.
-    """
-    _ensure_optional_types()
-    return sorted(SOURCE_TYPES)
 
 
 def _infer_type(path: str) -> str:
@@ -372,11 +346,11 @@ def _infer_type(path: str) -> str:
         return "raster"
     if suffix in VECTOR_SUFFIXES:
         return "vector"
-    if suffix in ANNOTATION_SUFFIXES:
+    if suffix == CSV_SUFFIX:
         return "manual_eval"
     raise ValueError(
         f"Cannot infer reference type from {path!r}; set reference.type "
-        f"to one of: {', '.join(available_source_types())}."
+        f"to one of: {', '.join(sorted(SOURCE_TYPES))}."
     )
 
 
@@ -407,19 +381,12 @@ def build_reference_source(cfg, nearest_to: datetime | None = None) -> Reference
     if not path:
         raise ValueError("Reference config is missing required key: path")
     source_type = cfg.pop("type", None) or _infer_type(path)
-    if source_type not in SOURCE_TYPES:
-        # A type implemented outside this module is absent from the registry
-        # until its module is imported. Do that and retry before calling the
-        # type unknown — this is what makes `type: manual_eval` work from a
-        # config-driven flow, which imports nothing from the evaluation
-        # package itself.
-        _ensure_optional_types()
     try:
         factory, allowed = SOURCE_TYPES[source_type]
     except KeyError:
         raise ValueError(
             f"Unknown reference type {source_type!r}; expected one of: "
-            f"{', '.join(available_source_types())}."
+            f"{', '.join(sorted(SOURCE_TYPES))}."
         ) from None
     # Only pass what the type understands, so options left over from
     # another type (e.g. a unosat `date` after switching to vector) don't
