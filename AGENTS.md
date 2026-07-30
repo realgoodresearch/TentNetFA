@@ -12,7 +12,7 @@ run it end to end.
 | `displacement_tracker/` | All source. Stage modules are ordered by pipeline position (`a_tif_loader`, `b2_image_scanner`, … `h_merge_geojsons`, `i_zonal_point_sums`). |
 | `displacement_tracker/util/` | Shared logic: config resolution, thresholding, deduplication, reference data, validation. |
 | `displacement_tracker/pipelines/` | Pipeline specs and the two frontends (Streamlit UI, `pipeline-run` CLI) that render from them. |
-| `displacement_tracker/evaluation/` | The standalone analysis suite scoring predictions against manual annotations. |
+| `displacement_tracker/evaluation/` | The analysis suite scoring predictions against manual annotations, configured from the `evaluation` section of the predict flow. |
 | `tests/` | Unit tests. **See [`docs/test-patterns.md`](docs/test-patterns.md) before adding any.** |
 | `config.yaml` | Single config for every flow, in `shared` / `train` / `predict` / `tune` sections. |
 

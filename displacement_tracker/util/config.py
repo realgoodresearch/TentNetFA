@@ -60,6 +60,28 @@ def deep_merge(base: dict, extra: dict) -> dict:
     return base
 
 
+def require(cfg: dict, *dotted: str):
+    """First value set at one of ``dotted``, or fail naming all of them.
+
+    Empty counts as missing, so a path resolving to ``""`` is rejected the
+    same as one that is absent.
+    """
+    for path in dotted:
+        value = deep_get(cfg, path)
+        if value:
+            return value
+    fallbacks = f" (or {' / '.join(dotted[1:])} as fallback)" if dotted[1:] else ""
+    raise click.ClickException(f"Missing required config key: {dotted[0]}{fallbacks}")
+
+
+def forwarded(cfg: dict, *keys: str) -> dict:
+    """Only the keys ``cfg`` sets non-null, so callee defaults hold.
+
+    Unlike ``require``, ``0``/``False`` count as set, not missing.
+    """
+    return {key: cfg[key] for key in keys if cfg.get(key) is not None}
+
+
 def is_sectioned_config(config: dict) -> bool:
     """True if the config uses the sectioned shared/per-flow layout."""
     return isinstance(config, dict) and any(key in config for key in _SECTION_KEYS)

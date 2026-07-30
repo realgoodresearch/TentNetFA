@@ -135,6 +135,25 @@ predict:
     thresholds_config: null     # optional YAML with per-file adj_peak thresholds
     exclusion_zones_gpkg: null  # drop points inside these geometries
     inclusion_zone: null        # drop points outside this geometry
+  evaluation:
+    # Scores predictions against the manually annotated tiles; boundary layer comes from shared.boundaries.
+    annotation_csv: displacement_tracker/evaluation/manual_eval/manual_annotation_results.csv
+    # Gitignored; CSV summaries and plots land here.
+    output_dir: displacement_tracker/evaluation/results
+    # ~40 MB, deliberately not committed — see the README's 'Evaluate Model Predictions' section.
+    layers:
+      agriculture: displacement_tracker/evaluation/spatial_data/layers/agriculture.json
+      h3_density: displacement_tracker/evaluation/spatial_data/layers/h3_density.json
+      destruction: displacement_tracker/evaluation/spatial_data/layers/destruction.json
+    # hex_size_m: 1000.0        # hex diameter for the two hex analyses
+    # manual_column: manual_tent_count   # ground-truth counts
+    # model_column: model_tent_count     # counts to score against them
+    # Uncomment to score a new model: its counts are joined onto the annotations before evaluating.
+    # new_model:
+    #   column: model_beta2.0        # name for the added count column
+    #   sample_tif: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/tiffs/example.tif
+    #   output_csv: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/evaluation/annotations_with_new_model.csv
+    #   prediction_dir: null   # defaults to prediction.output_folder
 
 tune:
   merge:

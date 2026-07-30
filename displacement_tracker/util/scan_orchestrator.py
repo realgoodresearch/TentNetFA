@@ -64,6 +64,9 @@ def run_scans(
 
 
 def require_keys(params: dict[str, Any], keys: tuple[str, ...]) -> None:
+    """Like ``util.config.require``, but raises ``KeyError``: this runs in a
+    worker process/pool, not a Click CLI, so a ``ClickException`` would not
+    be handled — it needs to propagate as a plain exception."""
     for key in keys:
         if key not in params:
             raise KeyError(f"Missing required config key: {key}")
