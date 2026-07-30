@@ -359,7 +359,7 @@ class ScanSettings:
     xtol_factor: float
     xtol_cutoff: float
     refine_maxiter: int
-    exclusion_zones: str | None
+    inclusion_zones: str | None  # predictions are clipped to this union
 
     @property
     def base_name(self) -> str:
@@ -370,6 +370,15 @@ class ScanSettings:
         """Extract and validate the scan settings from a resolved (flat) config."""
         tuning = params.get("tuning") or {}
         merge_cfg = params.get("merge") or {}
+
+        if "exclusion_zones" in tuning:
+            raise click.ClickException(
+                "tuning.exclusion_zones has been renamed to "
+                "tuning.inclusion_zones: the zones are the area predictions "
+                "are clipped *to*, not dropped inside. Rename the key in your "
+                "config (merge.exclusion_zones_gpkg is unrelated and keeps "
+                "its name)."
+            )
 
         input_path = require(params, "tuning.input", "merge.output")
         out_dir = tuning.get("out_dir") or "scan_results"
@@ -404,7 +413,7 @@ class ScanSettings:
             xtol_factor=float(tuning.get("xtol_factor", 1e-3)),
             xtol_cutoff=float(tuning.get("xtol_cutoff", 1e-6)),
             refine_maxiter=int(tuning.get("refine_maxiter", 60)),
-            exclusion_zones=tuning.get("exclusion_zones"),
+            inclusion_zones=tuning.get("inclusion_zones"),
         )
 
 
@@ -422,9 +431,9 @@ def prediction_date(settings: ScanSettings):
 def _load_predictions(settings: ScanSettings, raster_crs) -> gpd.GeoDataFrame:
     """Read the merged raw predictions, optionally clipped to the scan zones."""
     pred_gdf = gpd.read_file(settings.input_path).to_crs(raster_crs)
-    if settings.exclusion_zones:
-        exclusion_geom = gpd.read_file(settings.exclusion_zones).geometry.union_all()
-        pred_gdf = pred_gdf.clip(exclusion_geom)
+    if settings.inclusion_zones:
+        inclusion_geom = gpd.read_file(settings.inclusion_zones).geometry.union_all()
+        pred_gdf = pred_gdf.clip(inclusion_geom)
     if pred_gdf.empty:
         raise click.ClickException(
             f"No predictions left to scan in {settings.input_path}"

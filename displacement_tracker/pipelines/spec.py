@@ -120,6 +120,22 @@ PREDICT = Pipeline(
             "Processing",
             help="Minimum non-black/NaN fraction for a tile to be kept.",
         ),
+        Param("processing.max_workers", "Scan workers", "int", "Processing"),
+        Param(
+            "processing.max_tasks_per_child",
+            "Tasks per worker",
+            "int",
+            "Processing",
+            help="Recycle a scan worker after this many tiles (0 = never).",
+        ),
+        Param(
+            "processing.max_pool_restarts",
+            "Max pool restarts",
+            "int",
+            "Processing",
+            help="How often the scan worker pool may be rebuilt after a "
+            "crash before the scan gives up.",
+        ),
         Param("prediction.batch_size", "Batch size", "int", "Prediction"),
         Param("prediction.num_workers", "Data-loader workers", "int", "Prediction"),
         Param(
@@ -233,7 +249,6 @@ TRAIN = Pipeline(
         Param("prewar_gaza", "Pre-war reference raster", "path", "Inputs"),
         Param("processing.core_metres", "Tile core size (m)", "int", "Processing"),
         Param("processing.margin_metres", "Tile margin (m)", "int", "Processing"),
-        Param("processing.max_workers", "Scan workers", "int", "Processing"),
         Param(
             "processing.quality_thresholds.min_valid_fraction",
             "Min valid fraction",
@@ -384,12 +399,13 @@ TUNE = Pipeline(
             help="Max Nelder-Mead iterations for the 2-D refinement (0 disables).",
         ),
         Param(
-            "tuning.exclusion_zones",
-            "Scan clip zones",
+            "tuning.inclusion_zones",
+            "Scan inclusion zones",
             "path",
             "Tuning",
             optional=True,
-            help="Optional gpkg; predictions are clipped to its union before the scan.",
+            help="Optional gpkg; predictions are clipped to its union before "
+            "the scan, i.e. only points inside it are kept.",
         ),
         Param("merge.min_distance_m", "Merge distance (m)", "float", "Merge"),
         Param("merge.agreement", "Min cluster size", "int", "Merge"),
@@ -437,7 +453,7 @@ TUNE = Pipeline(
             "xtol_factor": 1.0e-3,
             "xtol_cutoff": 1.0e-6,
             "refine_maxiter": 60,
-            "exclusion_zones": None,
+            "inclusion_zones": None,
         },
     },
 )

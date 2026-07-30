@@ -14,7 +14,9 @@
 # the flow matching the selected pipeline automatically.
 
 shared:
-  # Municipal boundaries; tiles outside them are skipped by every scan stage.
+  # Municipal boundaries. The training scan crops each source raster to them
+  # before tiling; the prediction flow tiles the whole raster and drops
+  # out-of-boundary points when the predictions are written.
   boundaries: gaza_boundaries/GazaStrip_MunicipalBoundaries.shp
   # Pre-war reference raster paired with every tile by every scan stage.
   prewar_gaza: ${DATA_DIR}/data/prewar_gaza.tif
@@ -38,9 +40,6 @@ train:
   # loading:
   #   files:  # optional filename filters / Drive search strings; empty = all
   processing:
-    max_workers: 8
-    max_tasks_per_child: 16
-    max_pool_restarts: 10
     quality_thresholds:
       min_valid_fraction: 0.9
     complete:
@@ -103,6 +102,11 @@ predict:
       # - "rafah_rafah_crossing_khan_yunis_20260220_123000_ssc10_u0003_visual_clip.tif"
       # - "tel_al_sultan_20260220_122923_ssc10_u0004_visual_clip.tif"
   processing:
+    # Worker pool for the prediction scan (b2_image_scanner); the training
+    # scan is serial and reads none of these.
+    max_workers: 8
+    max_tasks_per_child: 16
+    max_pool_restarts: 10
     quality_thresholds:
       min_valid_fraction: 0.1
   prediction:
@@ -197,7 +201,7 @@ tune:
     xtol_factor: 1.0e-3
     xtol_cutoff: 1.0e-6
     refine_maxiter: 60
-    exclusion_zones: null     # optional gpkg; predictions are clipped to its union
+    inclusion_zones: null     # optional gpkg; predictions are clipped to its union
     out_dir: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/tuning
     best_params: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/tuning/best_params.yaml
     final_output: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/merged/merged_tuned.gpkg
