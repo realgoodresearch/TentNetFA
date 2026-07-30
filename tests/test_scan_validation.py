@@ -30,23 +30,23 @@ from displacement_tracker.util.validation_core import initial_best_value, is_bet
 
 
 def _settings(**overrides) -> ScanSettings:
-    base = dict(
-        input_path="merged_raw.gpkg",
-        pred_folder=None,
-        master_grid="grid.tif",
-        reference={"path": "ref.geojson"},
-        out_dir="scan_results",
-        best_params_path="scan_results/best_params.yaml",
-        metric="rms",
-        scan_metrics=["rms"],
-        factor_bounds=(0.0, 10.0),
-        cutoff_bounds=(0.0001, 0.01),
-        ridge_probes=5,
-        xtol_factor=1e-3,
-        xtol_cutoff=1e-6,
-        refine_maxiter=60,
-        exclusion_zones=None,
-    )
+    base = {
+        "input_path": "merged_raw.gpkg",
+        "pred_folder": None,
+        "master_grid": "grid.tif",
+        "reference": {"path": "ref.geojson"},
+        "out_dir": "scan_results",
+        "best_params_path": "scan_results/best_params.yaml",
+        "metric": "rms",
+        "scan_metrics": ["rms"],
+        "factor_bounds": (0.0, 10.0),
+        "cutoff_bounds": (0.0001, 0.01),
+        "ridge_probes": 5,
+        "xtol_factor": 1e-3,
+        "xtol_cutoff": 1e-6,
+        "refine_maxiter": 60,
+        "exclusion_zones": None,
+    }
     base.update(overrides)
     return ScanSettings(**base)
 

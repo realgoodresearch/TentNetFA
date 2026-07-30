@@ -12,8 +12,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 import pyarrow as pa
@@ -49,7 +50,7 @@ MANIFEST_STATS_KEY = "raster_stats"
 def compute_tile_id(raster_path: str, r0: int, c0: int) -> int:
     """Deterministic uint64 hash so split caches stay stable across re-runs."""
     digest = hashlib.blake2b(
-        f"{raster_path}|{r0}|{c0}".encode("utf-8"), digest_size=8
+        f"{raster_path}|{r0}|{c0}".encode(), digest_size=8
     ).digest()
     return int.from_bytes(digest, byteorder="little", signed=False)
 
@@ -121,7 +122,9 @@ class ManifestWriter:
         os.replace(tmp, self.path)
         return table
 
-    def __enter__(self) -> "ManifestWriter":
+    # PYI034 wants `Self` here, which typing only gained in 3.11; the project
+    # floor is 3.10, so the class name stays.
+    def __enter__(self) -> ManifestWriter:  # noqa: PYI034
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:

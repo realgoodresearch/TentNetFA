@@ -23,9 +23,8 @@ from typing import Any
 
 import click
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import torch.optim as optim
+from torch import nn, optim
 from torch.utils.data import DataLoader
 
 from displacement_tracker.paired_image_dataset import PairedImageDataset

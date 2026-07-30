@@ -70,7 +70,7 @@ testpaths = ["tests"]
 
 [dependency-groups]
 dev = [
-    "ruff (>=0.15.0,<0.16.0)",
+    "ruff (>=0.16.0,<0.17.0)",
     "remote-plot (>=1.2.1,<2.0.0)",
     "pytest (>=9.1.1,<10.0.0)"
 ]
@@ -106,3 +106,32 @@ test = [
 
 [tool.poetry.group.ui]
 optional = true
+
+[tool.ruff]
+# `[project]` carries no `requires-python`, so ruff cannot infer the floor and
+# would fall back to its own default. State it here instead of adding
+# `requires-python` alongside `[tool.poetry.dependencies].python`, which would
+# give Poetry two sources for the same constraint.
+target-version = "py310"
+
+[tool.ruff.lint]
+# ruff 0.16 turned on 413 rules by default, up from 59. The expanded set is
+# adopted as-is apart from the families below, each of which flags a deliberate
+# pattern in this pipeline rather than a defect.
+ignore = [
+    # Blind `except Exception` is the fault-isolation strategy for the batch
+    # stages: one corrupt TIFF, tile or prediction date is skipped and logged
+    # so the rest of the run still completes. Narrowing these would let a
+    # single bad input abort a multi-hour scan.
+    "BLE001",
+    # Naive datetimes are correct here. Every parsed value is a calendar
+    # acquisition date lifted out of a filename (`YYYYMMDD`), not an instant,
+    # and the `datetime.now()` calls only stamp run directories in local time.
+    "DTZ001",
+    "DTZ005",
+    "DTZ007",
+    # The silent handlers this flags are best-effort cleanup — shutting down an
+    # already-broken executor, unlinking a temp file, closing raster handles, a
+    # UI stats widget. There is nothing actionable to log.
+    "S110",
+]

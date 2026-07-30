@@ -12,10 +12,10 @@ import geopandas as gpd
 import numpy as np
 import pytest
 import rasterio
+from _helpers import CRS_UTM, CRS_WGS84, write_geotiff
 from rasterio.transform import from_origin
 from shapely.geometry import Point, box
 
-from _helpers import CRS_UTM, CRS_WGS84, write_geotiff
 from displacement_tracker.util.reference_data import (
     PointsSource,
     RasterReferenceSource,
@@ -672,8 +672,10 @@ def test_build_reference_source_rejects_a_non_mapping_config():
     not_a_mapping = 42
 
     # When: build_reference_source validates it
-    # Then: ValueError says what the config is allowed to be
-    with pytest.raises(ValueError, match="path or a mapping"):
+    # Then: TypeError says what the config is allowed to be — the wrong kind of
+    #       thing entirely, unlike the ValueError rejections of a mapping whose
+    #       contents are at fault
+    with pytest.raises(TypeError, match="path or a mapping"):
         build_reference_source(not_a_mapping)
 
 

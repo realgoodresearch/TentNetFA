@@ -125,7 +125,7 @@ def plot_error_hexbin(lon, lat, errors, gridsize: int, output_path: str) -> int:
     plt.savefig(output_path)
     plt.close()
 
-    return int(len(hex_means))
+    return len(hex_means)
 
 
 def plot_hex_error_map(

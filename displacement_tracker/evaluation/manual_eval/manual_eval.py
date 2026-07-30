@@ -1,14 +1,15 @@
 import os
 import random
 import re
+import sys
+
+import geopandas as gpd
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import geopandas as gpd
 import rasterio
 from rasterio.windows import from_bounds
 from shapely.geometry import box
-import matplotlib.pyplot as plt
-import sys
 
 # ==========================
 # CONFIGURATION
@@ -220,124 +221,126 @@ def main():
 
         region, date, time, satellite = parse_tif_name(tif_name)
 
-        with rasterio.open(tif_path) as src:
-            with rasterio.open(PREWAR_TIF) as prewar_src:
-                # ---- Load and align predictions ONCE ----
-                if os.path.exists(geojson_path):
-                    preds = gpd.read_file(geojson_path)
+        with (
+            rasterio.open(tif_path) as src,
+            rasterio.open(PREWAR_TIF) as prewar_src,
+        ):
+            # ---- Load and align predictions ONCE ----
+            if os.path.exists(geojson_path):
+                preds = gpd.read_file(geojson_path)
 
-                    if preds.empty:
-                        sys.exit("Prediction file is empty.")
-                    else:
-                        # If GeoJSON has no CRS, assume WGS84
-                        if preds.crs is None:
-                            preds.set_crs("EPSG:4326", inplace=True)
-
-                        # Reproject to raster CRS
-                        preds = preds.to_crs(src.crs)
-
-                        # Keep only predictions inside raster bounds
-                        raster_bounds_geom = box(*src.bounds)
-                        preds = preds[preds.intersects(raster_bounds_geom)]
+                if preds.empty:
+                    sys.exit("Prediction file is empty.")
                 else:
-                    preds = gpd.GeoDataFrame(geometry=[], crs=src.crs)
+                    # If GeoJSON has no CRS, assume WGS84
+                    if preds.crs is None:
+                        preds.set_crs("EPSG:4326", inplace=True)
 
-                # ---- sample until we have N_TILES_PER_IMAGE valid tiles ----
-                accepted = 0
-                attempts = 0
-                max_attempts = max(N_TILES_PER_IMAGE * 20, 500)
+                    # Reproject to raster CRS
+                    preds = preds.to_crs(src.crs)
 
-                while accepted < N_TILES_PER_IMAGE and attempts < max_attempts:
-                    attempts += 1
+                    # Keep only predictions inside raster bounds
+                    raster_bounds_geom = box(*src.bounds)
+                    preds = preds[preds.intersects(raster_bounds_geom)]
+            else:
+                preds = gpd.GeoDataFrame(geometry=[], crs=src.crs)
 
-                    tile_geom = random_tile_within_polygon(src, gaza_boundary)
+            # ---- sample until we have N_TILES_PER_IMAGE valid tiles ----
+            accepted = 0
+            attempts = 0
+            max_attempts = max(N_TILES_PER_IMAGE * 20, 500)
 
-                    window = from_bounds(*tile_geom.bounds, transform=src.transform)
+            while accepted < N_TILES_PER_IMAGE and attempts < max_attempts:
+                attempts += 1
 
-                    # prepare prewar window, reproject tile_geom to prewar CRS if necessary
-                    if prewar_src.crs == src.crs:
-                        prewar_geom = tile_geom
-                    else:
-                        prewar_geom = (
-                            gpd.GeoSeries([tile_geom], crs=src.crs)
-                            .to_crs(prewar_src.crs)
-                            .iloc[0]
-                        )
+                tile_geom = random_tile_within_polygon(src, gaza_boundary)
 
-                    prewar_window = from_bounds(
-                        *prewar_geom.bounds, transform=prewar_src.transform
+                window = from_bounds(*tile_geom.bounds, transform=src.transform)
+
+                # prepare prewar window, reproject tile_geom to prewar CRS if necessary
+                if prewar_src.crs == src.crs:
+                    prewar_geom = tile_geom
+                else:
+                    prewar_geom = (
+                        gpd.GeoSeries([tile_geom], crs=src.crs)
+                        .to_crs(prewar_src.crs)
+                        .iloc[0]
                     )
 
-                    # safe reads: skip tile if reading fails (out-of-range)
-                    try:
-                        tile_array = src.read(window=window)
-                        prewar_array = prewar_src.read(window=prewar_window)
-                    except Exception as e:
-                        print("Read error for sampled window, trying another tile:", e)
-                        continue
+                prewar_window = from_bounds(
+                    *prewar_geom.bounds, transform=prewar_src.transform
+                )
 
-                    # Ensure we have at least 3 bands
-                    if tile_array.shape[0] < 3:
-                        print("Tile has fewer than 3 bands, skipping")
-                        continue
+                # safe reads: skip tile if reading fails (out-of-range)
+                try:
+                    tile_array = src.read(window=window)
+                    prewar_array = prewar_src.read(window=prewar_window)
+                except Exception as e:
+                    print("Read error for sampled window, trying another tile:", e)
+                    continue
 
-                    # ---- Reject empty / nodata tiles ----
-                    nodata = src.nodata
-                    rgb = tile_array[:3]
+                # Ensure we have at least 3 bands
+                if tile_array.shape[0] < 3:
+                    print("Tile has fewer than 3 bands, skipping")
+                    continue
 
-                    # Condition 1: all zeros
-                    all_zero = np.all(rgb == 0)
+                # ---- Reject empty / nodata tiles ----
+                nodata = src.nodata
+                rgb = tile_array[:3]
 
-                    # Condition 2: all nodata (if defined)
-                    all_nodata = (nodata is not None) and np.all(rgb == nodata)
+                # Condition 1: all zeros
+                all_zero = np.all(rgb == 0)
 
-                    # Condition 3: extremely low variance (visually black)
-                    low_variance = np.std(rgb) < 1
+                # Condition 2: all nodata (if defined)
+                all_nodata = (nodata is not None) and np.all(rgb == nodata)
 
-                    # Condition 4: too few nonzero pixels (coverage)
-                    valid_pixels = np.sum(rgb > 0)
-                    total_pixels = rgb.size
-                    low_coverage = (valid_pixels / total_pixels) < 0.05
+                # Condition 3: extremely low variance (visually black)
+                low_variance = np.std(rgb) < 1
 
-                    if all_zero or all_nodata or low_variance or low_coverage:
-                        continue
+                # Condition 4: too few nonzero pixels (coverage)
+                valid_pixels = np.sum(rgb > 0)
+                total_pixels = rgb.size
+                low_coverage = (valid_pixels / total_pixels) < 0.05
 
-                    # accept this tile
-                    print(f"TILE {accepted + 1}/{N_TILES_PER_IMAGE}")
-                    manual_count = show_tile_and_get_count(tile_array, prewar_array)
-                    model_count = preds.within(tile_geom).sum()
+                if all_zero or all_nodata or low_variance or low_coverage:
+                    continue
 
-                    # Centroid in raster CRS
-                    centroid = tile_geom.centroid
+                # accept this tile
+                print(f"TILE {accepted + 1}/{N_TILES_PER_IMAGE}")
+                manual_count = show_tile_and_get_count(tile_array, prewar_array)
+                model_count = preds.within(tile_geom).sum()
 
-                    # Convert centroid to lat/lon
-                    centroid_gdf = gpd.GeoSeries([centroid], crs=src.crs).to_crs(
-                        "EPSG:4326"
-                    )
+                # Centroid in raster CRS
+                centroid = tile_geom.centroid
 
-                    lon = centroid_gdf.x.values[0]
-                    lat = centroid_gdf.y.values[0]
+                # Convert centroid to lat/lon
+                centroid_gdf = gpd.GeoSeries([centroid], crs=src.crs).to_crs(
+                    "EPSG:4326"
+                )
 
-                    rows.append(
-                        {
-                            "region": region,
-                            "date": date,
-                            "time": time,
-                            "satellite": satellite,
-                            "tif_name": tif_name,
-                            "latitude": lat,
-                            "longitude": lon,
-                            "manual_tent_count": manual_count,
-                            "model_tent_count": model_count,
-                        }
-                    )
+                lon = centroid_gdf.x.values[0]
+                lat = centroid_gdf.y.values[0]
 
-                    accepted += 1
+                rows.append(
+                    {
+                        "region": region,
+                        "date": date,
+                        "time": time,
+                        "satellite": satellite,
+                        "tif_name": tif_name,
+                        "latitude": lat,
+                        "longitude": lon,
+                        "manual_tent_count": manual_count,
+                        "model_tent_count": model_count,
+                    }
+                )
 
-                if accepted < N_TILES_PER_IMAGE:
-                    print(
-                        f"Warning: only collected {accepted}/{N_TILES_PER_IMAGE} tiles for {tif_name} after {attempts} attempts."
-                    )
+                accepted += 1
+
+            if accepted < N_TILES_PER_IMAGE:
+                print(
+                    f"Warning: only collected {accepted}/{N_TILES_PER_IMAGE} tiles for {tif_name} after {attempts} attempts."
+                )
 
     df = pd.DataFrame(rows)
 

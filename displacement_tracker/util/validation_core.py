@@ -8,7 +8,6 @@ hull.
 
 import os
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 import geopandas as gpd
 import numpy as np
@@ -23,9 +22,8 @@ from displacement_tracker.util.thresholding import (
     rescale_adjusted_peak,
 )
 
-
 # Direction of optimization for each metric: "min" = lower is better.
-METRIC_DIRECTIONS: Dict[str, str] = {
+METRIC_DIRECTIONS: dict[str, str] = {
     "rms": "min",
     "mae": "min",
     "rmsle": "min",
@@ -35,7 +33,7 @@ METRIC_DIRECTIONS: Dict[str, str] = {
 }
 
 
-def list_point_files(directory: str) -> List[str]:
+def list_point_files(directory: str) -> list[str]:
     """Sorted point-set files (predictions) in a directory."""
     return sorted(
         os.path.join(directory, f)
@@ -49,7 +47,7 @@ def prepare_grouped_cell_inputs(
     reference: ReferenceSource,
     src_grid: rasterio.io.DatasetReader,
     nodata_val: float = -9999.0,
-) -> Dict[str, object]:
+) -> dict[str, object]:
     """Build one-time geometry/grid products and per-point cell assignments."""
     prediction_extent_geom = pred_gdf.union_all().convex_hull
 
@@ -104,9 +102,9 @@ def process_grouped_cells(
     pred_cols: np.ndarray,
     val_raster: np.ndarray,
     mask_array: np.ndarray,
-    grid_shape: Tuple[int, int],
+    grid_shape: tuple[int, int],
     nodata_val: float = -9999.0,
-) -> Dict[str, np.ndarray]:
+) -> dict[str, np.ndarray]:
     """Build a prediction raster from pre-grouped cells and derive diff/error rasters.
 
     `val_raster` is mutated in place to hold `nodata_val` outside the mask, so the
@@ -148,7 +146,7 @@ def compute_metrics(
     val_raster: np.ndarray,
     error_raster: np.ndarray,
     mask_array: np.ndarray,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """Compute per-tile error metrics restricted to the analysis mask."""
     pred_in = pred_raster[mask_array]
     val_in = val_raster[mask_array]
@@ -198,7 +196,7 @@ def write_output_rasters(
     val_raster: np.ndarray,
     diff_masked: np.ndarray,
     src_grid: rasterio.io.DatasetReader,
-    grid_shape: Tuple[int, int],
+    grid_shape: tuple[int, int],
     out_transform: rasterio.Affine,
     nodata_val: float = -9999.0,
 ) -> None:

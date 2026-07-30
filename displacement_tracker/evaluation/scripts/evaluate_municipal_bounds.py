@@ -134,7 +134,7 @@ def _plot_municipal_scatter(
     n_cols = 3
     n_rows = int(np.ceil(len(unique_regions) / n_cols))
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 5 * n_rows))
+    _fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 5 * n_rows))
     axes = np.array(axes).reshape(-1)
 
     for ax, region in zip(axes, unique_regions):

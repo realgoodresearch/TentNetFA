@@ -20,7 +20,7 @@ jobs:
 
       # Same constraint as the dev dependency group in pyproject.toml
       - name: Install ruff
-        run: pip install "ruff>=0.15.0,<0.16.0"
+        run: pip install "ruff>=0.16.0,<0.17.0"
 
       - name: Lint
         run: ruff check .

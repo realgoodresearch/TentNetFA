@@ -17,7 +17,6 @@ from displacement_tracker.util.scan_orchestrator import (
     run_scans,
 )
 
-
 # ---------------------------------------------------------------------------
 # scan_orchestrator.collect_tif_files
 # ---------------------------------------------------------------------------
