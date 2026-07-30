@@ -371,12 +371,7 @@ class ScanSettings:
         tuning = params.get("tuning") or {}
         merge_cfg = params.get("merge") or {}
 
-        input_path = tuning.get("input") or merge_cfg.get("output")
-        if not input_path:
-            raise click.ClickException(
-                "Missing required config key: tuning.input "
-                "(or merge.output as fallback)"
-            )
+        input_path = require(params, "tuning.input", "merge.output")
         out_dir = tuning.get("out_dir") or "scan_results"
         metric, scan_metrics = resolve_metrics(tuning)
 

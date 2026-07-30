@@ -37,19 +37,6 @@ def deep_get(cfg: dict, dotted: str, default=None):
     return node
 
 
-def require(cfg: dict, dotted: str):
-    """Return the value at dotted path ``dotted``, or fail naming the key."""
-    value = deep_get(cfg, dotted)
-    if not value:
-        raise click.ClickException(f"Missing required config key: {dotted}")
-    return value
-
-
-def forwarded(cfg: dict, *keys: str) -> dict:
-    """Only the keys ``cfg`` sets, so a callee's own signature defaults hold."""
-    return {key: cfg[key] for key in keys if cfg.get(key) is not None}
-
-
 def deep_set(cfg: dict, dotted: str, value) -> None:
     """Set a dotted path in nested dicts, creating intermediate dicts."""
     parts = dotted.split(".")
@@ -71,6 +58,26 @@ def deep_merge(base: dict, extra: dict) -> dict:
         else:
             base[key] = value
     return base
+
+
+def require(cfg: dict, *dotted: str):
+    """First value set at one of ``dotted``, or fail naming all of them.
+
+    Empty counts as missing, so a path resolving to ``""`` is rejected the
+    same as one that is absent.
+    """
+    for path in dotted:
+        value = deep_get(cfg, path)
+        if value:
+            return value
+    fallbacks = f" (or {' / '.join(dotted[1:])} as fallback)" if dotted[1:] else ""
+    raise click.ClickException(f"Missing required config key: {dotted[0]}{fallbacks}")
+
+
+def forwarded(cfg: dict, *keys: str) -> dict:
+    """Only the keys ``cfg`` sets non-null, so a callee's signature defaults
+    hold — unlike ``require``, ``0``/``False`` are set values, not missing."""
+    return {key: cfg[key] for key in keys if cfg.get(key) is not None}
 
 
 def is_sectioned_config(config: dict) -> bool:

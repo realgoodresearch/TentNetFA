@@ -65,6 +65,31 @@ def test_require_rejects_missing_and_falsy_values():
         require(cfg, "boundaries")
 
 
+def test_require_with_fallbacks_returns_first_set_value():
+    # Given: a config where the primary path is unset but a fallback is
+    cfg = {"merge": {"output": "merged.gpkg"}}
+
+    # When: require is asked for tuning.input, falling back to merge.output
+    value = require(cfg, "tuning.input", "merge.output")
+
+    # Then: the fallback's value is returned
+    assert value == "merged.gpkg"
+
+
+def test_require_with_fallbacks_raises_naming_all_of_them():
+    # Given: a config where neither the primary path nor its fallback is set
+    cfg = {}
+
+    # When: require is asked for a primary path with two fallbacks
+    # Then: it names the primary and lists every fallback, so the message
+    #       tells the reader every place they could set the value
+    with pytest.raises(
+        click.ClickException,
+        match=r"tuning\.input \(or merge\.output / legacy\.input as fallback\)",
+    ):
+        require(cfg, "tuning.input", "merge.output", "legacy.input")
+
+
 def test_forwarded_returns_only_the_keys_the_config_sets():
     # Given: a config naming one key, leaving a second null, and carrying a
     #        third that is not asked for

@@ -58,12 +58,8 @@ from displacement_tracker.util.config import (
     require,
 )
 
-# Spatial context layers, keyed by the analysis that reads each one.
+# Spatial context layers, one per analysis that reads one.
 LAYER_NAMES = ("agriculture", "h3_density", "destruction")
-
-# Column overrides forwarded to every analysis. Keys the config leaves unset
-# are omitted so the analyses' own signature defaults apply.
-COLUMN_KEYS = ("manual_column", "model_column")
 
 # Any of these being set marks the run as a new-model run; prediction_dir is
 # excluded because it falls back to prediction.output_folder, which a predict
@@ -77,18 +73,11 @@ def resolve_new_model(params: dict) -> dict | None:
     if not any(new_model_cfg.get(key) for key in NEW_MODEL_TRIGGER_KEYS):
         return None
 
-    prediction_dir = new_model_cfg.get("prediction_dir") or deep_get(
-        params, "prediction.output_folder"
-    )
-    if not prediction_dir:
-        raise click.ClickException(
-            "Missing required config key: evaluation.new_model.prediction_dir "
-            "(or prediction.output_folder as fallback)"
-        )
-
     return {
         "output_csv": require(params, "evaluation.new_model.output_csv"),
-        "prediction_dir": prediction_dir,
+        "prediction_dir": require(
+            params, "evaluation.new_model.prediction_dir", "prediction.output_folder"
+        ),
         "sample_tif": require(params, "evaluation.new_model.sample_tif"),
         "new_model_column": require(params, "evaluation.new_model.column"),
     }
@@ -135,7 +124,7 @@ def cli(config: str, flow: str) -> None:
     common = {
         "annotation_csv": annotation_csv,
         "output_dir": output_dir,
-        **forwarded(eval_cfg, *COLUMN_KEYS),
+        **forwarded(eval_cfg, "manual_column", "model_column"),
     }
 
     if new_model is not None:
