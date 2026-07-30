@@ -37,6 +37,19 @@ def deep_get(cfg: dict, dotted: str, default=None):
     return node
 
 
+def require(cfg: dict, dotted: str):
+    """Return the value at dotted path ``dotted``, or fail naming the key."""
+    value = deep_get(cfg, dotted)
+    if not value:
+        raise click.ClickException(f"Missing required config key: {dotted}")
+    return value
+
+
+def forwarded(cfg: dict, *keys: str) -> dict:
+    """Only the keys ``cfg`` sets, so a callee's own signature defaults hold."""
+    return {key: cfg[key] for key in keys if cfg.get(key) is not None}
+
+
 def deep_set(cfg: dict, dotted: str, value) -> None:
     """Set a dotted path in nested dicts, creating intermediate dicts."""
     parts = dotted.split(".")

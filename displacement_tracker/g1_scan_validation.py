@@ -42,7 +42,7 @@ import yaml
 from scipy.optimize import minimize, minimize_scalar
 from tqdm import tqdm
 
-from displacement_tracker.util.config import flow_option, load_flow_config
+from displacement_tracker.util.config import flow_option, load_flow_config, require
 from displacement_tracker.util.reference_data import (
     build_reference_source,
     infer_target_date,
@@ -341,13 +341,6 @@ def resolve_metrics(tuning_cfg: dict) -> tuple[str, list[str]]:
     return metric, metrics
 
 
-def _require(cfg: dict, section: str, key: str):
-    value = cfg.get(key)
-    if not value:
-        raise click.ClickException(f"Missing required config key: {section}.{key}")
-    return value
-
-
 @dataclass(frozen=True)
 class ScanSettings:
     """Validated inputs of one threshold scan, extracted from the config."""
@@ -403,8 +396,8 @@ class ScanSettings:
         return cls(
             input_path=input_path,
             pred_folder=merge_cfg.get("input_folder"),
-            master_grid=_require(tuning, "tuning", "master_grid"),
-            reference=_require(tuning, "tuning", "reference"),
+            master_grid=require(params, "tuning.master_grid"),
+            reference=require(params, "tuning.reference"),
             out_dir=out_dir,
             best_params_path=tuning.get("best_params")
             or os.path.join(out_dir, "best_params.yaml"),

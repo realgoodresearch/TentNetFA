@@ -50,7 +50,13 @@ from displacement_tracker.evaluation.scripts.spatial_bootstrap_hex import (
     spatial_bootstrap_hex,
 )
 from displacement_tracker.evaluation.scripts.total_error import evaluate_total_error
-from displacement_tracker.util.config import deep_get, flow_option, load_flow_config
+from displacement_tracker.util.config import (
+    deep_get,
+    flow_option,
+    forwarded,
+    load_flow_config,
+    require,
+)
 
 # Spatial context layers, keyed by the analysis that reads each one.
 LAYER_NAMES = ("agriculture", "h3_density", "destruction")
@@ -63,26 +69,6 @@ COLUMN_KEYS = ("manual_column", "model_column")
 # excluded because it falls back to prediction.output_folder, which a predict
 # config always sets.
 NEW_MODEL_TRIGGER_KEYS = ("column", "sample_tif", "output_csv")
-
-
-def require(cfg: dict, dotted: str):
-    """Return the value at dotted path ``dotted``, or fail naming the key."""
-    value = deep_get(cfg, dotted)
-    if not value:
-        raise click.ClickException(f"Missing required config key: {dotted}")
-    return value
-
-
-def column_kwargs(eval_cfg: dict) -> dict:
-    """The column overrides the config sets, dropping the ones it does not."""
-    return {key: eval_cfg[key] for key in COLUMN_KEYS if eval_cfg.get(key) is not None}
-
-
-def hex_kwargs(eval_cfg: dict) -> dict:
-    """``hex_size_m`` if the config sets it, for the two hex analyses."""
-    if eval_cfg.get("hex_size_m") is None:
-        return {}
-    return {"hex_size_m": float(eval_cfg["hex_size_m"])}
 
 
 def resolve_new_model(params: dict) -> dict | None:
@@ -149,7 +135,7 @@ def cli(config: str, flow: str) -> None:
     common = {
         "annotation_csv": annotation_csv,
         "output_dir": output_dir,
-        **column_kwargs(eval_cfg),
+        **forwarded(eval_cfg, *COLUMN_KEYS),
     }
 
     if new_model is not None:
@@ -160,7 +146,9 @@ def cli(config: str, flow: str) -> None:
             annotation_csv=annotation_csv, **new_model
         )
 
-    hexes = hex_kwargs(eval_cfg)
+    # hex_size_m, if the config sets it; omitted lets the two hex analyses
+    # use their own signature default.
+    hexes = forwarded(eval_cfg, "hex_size_m")
 
     click.echo("Running total error analysis...")
     evaluate_total_error(boundary_shp=boundary_shp, **hexes, **common)

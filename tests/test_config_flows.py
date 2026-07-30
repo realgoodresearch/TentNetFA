@@ -8,8 +8,10 @@ from displacement_tracker.util.config import (
     deep_get,
     deep_merge,
     deep_set,
+    forwarded,
     is_sectioned_config,
     load_flow_config,
+    require,
     resolve_flow_config,
 )
 
@@ -42,6 +44,51 @@ def test_deep_get_missing_or_non_dict_returns_default():
     assert through_scalar == -1
     assert into_list is None
     assert absent_leaf == 0
+
+
+def test_require_rejects_missing_and_falsy_values():
+    # Given: a config where a dotted path is set, another is empty and a
+    #        third is absent entirely
+    cfg = {"evaluation": {"annotation_csv": "ann.csv", "output_dir": ""}}
+
+    # When: require is asked for the dotted path that is set
+    value = require(cfg, "evaluation.annotation_csv")
+
+    # Then: its value is returned
+    assert value == "ann.csv"
+
+    # When: require is asked for the empty value and for the absent key
+    # Then: both raise ClickException naming the dotted path to fix
+    with pytest.raises(click.ClickException, match="evaluation.output_dir"):
+        require(cfg, "evaluation.output_dir")
+    with pytest.raises(click.ClickException, match="boundaries"):
+        require(cfg, "boundaries")
+
+
+def test_forwarded_returns_only_the_keys_the_config_sets():
+    # Given: a config naming one key, leaving a second null, and carrying a
+    #        third that is not asked for
+    cfg = {
+        "model_column": "model_beta2",
+        "manual_column": None,
+        "output_dir": "results",
+    }
+
+    # When: forwarded is asked for the two column keys
+    kwargs = forwarded(cfg, "manual_column", "model_column")
+
+    # Then: only the set one comes back, so the callee's own signature
+    #       default supplies the rest instead of a second copy of it here
+    assert kwargs == {"model_column": "model_beta2"}
+
+
+def test_forwarded_with_no_keys_set_is_empty():
+    # Given: a config setting neither of the two keys asked for
+    cfg = {"manual_column": "manual_tent_count"}
+
+    # When: forwarded is asked for a key that is absent
+    # Then: nothing is forwarded, leaving every callee default in force
+    assert forwarded(cfg, "hex_size_m") == {}
 
 
 def test_deep_set_creates_intermediate_dicts():

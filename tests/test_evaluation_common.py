@@ -16,13 +16,7 @@ from _helpers import write_annotation_csv, write_yaml
 from click.testing import CliRunner
 from shapely.geometry import Point, box
 
-from displacement_tracker.evaluation.run_all_analyses import (
-    cli,
-    column_kwargs,
-    hex_kwargs,
-    require,
-    resolve_new_model,
-)
+from displacement_tracker.evaluation.run_all_analyses import cli, resolve_new_model
 from displacement_tracker.evaluation.scripts.common import (
     build_hex_grid,
     choose_utm_crs_from_gdf,
@@ -378,58 +372,6 @@ def test_hex_error_aggregation_empty_boundary_raises(tmp_path):
 # ==========================================================
 # run_all_analyses config resolution and preflight
 # ==========================================================
-
-
-def test_require_rejects_missing_and_falsy_values():
-    # Given: a config where a dotted path is set, another is empty and a
-    #        third is absent entirely
-    cfg = {"evaluation": {"annotation_csv": "ann.csv", "output_dir": ""}}
-
-    # When: require is asked for the dotted path that is set
-    value = require(cfg, "evaluation.annotation_csv")
-
-    # Then: its value is returned
-    assert value == "ann.csv"
-
-    # When: require is asked for the empty value and for the absent key
-    # Then: both raise ClickException naming the dotted path to fix
-    with pytest.raises(click.ClickException, match="evaluation.output_dir"):
-        require(cfg, "evaluation.output_dir")
-    with pytest.raises(click.ClickException, match="boundaries"):
-        require(cfg, "boundaries")
-
-
-def test_column_kwargs_forwards_only_the_columns_the_config_sets():
-    # Given: an evaluation section naming model_column, leaving manual_column
-    #        null, and carrying a key that is not a column override
-    eval_cfg = {
-        "model_column": "model_beta2",
-        "manual_column": None,
-        "output_dir": "results",
-    }
-
-    # When: the column overrides are collected for the analyses
-    kwargs = column_kwargs(eval_cfg)
-
-    # Then: only the set column is forwarded, so each analysis' own signature
-    #       default supplies the rest instead of a second copy of it here
-    assert kwargs == {"model_column": "model_beta2"}
-
-
-def test_hex_kwargs_omitted_when_unset_and_floated_when_set():
-    # Given: one evaluation section leaving hex_size_m unset, and one setting
-    #        it to the integer a YAML author would naturally write
-    unset = {"manual_column": "manual_tent_count"}
-    integral = {"hex_size_m": 500}
-
-    # When: the hex-grid argument is collected for each
-    hexes_unset = hex_kwargs(unset)
-    hexes_integral = hex_kwargs(integral)
-
-    # Then: nothing is forwarded for the first, and the second reaches the hex
-    #       analyses as the float their grid maths expects
-    assert hexes_unset == {}
-    assert hexes_integral == {"hex_size_m": 500.0}
 
 
 def test_resolve_new_model_returns_none_unless_a_trigger_key_is_set():
