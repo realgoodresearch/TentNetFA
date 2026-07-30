@@ -75,8 +75,10 @@ def require(cfg: dict, *dotted: str):
 
 
 def forwarded(cfg: dict, *keys: str) -> dict:
-    """Only the keys ``cfg`` sets non-null, so a callee's signature defaults
-    hold — unlike ``require``, ``0``/``False`` are set values, not missing."""
+    """Only the keys ``cfg`` sets non-null, so callee defaults hold.
+
+    Unlike ``require``, ``0``/``False`` count as set, not missing.
+    """
     return {key: cfg[key] for key in keys if cfg.get(key) is not None}
 
 
