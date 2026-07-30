@@ -174,10 +174,12 @@ tune:
     # Master grid the reference data and predictions are resolved onto.
     master_grid: ${DATA_DIR}/data/master_grid_100m.tif
     # Ground-truth reference (see displacement_tracker/util/reference_data.py):
-    #   vector  point annotations in any OGR-readable file (GeoJSON/GPKG/SHP)
-    #   unosat  a UNOSAT export — a file, or a directory (pin with date, or
-    #           auto-discover the export nearest the prediction dates)
-    #   raster  counts already resolved on the master grid
+    #   vector       point annotations in any OGR-readable file (GeoJSON/GPKG/SHP)
+    #   unosat       a UNOSAT export — a file, or a directory (pin with date, or
+    #                auto-discover the export nearest the prediction dates)
+    #   raster       counts already resolved on the master grid
+    #   manual_eval  the manual tile annotations CSV (pin one acquisition
+    #                date with date); inferred from a .csv path
     reference:
       type: unosat
       path: ${DATA_DIR}/data/reference/unosat

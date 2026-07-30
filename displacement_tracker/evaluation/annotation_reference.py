@@ -11,23 +11,19 @@ Two ways to consume it:
 1. Materialized as a counts raster via the ``annotation-reference`` CLI,
    which resolves one date's annotations onto a master grid and writes a
    GeoTIFF consumable by the validation flow's built-in ``raster``
-   reference type. This works on any checkout.
+   reference type — useful for handing one date's counts to external
+   tooling, or pinning them as a fixed input.
 
-2. Directly, as reference type ``manual_eval``. When the generic
-   reference-data interface (``util/reference_data.py``, introduced with
-   the hyperparameter-tuning pipeline) is present, importing this module
-   registers the type in ``SOURCE_TYPES``::
+2. Directly, as reference type ``manual_eval``, which
+   ``util/reference_data.py`` resolves to the class below::
 
-       import displacement_tracker.evaluation.annotation_reference  # registers
        reference:
          type: manual_eval
          path: displacement_tracker/evaluation/manual_eval/manual_annotation_results.csv
          date: 2024-10-14
 
-   Until a config-driven flow imports this module itself, use the raster
-   export above for config-only pipelines. On checkouts without the
-   interface, the module still imports and the CLI still works; only the
-   ``manual_eval`` type is unavailable (a debug log notes the skip).
+   A ``.csv`` reference path infers this type, so ``type`` may be omitted.
+   Either route resolves the same counts.
 
 The CSV spans several acquisition dates, so ``date`` must pick one
 (``YYYY-MM-DD`` or ``YYYYMMDD``) whenever more than one is present —
@@ -50,15 +46,7 @@ from rasterio.enums import MergeAlg
 
 from displacement_tracker.evaluation.scripts.common import as_points, read_annotations
 from displacement_tracker.util.logging_config import setup_logging
-
-try:
-    from displacement_tracker.util.reference_data import (
-        SOURCE_TYPES,
-        ReferenceSource,
-    )
-except ImportError:  # the tuning pipeline's interface is not on this checkout
-    SOURCE_TYPES = None
-    ReferenceSource = object
+from displacement_tracker.util.reference_data import ReferenceSource
 
 LOGGER = setup_logging("annotation_reference")
 
@@ -67,13 +55,12 @@ class ManualAnnotationReferenceSource(ReferenceSource):
     """Manually annotated tile counts as a reference source.
 
     Implements the ``ReferenceSource.counts_on_grid`` contract from
-    ``util/reference_data.py`` (duck-typed when that module is absent).
-    ``path`` is a CSV with one row per annotated tile carrying the tile
-    centroid (``latitude``/``longitude``, WGS84), an acquisition ``date``
-    and a count column (``manual_tent_count`` by default). Each tile's
-    count lands in the master-grid cell containing its centroid, which
-    resolves counts exactly when the master grid matches the 100 m
-    annotation tiling.
+    ``util/reference_data.py``. ``path`` is a CSV with one row per annotated
+    tile carrying the tile centroid (``latitude``/``longitude``, WGS84), an
+    acquisition ``date`` and a count column (``manual_tent_count`` by
+    default). Each tile's count lands in the master-grid cell containing its
+    centroid, which resolves counts exactly when the master grid matches the
+    100 m annotation tiling.
     """
 
     def __init__(
@@ -152,15 +139,6 @@ def _select_date(
             f"No annotations dated {date} in {csv_path}. Available: {available}"
         )
     return selected
-
-
-if SOURCE_TYPES is not None:
-    SOURCE_TYPES["manual_eval"] = ManualAnnotationReferenceSource
-else:
-    LOGGER.debug(
-        "util.reference_data not available; 'manual_eval' reference type "
-        "not registered (raster export via the CLI still works)."
-    )
 
 
 @click.command()

@@ -133,7 +133,7 @@ Hyperparameter tuning pipeline (the `tune` section of `config.yaml`) — the typ
 ```mermaid
 flowchart TB
     preds["Prediction GeoJSONs<br/>(merge.input_folder — the preds/ folder<br/>of an earlier prediction run)"]
-    refdata["Reference data<br/>(tuning.reference:<br/>vector | unosat | raster)"]
+    refdata["Reference data<br/>(tuning.reference:<br/>vector | unosat | raster | manual_eval)"]
     grid["Master grid raster<br/>(tuning.master_grid)"]
     merge_raw["<b>merge_raw</b> — h_merge_geojsons<br/>merges & deduplicates WITHOUT thresholding"]
     scan["<b>scan</b> — g1_scan_validation<br/>rasterizes predictions vs. reference on the master grid,<br/>searches (adjustment_factor, min_adj_peak) optimising tuning.metric"]
@@ -149,7 +149,7 @@ flowchart TB
     merge_tuned --> out
 ```
 
-The reference data is declared through a generic interface (`displacement_tracker/util/reference_data.py`): `vector` point annotations in any OGR-readable file (GeoJSON, GPKG, SHP, ...), a `unosat` export (a file, or a directory of exports — pinned by an explicit `date`, or auto-discovered as the export closest to the dates stamped on the prediction files, which logs a warning), or a `raster` of counts already resolved on the master grid. Any other source of master-grid-resolved ground truth can be added by implementing a `ReferenceSource`.
+The reference data is declared through a generic interface (`displacement_tracker/util/reference_data.py`): `vector` point annotations in any OGR-readable file (GeoJSON, GPKG, SHP, ...), a `unosat` export (a file, or a directory of exports — pinned by an explicit `date`, or auto-discovered as the export closest to the dates stamped on the prediction files, which logs a warning), a `raster` of counts already resolved on the master grid, or `manual_eval`, the manual tile annotations CSV pinned to one acquisition `date`. The type is inferred from the path suffix when left unset. Any other source of master-grid-resolved ground truth can be added by implementing a `ReferenceSource`.
 
 The same diagrams, together with a full reference of every config key, are available in the UI's **Help** tab (sourced from [`displacement_tracker/pipelines/help.md`](displacement_tracker/pipelines/help.md)).
 
@@ -300,7 +300,7 @@ tune:
     adjustment_factor: 1.0
   tuning:
     master_grid: ${DATA_DIR}/data/master_grid_100m.tif
-    reference:                  # vector | unosat | raster ground truth
+    reference:                  # vector | unosat | raster | manual_eval
       type: unosat
       path: ${DATA_DIR}/data/reference/unosat
       date: 2026-02-15          # explicit selection — no timestamp inference
@@ -468,14 +468,31 @@ though the evaluation keys themselves need no data share.
 #### Using the manual annotations as validation reference data
 
 The manual annotations also plug into the generic reference-data interface
-used by the validation and tuning flows (`util/reference_data.py`,
-introduced with the hyperparameter-tuning pipeline). Two options:
+used by the validation and tuning flows (`util/reference_data.py`). Two
+options:
 
-- Reference type `manual_eval` (registered by importing
-  `displacement_tracker.evaluation.annotation_reference`): point
-  `reference.path` at the annotation CSV and set `reference.date` to pick
-  one acquisition date — each annotated tile's count lands in the
-  master-grid cell containing the tile centroid.
+- Reference type `manual_eval`: point `reference.path` at the annotation
+  CSV and set `reference.date` to pick one acquisition date — each
+  annotated tile's count lands in the master-grid cell containing the tile
+  centroid. A `.csv` path infers the type, so `reference.type` may be left
+  unset:
+
+```yaml
+reference:
+  type: manual_eval       # optional; inferred from the .csv suffix
+  path: displacement_tracker/evaluation/manual_eval/manual_annotation_results.csv
+  date: 2024-10-14        # required whenever the CSV spans several dates
+```
+
+  The same source is available on `validate-geojson`:
+
+```bash
+poetry run validate-geojson --pred-dir path/to/merged_preds \
+  --reference displacement_tracker/evaluation/manual_eval/manual_annotation_results.csv \
+  --reference-type manual_eval --reference-date 2024-10-14 \
+  --master-grid path/to/master_grid.tif
+```
+
 - Materialize one date as a counts raster consumable by the built-in
   `raster` reference type:
 
@@ -485,9 +502,9 @@ poetry run annotation-reference --date 2024-10-14 \
   --output reference_20241014.tif
 ```
 
-The raster export works on any checkout. The `manual_eval` reference type
-additionally requires `util/reference_data.py` (the tuning pipeline) to be
-present, and registers when this module is imported.
+Both routes resolve the same counts. The raster export stays useful for
+handing one date's counts to external tooling, or as a fixed input that
+does not re-read the CSV.
 
 Note the annotations are a sparse sample of tiles: cells without an
 annotated tile read as zero reference counts, so restrict comparisons to

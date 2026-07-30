@@ -1,12 +1,12 @@
 """Direct validation of predicted GeoJSON/GPKG point sets against reference data.
 
 Every prediction file is validated against one explicitly selected reference
-source (point annotations, a UNOSAT export, or a counts raster resolved on
-the master grid — see ``util/reference_data.py``), rasterized onto the
-master grid restricted to the convex hull of the predictions. Per-file RMS,
-MAE, RMSLE, Spearman correlation, total counts and total difference are
-reported. A single (factor, cutoff) is applied to the predictions; for
-optimizing that parameter pair see g1_scan_validation.py.
+source (point annotations, a UNOSAT export, a counts raster resolved on the
+master grid, or the manual tile annotations — see ``util/reference_data.py``),
+rasterized onto the master grid restricted to the convex hull of the
+predictions. Per-file RMS, MAE, RMSLE, Spearman correlation, total counts and
+total difference are reported. A single (factor, cutoff) is applied to the
+predictions; for optimizing that parameter pair see g1_scan_validation.py.
 """
 
 import os
@@ -70,8 +70,9 @@ def validate_one_tile(
     type=click.Path(exists=True),
     required=True,
     help="Reference data: vector annotations (GeoJSON/GPKG/SHP), a UNOSAT "
-    "export (file, or directory + --reference-date), or a counts raster "
-    "on the master grid.",
+    "export (file, or directory + --reference-date), a counts raster "
+    "on the master grid, or the manual annotation CSV "
+    "(+ --reference-date to pick one acquisition date).",
 )
 @click.option(
     "--reference-type",
@@ -82,9 +83,10 @@ def validate_one_tile(
 @click.option(
     "--reference-date",
     default=None,
-    help="Selects one export when --reference is a directory (unosat type). "
-    "If omitted, the export closest to the dates stamped on the "
-    "prediction files is auto-discovered (with a warning).",
+    help="Selects one export when --reference is a directory (unosat), or "
+    "one acquisition date out of the annotation CSV (manual_eval). "
+    "If omitted for unosat, the export closest to the dates stamped on "
+    "the prediction files is auto-discovered (with a warning).",
 )
 @click.option(
     "--reference-layer",

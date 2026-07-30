@@ -10,6 +10,7 @@ from displacement_tracker.evaluation.annotation_reference import (
     ManualAnnotationReferenceSource,
     _select_date,
 )
+from displacement_tracker.util.reference_data import build_reference_source
 
 # 0.01-degree grid anchored at (34.0 E, 32.0 N): cell (row r, col c) covers
 # lon [34.0 + 0.01c, 34.0 + 0.01(c+1)) and lat (32.0 - 0.01(r+1), 32.0 - 0.01r].
@@ -249,3 +250,58 @@ def test_custom_count_column(tmp_path):
 
     # Then: that column drives the rasterized totals
     assert counts[0, 0] == pytest.approx(11.0)
+
+
+# ==========================================================
+# Reachability as the "manual_eval" reference type
+# ==========================================================
+
+
+def test_manual_eval_config_builds_a_source_matching_direct_construction(tmp_path):
+    # Given: a two-date CSV, and the source constructed directly for
+    #        2024-10-14 (count 5 in cell (0,0), 4 in cell (3,2))
+    csv = write_annotation_csv(
+        tmp_path / "ann.csv",
+        [
+            "2024-10-14,31.995,34.005,5\n",
+            "2024-10-14,31.965,34.025,4\n",
+            "2024-11-01,31.995,34.005,7\n",
+        ],
+    )
+    direct = ManualAnnotationReferenceSource(csv, date="2024-10-14")
+
+    # When: the same source is resolved through the config interface, which
+    #       unpacks the registry entry as (factory, allowed options) and
+    #       threads the type-specific options through to the constructor
+    built = build_reference_source(
+        {"type": "manual_eval", "path": csv, "date": "2024-10-14"}
+    )
+    from_config = built.counts_on_grid(GRID_SHAPE, GRID_TRANSFORM, CRS_WGS84)
+
+    # Then: a working source comes back — not the TypeError a bare-class
+    #       registry entry raised on unpacking — and its counts match the
+    #       direct construction cell for cell, with `date` really applied
+    #       (5 + 4, not 5 + 4 + 7)
+    assert isinstance(built, ManualAnnotationReferenceSource)
+    np.testing.assert_array_equal(
+        from_config, direct.counts_on_grid(GRID_SHAPE, GRID_TRANSFORM, CRS_WGS84)
+    )
+    assert from_config[0, 0] == pytest.approx(5.0)
+    assert from_config[3, 2] == pytest.approx(4.0)
+    assert from_config.sum() == pytest.approx(9.0)
+
+
+def test_csv_suffix_infers_the_manual_eval_type(tmp_path):
+    # Given: an annotation CSV, and a config carrying no `type` key at all
+    csv = write_annotation_csv(tmp_path / "ann.csv", ["2024-10-14,31.995,34.005,5\n"])
+
+    # When: build_reference_source infers the type from the .csv suffix
+    source = build_reference_source({"path": csv})
+    counts = source.counts_on_grid(GRID_SHAPE, GRID_TRANSFORM, CRS_WGS84)
+
+    # Then: the annotations are read as such — a vector or raster source
+    #       would have failed to open the file at all — and the tile's count
+    #       lands in its cell
+    assert isinstance(source, ManualAnnotationReferenceSource)
+    assert counts[0, 0] == pytest.approx(5.0)
+    assert counts.sum() == pytest.approx(5.0)

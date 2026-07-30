@@ -9,10 +9,11 @@ that can resolve counts onto a window of the master grid plugs in through
 ``ReferenceSource``::
 
     reference:
-      type: vector            # vector | unosat | raster
+      type: vector            # vector | unosat | raster | manual_eval
       path: ${DATA_DIR}/data/reference/annotations.geojson
 
-Built-in source types (see ``SOURCE_TYPES``):
+``type`` may be omitted, in which case it is inferred from the path suffix.
+Source types (see ``SOURCE_TYPES``):
 
 ``vector``
     Point annotations in any OGR-readable file (GeoJSON, GPKG, SHP, ...);
@@ -29,6 +30,11 @@ Built-in source types (see ``SOURCE_TYPES``):
     Counts already resolved on the master grid (a single-band raster
     aligned with it; anything not aligned is warped cell-to-cell, which
     does not preserve sums — resolve counts onto the master grid upstream).
+``manual_eval``
+    The manually annotated tiles
+    (``evaluation/manual_eval/manual_annotation_results.csv``): each
+    annotated tile's count lands in the cell containing its centroid.
+    ``date`` picks one acquisition date; the CSV spans several.
 """
 
 from __future__ import annotations
@@ -52,6 +58,9 @@ LOGGER = setup_logging("reference_data")
 
 VECTOR_SUFFIXES = (".geojson", ".json", ".gpkg", ".shp", ".fgb", ".gdb")
 RASTER_SUFFIXES = (".tif", ".tiff", ".vrt")
+# The manual annotation CSV is the only tabular reference format, so a .csv
+# reference is unambiguously the manual_eval type.
+CSV_SUFFIX = ".csv"
 
 _DATE_PATTERN = re.compile(r"(\d{4}-\d{2}-\d{2})|(\d{8})")
 
@@ -307,12 +316,27 @@ def rasterize_point_counts(
     )
 
 
+def _manual_annotation_source(path: str, **options) -> ReferenceSource:
+    # Imported here, not at module scope: the class reads the evaluation
+    # package's annotation CSV, so it lives there, and that package imports
+    # this one for `ReferenceSource`.
+    from displacement_tracker.evaluation.annotation_reference import (
+        ManualAnnotationReferenceSource,
+    )
+
+    return ManualAnnotationReferenceSource(path, **options)
+
+
 # type name -> (factory, options it accepts besides `path`). The option
 # sets are the whole config contract, stated in one place.
 SOURCE_TYPES = {
     "vector": (VectorReferenceSource, frozenset({"layer", "where"})),
     "unosat": (UnosatReferenceSource, frozenset({"date", "layer", "where"})),
     "raster": (RasterReferenceSource, frozenset({"band"})),
+    "manual_eval": (
+        _manual_annotation_source,
+        frozenset({"date", "count_column", "lat_column", "lon_column", "date_column"}),
+    ),
 }
 
 
@@ -322,6 +346,8 @@ def _infer_type(path: str) -> str:
         return "raster"
     if suffix in VECTOR_SUFFIXES:
         return "vector"
+    if suffix == CSV_SUFFIX:
+        return "manual_eval"
     raise ValueError(
         f"Cannot infer reference type from {path!r}; set reference.type "
         f"to one of: {', '.join(sorted(SOURCE_TYPES))}."
@@ -332,9 +358,9 @@ def build_reference_source(cfg, nearest_to: datetime | None = None) -> Reference
     """Build a :class:`ReferenceSource` from config.
 
     ``cfg`` is either a bare path (type inferred from the suffix) or a
-    mapping with ``path``, optional ``type`` and any type-specific keys
-    (``date``, ``layer``, ``where``, ``band``). ``None`` values are treated
-    as unset so optional keys can be left as ``null`` in YAML.
+    mapping with ``path``, optional ``type`` and any of the type-specific
+    keys :data:`SOURCE_TYPES` lists for that type. ``None`` values are
+    treated as unset so optional keys can be left as ``null`` in YAML.
 
     ``nearest_to`` is runtime context from the calling code — the date
     stamped on the prediction files being validated; it is never read from
