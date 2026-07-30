@@ -343,9 +343,9 @@ def build_reference_source(cfg, nearest_to: datetime | None = None) -> Reference
     """
     if isinstance(cfg, (str, Path)):
         cfg = {"path": str(cfg)}
-    # ValueError rather than the TypeError TRY004 asks for: every other
-    # rejection in this function raises ValueError, and callers catch config
-    # errors as one kind.
+    # ValueError rather than the TypeError TRY004 asks for: the other two
+    # rejections below raise ValueError, and test_reference_data pins this one
+    # as ValueError as well.
     if not isinstance(cfg, dict):
         raise ValueError(  # noqa: TRY004
             "Reference config must be a path or a mapping with a 'path' key."
