@@ -10,14 +10,27 @@ These pin ``compute_metrics`` and ``is_better`` directly. The tuning scan
 reaches both through a closure over one tile's grouped cell inputs; the
 scan's own tests pin that composition — which cells a ``(factor, cutoff)``
 pair selects — rather than restating these formulas.
+
+Also covered: how ``prepare_grouped_cell_inputs`` resolves the three score
+columns off a prediction file, since which of them are optional decides
+whether a malformed file is skipped loudly or scored silently.
 """
 
 import math
 
+import geopandas as gpd
 import numpy as np
 import pytest
+from _helpers import CRS_WGS84
+from rasterio.io import MemoryFile
+from rasterio.transform import from_origin
+from shapely.geometry import Point
 
-from displacement_tracker.util.validation_core import compute_metrics, is_better
+from displacement_tracker.util.validation_core import (
+    compute_metrics,
+    is_better,
+    prepare_grouped_cell_inputs,
+)
 
 LN2, LN3 = math.log(2.0), math.log(3.0)
 
@@ -176,3 +189,164 @@ def test_compute_metrics_constant_reference_leaves_spearman_undefined():
     assert math.isnan(m["spearman"])
     assert math.isfinite(m["rms"])
     assert math.isfinite(m["mae"])
+
+
+# ---------------------------------------------------------------------------
+# prepare_grouped_cell_inputs — score-column resolution
+#
+# peak_value is required; adjusted_peak and adjustment_signal are optional and
+# follow the missing-field rules documented on PredictedPoint. The distinction
+# matters because both callers wrap this in try/except and skip the tile: a
+# file that stops raising starts being scored against an all-NaN column.
+# ---------------------------------------------------------------------------
+
+
+class _EmptyReference:
+    """A reference source that contributes no counts to any cell.
+
+    prepare_grouped_cell_inputs only asks a reference for its counts raster;
+    what those counts are is the reference layer's business, tested in
+    test_reference_data.py.
+    """
+
+    def counts_on_grid(self, grid_shape, transform, crs, clip_geom=None):
+        return np.zeros(grid_shape, dtype=np.float32)
+
+
+# A square of predictions inside the grid below, so the convex hull is a
+# polygon rather than a degenerate line.
+_PRED_GEOMETRY = [
+    Point(34.401, 31.511),
+    Point(34.404, 31.511),
+    Point(34.404, 31.514),
+    Point(34.401, 31.514),
+]
+
+
+def _prepped(columns, source=None):
+    """Run prepare_grouped_cell_inputs over an in-memory 20x20 master grid."""
+    pred_gdf = gpd.GeoDataFrame(columns, geometry=_PRED_GEOMETRY, crs=CRS_WGS84)
+    profile = {
+        "driver": "GTiff",
+        "height": 20,
+        "width": 20,
+        "count": 1,
+        "dtype": "float32",
+        "crs": CRS_WGS84,
+        "transform": from_origin(34.40, 31.52, 0.0005, 0.0005),
+    }
+    with MemoryFile() as mem:
+        with mem.open(**profile) as dst:
+            dst.write(np.zeros((1, 20, 20), dtype="float32"))
+        with mem.open() as src:
+            grouped = prepare_grouped_cell_inputs(
+                pred_gdf, _EmptyReference(), src, source=source
+            )
+    return grouped["pred_prepped"]
+
+
+PEAKS = [0.2, 0.1, 0.3, 0.4]
+ADJUSTED = [0.25, 0.11, 0.36, 0.44]
+SIGNALS = [0.05, 0.01, 0.06, 0.04]
+
+
+def test_prepare_reads_a_recorded_adjustment_signal_unchanged():
+    # Given: a prediction file carrying all three score columns
+    columns = {
+        "peak_value": PEAKS,
+        "adjusted_peak": ADJUSTED,
+        "adjustment_signal": SIGNALS,
+    }
+
+    # When: prepare_grouped_cell_inputs resolves them
+    prepped = _prepped(columns)
+
+    # Then: the signal is taken from the file as recorded. Rows keep their
+    #       index through the in-bounds selection, so the surviving rows'
+    #       expected signals are looked up by it.
+    assert len(prepped) > 0
+    assert prepped["adjustment_signal"].tolist() == pytest.approx(
+        [SIGNALS[i] for i in prepped.index]
+    )
+
+    # Then: the frame carries only what the keep-mask and the cell arithmetic
+    #       consume — adjusted_peak has served its purpose once the signal is
+    #       resolved, and nothing downstream reads it
+    assert list(prepped.columns) == ["peak_value", "adjustment_signal", "row", "col"]
+
+
+def test_prepare_derives_the_signal_when_the_column_is_absent():
+    # Given: a file predating adjustment_signal, so only two columns exist
+    with_signal = _prepped(
+        {
+            "peak_value": PEAKS,
+            "adjusted_peak": ADJUSTED,
+            "adjustment_signal": SIGNALS,
+        }
+    )
+
+    # When: the same file is read without the signal column
+    without_signal = _prepped({"peak_value": PEAKS, "adjusted_peak": ADJUSTED})
+
+    # Then: the derived signal equals what the recorded one would have been,
+    #       because these fixtures satisfy the invariant at factor 1.0
+    assert without_signal["adjustment_signal"].tolist() == pytest.approx(
+        with_signal["adjustment_signal"].tolist()
+    )
+
+
+def test_prepare_derives_the_signal_for_null_values_in_a_present_column():
+    # Given: a file whose adjustment_signal column exists but is null in places
+    columns = {
+        "peak_value": PEAKS,
+        "adjusted_peak": ADJUSTED,
+        "adjustment_signal": [0.05, None, 0.06, None],
+    }
+
+    # When: prepare_grouped_cell_inputs resolves them
+    prepped = _prepped(columns)
+
+    # Then: nulls are filled the same way an absent column is, so "column
+    #       missing" and "value missing" cannot drift apart
+    reference = _prepped({"peak_value": PEAKS, "adjusted_peak": ADJUSTED})
+    assert prepped["adjustment_signal"].tolist() == pytest.approx(
+        reference["adjustment_signal"].tolist()
+    )
+
+
+def test_prepare_reads_a_point_with_no_adjusted_peak_as_unadjusted():
+    # Given: a file carrying peaks only
+    columns = {"peak_value": PEAKS}
+
+    # When: prepare_grouped_cell_inputs resolves them
+    prepped = _prepped(columns)
+
+    # Then: the signal is zero rather than -peak_value, matching the rule the
+    #       GeoJSON reader applies to the same absence
+    assert prepped["adjustment_signal"].tolist() == pytest.approx([0.0] * len(prepped))
+
+
+def test_prepare_raises_when_the_required_peak_value_column_is_missing():
+    # Given: a file with the optional columns but no peak_value
+    columns = {"adjusted_peak": ADJUSTED, "adjustment_signal": SIGNALS}
+
+    # When/Then: resolving it raises, so both callers go on skipping the tile
+    #            instead of scoring every row as NaN against an empty
+    #            prediction raster
+    with pytest.raises(KeyError):
+        _prepped(columns)
+
+
+def test_prepare_names_the_source_file_when_it_derives_the_signal(caplog):
+    # Given: a file with no adjustment_signal column, read with a source label
+    columns = {"peak_value": PEAKS, "adjusted_peak": ADJUSTED}
+
+    # When: prepare_grouped_cell_inputs resolves it
+    with caplog.at_level("WARNING"):
+        _prepped(columns, source="tile_A.geojson")
+
+    # Then: the warning names the file, so a sweep over many pairs can be
+    #       traced back to the one whose numbers rest on the factor=1.0
+    #       assumption
+    assert "tile_A.geojson" in caplog.text
+    assert "adjustment_signal" in caplog.text

@@ -40,9 +40,10 @@ def validate_one_tile(
     src_grid: rasterio.io.DatasetReader,
     factor: float,
     cutoff: float,
+    source: str | None = None,
 ):
     """Run the full validation pipeline for one prediction file."""
-    grouped = prepare_grouped_cell_inputs(pred_gdf, reference, src_grid)
+    grouped = prepare_grouped_cell_inputs(pred_gdf, reference, src_grid, source=source)
     pred_prepped = grouped["pred_prepped"]
     keep = keep_mask_from_params(pred_prepped, factor=factor, cutoff=cutoff)
 
@@ -113,7 +114,8 @@ def validate_one_tile(
     type=float,
     default=1.0,
     show_default=True,
-    help="Peak rescaling factor: 0 -> peak_value, 1 -> adjusted_peak.",
+    help="Weight of the raw adjustment signal: the peak is adjusted to "
+    "peak_value + factor * adjustment_signal (0 -> the raw peak).",
 )
 @click.option(
     "--cutoff",
@@ -173,7 +175,12 @@ def cli(
 
             try:
                 grouped, processed, metrics = validate_one_tile(
-                    pred_gdf, reference, src_grid, factor=factor, cutoff=cutoff
+                    pred_gdf,
+                    reference,
+                    src_grid,
+                    factor=factor,
+                    cutoff=cutoff,
+                    source=pred_file,
                 )
             except Exception as exc:
                 click.echo(f"Skipping {pred_file}: {exc}")

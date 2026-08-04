@@ -20,7 +20,7 @@ from displacement_tracker.util.config import flow_option, load_flow_config
 from displacement_tracker.util.deduplication import merge_close_points_global
 from displacement_tracker.util.distance import interpolate_centroid
 from displacement_tracker.util.logging_config import setup_logging
-from displacement_tracker.util.thresholding import passes_threshold
+from displacement_tracker.util.thresholding import PredictedPoint, passes_threshold
 
 LOGGER = setup_logging("predict_json")
 
@@ -50,11 +50,10 @@ def extract_tile_centroids(probs_np, bounds, threshold, min_area, crop_pixels=0)
             ):
                 continue
             peak_value = float(probs_np[region_mask].max())
-            # For centroid mode, emit a numeric adjusted_peak to avoid downstream float(None) errors.
-            adjusted_peak = peak_value
             try:
                 lat, lon = interpolate_centroid(centroid, bounds, shape)
-                coords.append((lat, lon, peak_value, adjusted_peak))
+                # This method applies no blur-based adjustment.
+                coords.append(PredictedPoint.unadjusted(lat, lon, peak_value))
             except Exception as exc:
                 LOGGER.warning(f"Interpolation error: {exc}")
 
@@ -64,7 +63,7 @@ def extract_tile_centroids(probs_np, bounds, threshold, min_area, crop_pixels=0)
 def extract_tile_nms(
     probs_np, bounds, threshold, factor=1.0, kernel_size=7, sigma=50.0, crop_pixels=0
 ):
-    """Return interpolated local maxima (lat, lon, peak_value) above threshold."""
+    """Return interpolated local maxima above threshold as PredictedPoints."""
     probs_t = torch.as_tensor(probs_np, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
     blurred_np = gaussian_filter(probs_np, sigma=sigma)
     blurred_t = (
@@ -105,11 +104,17 @@ def extract_tile_nms(
             or col >= cols_max - crop_pixels
         ):
             continue
-        peak_value = float(probs_t[0, 0, row, col])
-        adjusted_peak = float(score_t[0, 0, row, col])
         try:
             lat, lon = interpolate_centroid((row, col), bounds, shape)
-            coords.append((lat, lon, peak_value, adjusted_peak))
+            coords.append(
+                PredictedPoint(
+                    lat=lat,
+                    lon=lon,
+                    peak_value=float(probs_t[0, 0, row, col]),
+                    adjusted_peak=float(score_t[0, 0, row, col]),
+                    adjustment_signal=float(blurred_t[0, 0, row, col]),
+                )
+            )
         except Exception as exc:
             LOGGER.warning(f"Interpolation error: {exc}")
 
@@ -302,11 +307,11 @@ def predict(
         # ensure final flush
         tmp_f.flush()
 
-    # After loop: read streamed points back into memory as flat list (tuples)
+    # After loop: read streamed points back into memory as a flat list
     flat_results = []
     with tmp_ndjson.open("r", encoding="utf-8") as fh:
         for line in fh:
-            flat_results.append(tuple(json.loads(line)))
+            flat_results.append(PredictedPoint(*json.loads(line)))
 
     # optionally remove temp file
     try:
@@ -350,8 +355,8 @@ def save_geojson(points, out_path, boundaries_path=None):
 
     features = []
 
-    for lat, lon, peak, peak_adj in points:
-        pt = Point(lon, lat)
+    for point in points:
+        pt = Point(point.lon, point.lat)
 
         # Keep only points inside boundary
         if not gaza_union.contains(pt):
@@ -360,11 +365,12 @@ def save_geojson(points, out_path, boundaries_path=None):
         features.append(
             {
                 "type": "Feature",
-                "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                "geometry": {"type": "Point", "coordinates": [point.lon, point.lat]},
                 "properties": {
                     "name": "tents",
-                    "peak_value": peak,
-                    "adjusted_peak": peak_adj,
+                    "peak_value": point.peak_value,
+                    "adjusted_peak": point.adjusted_peak,
+                    "adjustment_signal": point.adjustment_signal,
                 },
             }
         )

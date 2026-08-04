@@ -24,6 +24,11 @@ import rasterio
 import yaml
 from pyproj import Transformer
 
+from displacement_tracker.util.thresholding import (
+    PredictedPoint,
+    adjustment_signal_from_peaks,
+)
+
 # ---------------------------------------------------------------------------
 # Coordinate reference systems
 # ---------------------------------------------------------------------------
@@ -75,16 +80,38 @@ def write_annotation_csv(path, rows, extra_columns=()):
     return str(path)
 
 
+def predicted_point(lat, lon, peak, adjusted_peak, adjustment_signal=None):
+    """Build a PredictedPoint, deriving the raw signal from the peaks by default.
+
+    The default keeps a point satisfying the invariant on PredictedPoint at a
+    prediction-time factor of 1.0, so a case that only cares about position or
+    peak can state two peaks and stay consistent.
+    """
+    if adjustment_signal is None:
+        adjustment_signal = adjustment_signal_from_peaks(peak, adjusted_peak)
+    return PredictedPoint(lat, lon, peak, adjusted_peak, adjustment_signal)
+
+
 def write_geojson(path, feats):
-    """Write (lon, lat, peak_value, adjusted_peak) tuples as a GeoJSON file."""
-    features = [
-        {
-            "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [lon, lat]},
-            "properties": {"peak_value": peak, "adjusted_peak": adj},
-        }
-        for lon, lat, peak, adj in feats
-    ]
+    """Write point tuples as a GeoJSON file.
+
+    Each tuple is (lon, lat, peak_value, adjusted_peak) or, with a fifth
+    element, (…, adjustment_signal) — omitting it writes a file with no
+    ``adjustment_signal`` property, i.e. one predating that field.
+    """
+    features = []
+    for feat in feats:
+        lon, lat, peak, adj = feat[:4]
+        properties = {"peak_value": peak, "adjusted_peak": adj}
+        if len(feat) > 4:
+            properties["adjustment_signal"] = feat[4]
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                "properties": properties,
+            }
+        )
     path.write_text(
         json.dumps({"type": "FeatureCollection", "features": features}),
         encoding="utf-8",

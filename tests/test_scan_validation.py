@@ -26,6 +26,7 @@ from displacement_tracker.g1_scan_validation import (
     scan_tile,
     write_best_params,
 )
+from displacement_tracker.util.thresholding import adjustment_signal_from_peaks
 from displacement_tracker.util.validation_core import initial_best_value, is_better
 
 
@@ -76,6 +77,12 @@ def _grouped(points, val_counts, masked_out=()):
     ``val_counts`` is the reference-count raster, whose shape sets grid_shape;
     ``masked_out`` lists the (row, col) cells excluded from the analysis mask,
     which defaults to every cell included.
+
+    The keep-mask reads the raw adjustment signal rather than the adjusted
+    peak, so the signal each row implies is derived here. Stating rows as
+    (peak, adjusted_peak) keeps the cases below expressed in the terms their
+    arithmetic is checked in: at factor f the rescaled peak is
+    peak + f * (adjusted_peak - peak), unchanged by carrying the signal.
     """
     peak_value, adjusted_peak, rows, cols = (list(v) for v in zip(*points))
     val_raster = np.array(val_counts, dtype=np.float32)
@@ -86,7 +93,10 @@ def _grouped(points, val_counts, masked_out=()):
         "pred_prepped": pd.DataFrame(
             {
                 "peak_value": peak_value,
-                "adjusted_peak": adjusted_peak,
+                "adjustment_signal": [
+                    adjustment_signal_from_peaks(peak, adj)
+                    for peak, adj in zip(peak_value, adjusted_peak)
+                ],
                 "row": rows,
                 "col": cols,
             }

@@ -27,7 +27,11 @@ from shapely.geometry import Point
 from displacement_tracker.util.config import flow_option, load_flow_config
 from displacement_tracker.util.deduplication import merge_close_points_global
 from displacement_tracker.util.logging_config import setup_logging
-from displacement_tracker.util.thresholding import filter_points_by_adjusted_peak
+from displacement_tracker.util.thresholding import (
+    PredictedPoint,
+    adjustment_signal_from_peaks,
+    filter_points_by_rescaled_peak,
+)
 from displacement_tracker.util.zones import load_zone_geometry
 
 LOGGER = setup_logging("merge_geojsons")
@@ -90,16 +94,17 @@ def resolve_threshold(
     return global_threshold
 
 
-def load_points_from_geojson(path: Path) -> list[tuple]:
+def load_points_from_geojson(path: Path) -> list[PredictedPoint]:
     """
-    Load all Point features from a GeoJSON file.
-    Returns a list of (lat, lon, peak_value, adjusted_peak) tuples.
-    adjusted_peak defaults to 0.0 when the field is absent.
+    Load all Point features from a GeoJSON file, applying the missing-field
+    rules documented on PredictedPoint. Logs once per file when any point's
+    raw adjustment signal had to be derived rather than read.
     """
     with path.open("r", encoding="utf-8") as f:
         gj = json.load(f)
 
     points = []
+    derived_signals = 0
     for feat in gj.get("features", []):
         geom = feat.get("geometry") or {}
         if geom.get("type") != "Point":
@@ -109,30 +114,48 @@ def load_points_from_geojson(path: Path) -> list[tuple]:
             continue
         lon, lat = float(coords[0]), float(coords[1])
         props = feat.get("properties") or {}
-        peak = float(props.get("peak_value", 0.0))
-        adj_raw = props.get("adjusted_peak", 0.0)
-        adj_peak = float(adj_raw) if adj_raw is not None else 0.0
-        points.append([lat, lon, peak, adj_peak])
+        peak_raw = props.get("peak_value")
+        peak = float(peak_raw) if peak_raw is not None else 0.0
+        adj_raw = props.get("adjusted_peak")
+        # A point with no adjusted peak recorded was never adjusted.
+        adj_peak = float(adj_raw) if adj_raw is not None else peak
+        signal_raw = props.get("adjustment_signal")
+        if signal_raw is None:
+            adj_signal = adjustment_signal_from_peaks(peak, adj_peak)
+            derived_signals += 1
+        else:
+            adj_signal = float(signal_raw)
+        points.append(PredictedPoint(lat, lon, peak, adj_peak, adj_signal))
+
+    if derived_signals:
+        LOGGER.warning(
+            "  %s: %d/%d points carry no adjustment_signal; derived it as "
+            "(adjusted_peak - peak_value), which assumes the predictions were "
+            "made with selection.factor=1.0",
+            path.name,
+            derived_signals,
+            len(points),
+        )
 
     return points
 
 
 def filter_points_by_zone(
-    points: list[tuple], zone_geom, keep_inside: bool
-) -> list[tuple]:
+    points: list[PredictedPoint], zone_geom, keep_inside: bool
+) -> list[PredictedPoint]:
     """Keep only points inside (keep_inside) or outside the zone geometry."""
     if zone_geom is None:
         return points
 
     return [
-        (lat, lon, peak, adj_peak)
-        for lat, lon, peak, adj_peak in points
-        if zone_geom.contains(Point(lon, lat)) == keep_inside
+        point
+        for point in points
+        if bool(zone_geom.contains(Point(point.lon, point.lat))) == keep_inside
     ]
 
 
-def save_merged_gpkg(points: list[tuple], out_path: Path) -> None:
-    """Save merged (lat, lon, peak, adj_peak) tuples to a GeoPackage file."""
+def save_merged_gpkg(points: list[PredictedPoint], out_path: Path) -> None:
+    """Save merged points to a GeoPackage file."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     if out_path.exists():
@@ -144,12 +167,13 @@ def save_merged_gpkg(points: list[tuple], out_path: Path) -> None:
 
     rows = [
         {
-            "geometry": Point(lon, lat),
+            "geometry": Point(point.lon, point.lat),
             "name": "tents",
-            "peak_value": peak,
-            "adjusted_peak": adj_peak,
+            "peak_value": point.peak_value,
+            "adjusted_peak": point.adjusted_peak,
+            "adjustment_signal": point.adjustment_signal,
         }
-        for lat, lon, peak, adj_peak in points
+        for point in points
     ]
 
     gdf = gpd.GeoDataFrame(rows, crs="EPSG:4326")
@@ -182,7 +206,7 @@ def process_geojson_folder(
 
     LOGGER.info("Found %d GeoJSON files in %s", len(geojson_files), input_dir)
 
-    flat: list[tuple] = []
+    flat: list[PredictedPoint] = []
     unreadable = 0
     for path in geojson_files:
         try:
@@ -193,12 +217,13 @@ def process_geojson_folder(
             continue
         threshold = resolve_threshold(path.name, thresholds_data, min_adj_peak)
         loaded = len(pts)
-        pts = filter_points_by_adjusted_peak(pts, threshold, adjustment_factor)
+        pts = filter_points_by_rescaled_peak(pts, threshold, adjustment_factor)
         LOGGER.info(
-            "  %s: %d points loaded, %d kept (adj_peak >= %.4f)",
+            "  %s: %d points loaded, %d kept (peak + %.4g * adjustment_signal >= %.4f)",
             path.name,
             loaded,
             len(pts),
+            adjustment_factor,
             threshold,
         )
 

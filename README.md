@@ -514,7 +514,7 @@ annotated areas.
 
 -   **Tile Manifests**: The `annotated-scanner` and `image-scanner` scripts produce per-TIFF Parquet manifests (one row per tile: raster path, pixel window, bbox and standardisation stats), plus a labels JSON alongside the training manifests.
 -   **Model Checkpoints**: The training script saves the best-performing model (`best_model.pth`) and dataset split information in the `runs/<timestamp>/` directory.
--   **Prediction GeoJSONs**: The prediction script generates GeoJSON files with point coordinates for each detected tent, including a `peak_value` property.
+-   **Prediction GeoJSONs**: The prediction script generates GeoJSON files with point coordinates for each detected tent, including `peak_value` (the raw model probability at the peak), `adjustment_signal` (the raw blurred neighbourhood score, before any factor is applied) and `adjusted_peak` (`peak_value + factor × adjustment_signal`). That identity holds in every file the pipeline writes, including the merged GeoPackage: later stages multiply the raw signal by their own factor — e.g. `merge.adjustment_factor` — to decide what to keep, but leave the recorded values alone, so the three columns always reconcile and can be sanity checked against each other.
 -   **Evaluation Reports**: Validation and evaluation scripts produce CSV reports and difference rasters summarizing model performance.
 ---
 

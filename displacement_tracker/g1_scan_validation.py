@@ -544,7 +544,9 @@ def run_scan(params: dict) -> dict:
     with rasterio.open(settings.master_grid) as src_grid:
         pred_gdf = _load_predictions(settings, src_grid.crs)
         try:
-            grouped = prepare_grouped_cell_inputs(pred_gdf, reference, src_grid)
+            grouped = prepare_grouped_cell_inputs(
+                pred_gdf, reference, src_grid, source=Path(settings.input_path).name
+            )
         except Exception as exc:
             raise click.ClickException(
                 f"Could not resolve {settings.input_path} onto the master grid: {exc}"

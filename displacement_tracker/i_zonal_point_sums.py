@@ -83,7 +83,9 @@ def summarize_points_by_zone(
     joined = gpd.sjoin(points_gdf, zones_cols, how="left", predicate="within")
 
     value_cols = [
-        col for col in ["peak_value", "adjusted_peak"] if col in joined.columns
+        col
+        for col in ["peak_value", "adjusted_peak", "adjustment_signal"]
+        if col in joined.columns
     ]
     grouped = (
         joined.groupby(zone_id_column, dropna=False)
@@ -124,20 +126,10 @@ def write_zone_summary(
     zones_with_summary["tent_count"] = (
         zones_with_summary["tent_count"].fillna(0).astype(int)
     )
-    if "peak_value" in value_cols:
-        zones_with_summary["peak_value_median"] = zones_with_summary[
-            "peak_value_median"
-        ].fillna(0.0)
-        zones_with_summary["peak_value_iqr"] = zones_with_summary[
-            "peak_value_iqr"
-        ].fillna(0.0)
-    if "adjusted_peak" in value_cols:
-        zones_with_summary["adjusted_peak_median"] = zones_with_summary[
-            "adjusted_peak_median"
-        ].fillna(0.0)
-        zones_with_summary["adjusted_peak_iqr"] = zones_with_summary[
-            "adjusted_peak_iqr"
-        ].fillna(0.0)
+    for value_col in value_cols:
+        for stat in ("median", "iqr"):
+            column = f"{value_col}_{stat}"
+            zones_with_summary[column] = zones_with_summary[column].fillna(0.0)
 
     output_csv = output_dir / f"zonal_sum_{zone_name}.csv"
     output_gpkg = output_dir / f"zonal_sum_{zone_name}.gpkg"

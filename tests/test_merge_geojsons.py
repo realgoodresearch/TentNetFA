@@ -5,6 +5,7 @@ import json
 import click
 import geopandas as gpd
 import pytest
+from _helpers import predicted_point as point
 from _helpers import write_geojson
 from shapely.geometry import Point, box
 
@@ -213,14 +214,17 @@ def test_load_points_skips_non_points_and_defaults_adjusted_peak(tmp_path):
     # When: load_points_from_geojson parses the file
     points = [tuple(p) for p in load_points_from_geojson(path)]
 
-    # Then: only the four valid Points survive, as (lat, lon, peak, adj)
-    #       with lon/lat swapped from GeoJSON order and missing/None
-    #       adjusted_peak (and missing peak_value) defaulting to 0.0
+    # Then: only the four valid Points survive, as
+    #       (lat, lon, peak, adj, signal) with lon/lat swapped from GeoJSON
+    #       order and a missing peak_value defaulting to 0.0. A missing or null
+    #       adjusted_peak reads as unadjusted — equal to peak_value, so the
+    #       derived signal is 0.0 rather than -peak_value. No feature carries
+    #       an adjustment_signal, so every signal here is derived.
     assert points == [
-        (20.0, 10.0, 0.7, 0.6),
-        (2.0, 1.0, 0.5, 0.0),
-        (4.0, 3.0, 0.4, 0.0),
-        (6.0, 5.0, 0.0, 0.0),
+        (20.0, 10.0, 0.7, 0.6, pytest.approx(-0.1, abs=1e-12)),
+        (2.0, 1.0, 0.5, 0.5, 0.0),
+        (4.0, 3.0, 0.4, 0.4, 0.0),
+        (6.0, 5.0, 0.0, 0.0, 0.0),
     ]
 
 
@@ -234,8 +238,8 @@ def test_filter_points_by_zone_inside_outside_semantics():
     #        (lat=2, lon=15) inside it, and its lat/lon-swapped twin at
     #        (lat=15, lon=2) which is only "inside" if axes are confused
     zone = box(10.0, 0.0, 20.0, 5.0)
-    inside = (2.0, 15.0, 0.5, 0.5)
-    swapped = (15.0, 2.0, 0.6, 0.6)
+    inside = point(2.0, 15.0, 0.5, 0.5)
+    swapped = point(15.0, 2.0, 0.6, 0.6)
 
     # When: filtering with keep_inside=True and keep_inside=False
     kept_inside = filter_points_by_zone([inside, swapped], zone, True)
@@ -250,7 +254,7 @@ def test_filter_points_by_zone_inside_outside_semantics():
 
 def test_filter_points_by_zone_none_zone_is_identity():
     # Given: two points and no zone geometry
-    pts = [(2.0, 15.0, 0.5, 0.5), (15.0, 2.0, 0.6, 0.6)]
+    pts = [point(2.0, 15.0, 0.5, 0.5), point(15.0, 2.0, 0.6, 0.6)]
 
     # When: filter_points_by_zone runs with zone_geom=None
     kept_inside = filter_points_by_zone(pts, None, True)
@@ -363,13 +367,42 @@ def test_process_folder_rescales_before_thresholding(tmp_path):
         **default_merge_kwargs(min_adj_peak=0.4, adjustment_factor=0.0),
     )
 
-    # Then: A survives (0.5 >= 0.4) with its adjusted_peak REPLACED by the
-    #       rescaled 0.5, while B is dropped (0.2 < 0.4) despite its raw
-    #       adjusted_peak of 0.9
+    # Then: A survives (0.5 >= 0.4) and B is dropped (0.2 < 0.4) despite its
+    #       raw adjusted_peak of 0.9. The rescaled value decides what is kept
+    #       but is not written: A keeps the adjusted_peak it was predicted
+    #       with, 0.3.
     gdf = gpd.read_file(out)
     assert len(gdf) == 1
     assert gdf.iloc[0]["peak_value"] == pytest.approx(0.5)
-    assert gdf.iloc[0]["adjusted_peak"] == pytest.approx(0.5)
+    assert gdf.iloc[0]["adjusted_peak"] == pytest.approx(0.3)
+
+
+def test_process_folder_writes_points_that_reconcile_at_any_factor(tmp_path):
+    # Given: one point predicted as peak=0.2, adjusted_peak=0.25 with the raw
+    #        signal 0.05 recorded, merged at adjustment_factor=10 — a factor
+    #        that scales the signal well away from its prediction-time weight
+    write_geojson(tmp_path / "a.geojson", [(0.0, 0.0, 0.2, 0.25, 0.05)])
+    out = tmp_path / "out.gpkg"
+
+    # When: process_geojson_folder keeps it at min_adj_peak=0.5
+    #       (0.2 + 10*0.05 = 0.7)
+    process_geojson_folder(
+        tmp_path,
+        out,
+        **default_merge_kwargs(min_adj_peak=0.5, adjustment_factor=10.0),
+    )
+
+    # Then: the written row still satisfies the invariant on PredictedPoint —
+    #       the merge factor is nowhere baked into it, so subtracting the peak
+    #       from the adjusted peak recovers the raw signal rather than 10x it
+    gdf = gpd.read_file(out)
+    assert len(gdf) == 1
+    row = gdf.iloc[0]
+    assert row["peak_value"] == pytest.approx(0.2)
+    assert row["adjustment_signal"] == pytest.approx(0.05)
+    assert row["adjusted_peak"] == pytest.approx(
+        row["peak_value"] + row["adjustment_signal"]
+    )
 
 
 def test_process_folder_applies_per_file_thresholds(tmp_path):

@@ -16,11 +16,16 @@ from rasterio import features, mask
 from rasterio.transform import rowcol
 from scipy.stats import spearmanr
 
+from displacement_tracker.util.logging_config import setup_logging
 from displacement_tracker.util.reference_data import ReferenceSource
 from displacement_tracker.util.thresholding import (
+    adjusted_peak_from_signal,
+    adjustment_signal_from_peaks,
     passes_threshold,
-    rescale_adjusted_peak,
 )
+
+LOGGER = setup_logging("validation_core")
+
 
 # Direction of optimization for each metric: "min" = lower is better.
 METRIC_DIRECTIONS: dict[str, str] = {
@@ -47,8 +52,12 @@ def prepare_grouped_cell_inputs(
     reference: ReferenceSource,
     src_grid: rasterio.io.DatasetReader,
     nodata_val: float = -9999.0,
+    source: str | None = None,
 ) -> dict[str, object]:
-    """Build one-time geometry/grid products and per-point cell assignments."""
+    """Build one-time geometry/grid products and per-point cell assignments.
+
+    ``source`` names the prediction file in fallback warnings.
+    """
     prediction_extent_geom = pred_gdf.union_all().convex_hull
 
     out_image, out_transform = mask.mask(
@@ -83,7 +92,31 @@ def prepare_grouped_cell_inputs(
         (rows >= 0) & (rows < grid_shape[0]) & (cols >= 0) & (cols < grid_shape[1])
     )
 
-    pred_prepped = pred_gdf.loc[in_bounds, ["peak_value", "adjusted_peak"]].copy()
+    # peak_value is required — selecting it by label keeps a file that lacks it
+    # raising, so callers go on skipping that tile instead of scoring it against
+    # an all-NaN column. reindex then materialises whichever of the optional
+    # columns the file omits as NaN, so "column absent" and "value null" take
+    # one path. The missing-field rules are the ones on PredictedPoint.
+    optional_cols = ["adjusted_peak", "adjustment_signal"]
+    in_bounds_gdf = pred_gdf.loc[in_bounds]
+    pred_prepped = in_bounds_gdf[["peak_value"]].join(
+        in_bounds_gdf.reindex(columns=optional_cols)
+    )
+    adjusted_peak = pred_prepped.pop("adjusted_peak").fillna(pred_prepped["peak_value"])
+
+    missing_signal = pred_prepped["adjustment_signal"].isna()
+    if missing_signal.any():
+        LOGGER.warning(
+            "%s%d/%d predictions carry no adjustment_signal; deriving it as "
+            "(adjusted_peak - peak_value), which assumes the predictions were "
+            "made with selection.factor=1.0",
+            f"{source}: " if source else "",
+            int(missing_signal.sum()),
+            len(pred_prepped),
+        )
+        pred_prepped["adjustment_signal"] = pred_prepped["adjustment_signal"].fillna(
+            adjustment_signal_from_peaks(pred_prepped["peak_value"], adjusted_peak)
+        )
     pred_prepped["row"] = rows[in_bounds]
     pred_prepped["col"] = cols[in_bounds]
 
@@ -132,11 +165,11 @@ def process_grouped_cells(
 def keep_mask_from_params(pred_prepped, factor: float, cutoff: float) -> np.ndarray:
     """Return a boolean keep-mask for predictions given a rescaling factor and cutoff.
 
-    The rescaled peak is `peak_value + factor * (adjusted_peak - peak_value)`;
-    a point is kept iff its rescaled peak is >= `cutoff`.
+    The rescaled peak is `peak_value + factor * adjustment_signal`; a point is
+    kept iff its rescaled peak is >= `cutoff`.
     """
-    rescaled = rescale_adjusted_peak(
-        pred_prepped["peak_value"], pred_prepped["adjusted_peak"], factor
+    rescaled = adjusted_peak_from_signal(
+        pred_prepped["peak_value"], pred_prepped["adjustment_signal"], factor
     )
     return passes_threshold(rescaled, cutoff).to_numpy()
 
