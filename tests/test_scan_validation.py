@@ -45,7 +45,7 @@ def _settings(**overrides) -> ScanSettings:
         "xtol_factor": 1e-3,
         "xtol_cutoff": 1e-6,
         "refine_maxiter": 60,
-        "exclusion_zones": None,
+        "inclusion_zones": None,
     }
     base.update(overrides)
     return ScanSettings(**base)
@@ -177,7 +177,7 @@ def test_scan_settings_defaults_and_merge_output_fallback():
     assert s.xtol_factor == pytest.approx(1e-3)
     assert s.xtol_cutoff == pytest.approx(1e-6)
     assert s.refine_maxiter == 60
-    assert s.exclusion_zones is None
+    assert s.inclusion_zones is None
     assert s.pred_folder is None
 
 
@@ -202,6 +202,61 @@ def test_scan_settings_explicit_input_wins_and_pred_folder_from_merge():
     assert s.input_path == "explicit.gpkg"
     assert s.pred_folder == "preds"
     assert s.best_params_path == os.path.join("custom_out", "best_params.yaml")
+
+
+def test_scan_settings_carries_inclusion_zones():
+    # Given: a config setting the clip zones under the current key
+    params = {
+        "tuning": {
+            "input": "m.gpkg",
+            "master_grid": "g.tif",
+            "reference": "r.geojson",
+            "inclusion_zones": "zones.gpkg",
+        }
+    }
+
+    # When: ScanSettings.from_config resolves it
+    s = ScanSettings.from_config(params)
+
+    # Then: the path reaches the settings unchanged
+    assert s.inclusion_zones == "zones.gpkg"
+
+
+def test_scan_settings_legacy_exclusion_zones_key_raises():
+    # Given: a config still using the pre-rename tuning.exclusion_zones key,
+    #        whose name inverted what the clip actually does
+    params = {
+        "tuning": {
+            "input": "m.gpkg",
+            "master_grid": "g.tif",
+            "reference": "r.geojson",
+            "exclusion_zones": "zones.gpkg",
+        }
+    }
+
+    # When: ScanSettings.from_config resolves it
+    # Then: it fails loudly rather than silently ignoring the clip, and the
+    #       message names the key the user has to write instead
+    with pytest.raises(click.ClickException, match="tuning.inclusion_zones"):
+        ScanSettings.from_config(params)
+
+
+def test_scan_settings_legacy_exclusion_zones_key_raises_even_when_null():
+    # Given: the legacy key present but null — the shipped config's own value,
+    #        so a presence check is the only thing that catches a stale config
+    params = {
+        "tuning": {
+            "input": "m.gpkg",
+            "master_grid": "g.tif",
+            "reference": "r.geojson",
+            "exclusion_zones": None,
+        }
+    }
+
+    # When: ScanSettings.from_config resolves it
+    # Then: it still raises; a truthiness check here would pass a stale config
+    with pytest.raises(click.ClickException, match="tuning.inclusion_zones"):
+        ScanSettings.from_config(params)
 
 
 def test_scan_settings_missing_input_raises():
