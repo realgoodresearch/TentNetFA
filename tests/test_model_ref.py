@@ -1,9 +1,12 @@
 """Tests for displacement_tracker.util.model_ref: parsing a model reference
-into the Hub release or local checkpoint it names.
+into the Hub release or local checkpoint it names, and resolving a local one
+to a verified file.
 
-Parsing needs no network and no filesystem, so nothing here is stubbed.
+Parsing needs no network, and resolving a local checkpoint needs only real
+files in tmp_path, so nothing here is stubbed.
 """
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -12,6 +15,7 @@ from displacement_tracker.util.model_ref import (
     HubRef,
     ModelRefError,
     parse_model_ref,
+    resolve_model_ref,
 )
 
 SHA = "a" * 40
@@ -151,3 +155,65 @@ def test_a_hub_url_without_a_repository_name_is_rejected():
     # Then: it raises rather than inventing a repository
     with pytest.raises(ModelRefError, match="Hugging Face model URL"):
         parse_model_ref("https://huggingface.co/owner")
+
+
+# ---------------------------------------------------------------------------
+# Resolving a local checkpoint
+# ---------------------------------------------------------------------------
+
+
+def test_an_existing_local_checkpoint_resolves_to_itself(tmp_path):
+    # Given: a checkpoint on disk
+    path = tmp_path / "best_model.pth"
+    path.write_bytes(b"weights")
+
+    # When: it is resolved
+    # Then: the same path comes back, unchanged from today's behaviour
+    assert resolve_model_ref(str(path)) == path
+
+
+def test_a_missing_local_checkpoint_is_reported(tmp_path):
+    # Given: a path to a checkpoint that is not there
+    # When: it is resolved
+    # Then: it raises, naming the path, before any loader sees it
+    with pytest.raises(ModelRefError, match="not found"):
+        resolve_model_ref(str(tmp_path / "absent.pth"))
+
+
+def test_a_hub_reference_is_refused_until_fetching_exists():
+    # Given: a fully pinned Hub reference, which this build cannot fetch
+    # When: it is resolved
+    # Then: it says so plainly instead of failing as a missing file — the
+    #       reference is well formed, the capability is what is absent
+    with pytest.raises(ModelRefError, match="cannot fetch yet"):
+        resolve_model_ref(REF)
+
+
+def test_a_local_checkpoint_digest_is_verified(tmp_path):
+    # Given: a checkpoint and the sha256 of its contents
+    path = tmp_path / "best_model.pth"
+    path.write_bytes(b"weights")
+    digest = hashlib.sha256(b"weights").hexdigest()
+
+    # When: it is resolved with the matching digest, in either accepted form
+    # Then: it resolves
+    assert resolve_model_ref(str(path), sha256=digest) == path
+    assert resolve_model_ref(str(path), sha256=f"sha256:{digest.upper()}") == path
+
+    # When: it is resolved with a digest that does not match
+    # Then: it raises, quoting both digests, rather than loading the file
+    with pytest.raises(ModelRefError, match=f"expected sha256 {'0' * 64}"):
+        resolve_model_ref(str(path), sha256="0" * 64)
+
+
+def test_a_malformed_expected_digest_is_reported_as_malformed(tmp_path):
+    # Given: a checkpoint, and an expected digest one character short
+    path = tmp_path / "best_model.pth"
+    path.write_bytes(b"weights")
+
+    # When: it is resolved with that digest
+    # Then: the typo is named as a typo, rather than the file being reported
+    #       as corrupt. (The config-level twin covers the YAML case that
+    #       produces a non-string.)
+    with pytest.raises(ModelRefError, match="not a 64-character hex digest"):
+        resolve_model_ref(str(path), sha256="0" * 63)
