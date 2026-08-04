@@ -23,17 +23,21 @@ from displacement_tracker.util.logging_config import setup_logging
 LOGGER = setup_logging("zones")
 
 
-def load_zone_geometry(zones_path: str | None, label: str, crs: str):
+def load_zone_geometry(zones_path: str | None, label: str, crs):
     """Load and unify polygon geometries from a shapefile or GeoPackage file.
 
     Returns a single geometry in ``crs``, or None when no path is given or the
     file holds no features. ``label`` names the zones in log and error
     messages ("exclusion", "inclusion").
 
-    ``crs`` is deliberately required rather than defaulted: a caller that
-    clips in a projected CRS and forgets it would get a silent geographic
-    geometry and a mask that selects nothing, which is the exact failure this
-    parameter exists to prevent.
+    ``crs`` is anything ``GeoDataFrame.to_crs`` accepts — the merge stage
+    passes the string ``"EPSG:4326"``, the validation stages pass a
+    ``rasterio.crs.CRS`` straight off the open master grid — so it is left
+    unannotated, as every other CRS parameter in this codebase is. It is
+    deliberately required rather than defaulted: a caller that clips in a
+    projected CRS and forgets it would get a silent geographic geometry and a
+    mask that selects nothing, which is the exact failure this parameter
+    exists to prevent.
     """
     if not zones_path:
         return None
