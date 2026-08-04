@@ -31,6 +31,7 @@ from displacement_tracker.util.validation_core import (
     process_grouped_cells,
     write_output_rasters,
 )
+from displacement_tracker.util.zones import load_zone_geometry
 
 
 def validate_one_tile(
@@ -102,10 +103,11 @@ def validate_one_tile(
 @click.option("--master-grid", type=click.Path(exists=True), required=True)
 @click.option("--out-dir", type=click.Path(), default="validation_results")
 @click.option(
-    "--exclusion-zones",
+    "--inclusion-zones",
     type=click.Path(exists=True),
     default=None,
-    help="Optional gpkg file of exclusion zones; predictions are clipped to its union.",
+    help="Optional gpkg file of inclusion zones; predictions are clipped to "
+    "its union, i.e. only points inside it are kept.",
 )
 @click.option(
     "--factor",
@@ -131,7 +133,7 @@ def cli(
     reference_where,
     master_grid,
     out_dir,
-    exclusion_zones,
+    inclusion_zones,
     factor,
     cutoff,
 ):
@@ -153,22 +155,21 @@ def cli(
         nearest_to=infer_target_date(pred_paths),
     )
 
-    exclusion_geom = None
-    if exclusion_zones:
-        exclusion_geom = gpd.read_file(exclusion_zones).geometry.union_all()
-
     results = []
 
     with rasterio.open(master_grid) as src_grid:
         raster_crs = src_grid.crs
+        # Loaded here, not before the open: the zones have to be reprojected
+        # onto the grid CRS the predictions are clipped in.
+        inclusion_geom = load_zone_geometry(inclusion_zones, "inclusion", raster_crs)
 
         for pred_path in pred_paths:
             pred_file = os.path.basename(pred_path)
             base_name = os.path.splitext(pred_file)[0]
 
             pred_gdf = gpd.read_file(pred_path).to_crs(raster_crs)
-            if exclusion_geom is not None:
-                pred_gdf = pred_gdf.clip(exclusion_geom)
+            if inclusion_geom is not None:
+                pred_gdf = pred_gdf.clip(inclusion_geom)
             if pred_gdf.empty:
                 continue
 

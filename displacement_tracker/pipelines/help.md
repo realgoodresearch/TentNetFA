@@ -117,7 +117,7 @@ manually.
 |---|---|
 | `geotiff_dir` | Directory containing the input GeoTIFF satellite images. The download stage writes here; the scan stages read from here. |
 | `loading.files` | List of filename substrings. The download stage uses them as Google Drive search strings (empty = download nothing); the scan stages use them as filters (empty = scan **all** `.tif` files). |
-| `boundaries` | Gaza municipal boundaries shapefile; tiles outside it are skipped. |
+| `boundaries` | Gaza municipal boundaries shapefile. The training scan crops each source raster to it before tiling; the prediction flow tiles the whole raster and drops out-of-boundary points when the predictions are written. |
 | `prewar_gaza` | Pre-war reference raster. Each tile is paired with the matching pre-war crop; the model sees (current, pre-war, difference). |
 | `manifest_folder` | Where per-image tile manifests are written/read. **Runner-managed** → `manifests/`. |
 
@@ -128,7 +128,7 @@ manually.
 | `processing.core_metres` | Side length (m) of a tile's core area — the region whose predictions/labels count. |
 | `processing.margin_metres` | Extra context (m) around the core; tiles overlap by this margin. Also drives the prediction crop (`crop_pixels`) and NMS sigma. |
 | `processing.quality_thresholds.min_valid_fraction` | Minimum non-black/NaN fraction for a tile to be kept (train: strict ~0.9; predict: loose ~0.1). |
-| `processing.max_workers`, `max_tasks_per_child`, `max_pool_restarts` | Scan parallelism (training scanner). |
+| `processing.max_workers`, `max_tasks_per_child`, `max_pool_restarts` | Worker pool for the prediction scan (`b2_image_scanner`), so they live under `predict:`. The training scan is serial and reads none of them. |
 | `processing.complete` | Filenames processed in full, ignoring quality gates. |
 
 ### Training pipeline
@@ -195,7 +195,7 @@ point and the tuned global threshold cannot be shadowed:
 | `tuning.metrics` | Metrics tracked during the scan (the evaluation metric is always included). |
 | `tuning.factor_min/max`, `cutoff_min/max` | Search bounds for `adjustment_factor` / `min_adj_peak`. |
 | `tuning.ridge_probes`, `xtol_factor`, `xtol_cutoff`, `refine_maxiter` | Search effort and precision of the ridge-aware optimizer. |
-| `tuning.exclusion_zones` | Optional gpkg; predictions are clipped to its union before the scan. |
+| `tuning.inclusion_zones` | Optional gpkg; predictions are clipped to its union before the scan, i.e. only points inside it are kept. Unrelated to `merge.exclusion_zones_gpkg`, which drops points *inside* its geometries. |
 | `tuning.input` | Merged raw predictions; defaults to `merge.output`. **Runner-managed** → `merged_raw/merged_raw.gpkg`. |
 | `tuning.out_dir`, `best_params` | Scan artifacts (search trace, summary, rasters) and the tuned-parameter YAML. **Runner-managed** → `tuning/`. |
 | `tuning.final_output` | Final tuned GeoPackage. **Runner-managed** → `merged/merged_tuned.gpkg`. |
