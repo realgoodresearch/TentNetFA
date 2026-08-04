@@ -1,4 +1,12 @@
-"""Ridge-aware search for the best (factor, cutoff) per metric.
+"""Scan stage of the tuning pipeline: ridge-aware search for the best
+(adjustment_factor, min_adj_peak) merge hyperparameters per metric.
+
+The unthresholded merged predictions (``merge.output`` of the tune flow) are
+validated against an explicitly configured reference source (point
+annotations, a UNOSAT export, a counts raster on the master grid, or the
+manual tile annotations — see ``util/reference_data.py``) while sweeping the
+thresholding pair the merge stage calls (``adjustment_factor``,
+``min_adj_peak``) and the scan calls (factor, cutoff).
 
 For a fixed factor, the best cutoff is approximately linear in factor; off that
 ridge the metric degrades on either side. We exploit that structure instead of
@@ -14,13 +22,15 @@ running a dense grid:
 Every evaluation computes all metrics in one shot, so optimizing one metric also
 updates the bests of the others (no redundant raster work).
 
-For straight validation at a single fixed (factor, cutoff), see
-g2_validate_geojson.py.
+The optimum of ``tuning.metric`` is written to ``tuning.best_params`` (YAML),
+which the final stage (h2_merge_tuned) feeds back into the merge. For straight
+validation at a single fixed (factor, cutoff), see g2_validate_geojson.py.
 """
 
 import os
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
 
 import click
 import geopandas as gpd
@@ -28,16 +38,22 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import rasterio
+import yaml
 from scipy.optimize import minimize, minimize_scalar
 from tqdm import tqdm
 
+from displacement_tracker.util.config import flow_option, load_flow_config, require
+from displacement_tracker.util.reference_data import (
+    build_reference_source,
+    infer_target_date,
+)
 from displacement_tracker.util.validation_core import (
     METRIC_DIRECTIONS,
     compute_metrics,
-    discover_pred_val_pairs,
     initial_best_value,
     is_better,
     keep_mask_from_params,
+    list_point_files,
     prepare_grouped_cell_inputs,
     process_grouped_cells,
     write_output_rasters,
@@ -59,7 +75,7 @@ def _budget_per_metric(n_probes: int, refine_maxiter: int) -> int:
     return n_probes * BRENT_EVAL_BUDGET + BRENT_EVAL_BUDGET + max(refine_maxiter, 0)
 
 
-def _make_evaluator(grouped, scan_metrics, bests, trace, progress=None):
+def make_evaluator(grouped, scan_metrics, bests, trace, progress=None):
     """Return an evaluate(factor, cutoff) -> metrics function.
 
     Side effects: every call appends to `trace`, updates `bests[m]` for any
@@ -70,12 +86,13 @@ def _make_evaluator(grouped, scan_metrics, bests, trace, progress=None):
     val_raster_base = grouped["val_raster"]
     mask_array = grouped["mask_array"]
     grid_shape = grouped["grid_shape"]
-    nodata_val = grouped["nodata_val"]
     rows_arr = pred_prepped["row"].to_numpy(dtype=np.int32)
     cols_arr = pred_prepped["col"].to_numpy(dtype=np.int32)
 
-    def evaluate(factor: float, cutoff: float) -> Optional[Dict[str, float]]:
-        keep = keep_mask_from_params(pred_prepped, factor=float(factor), cutoff=float(cutoff))
+    def evaluate(factor: float, cutoff: float) -> dict[str, float] | None:
+        keep = keep_mask_from_params(
+            pred_prepped, factor=float(factor), cutoff=float(cutoff)
+        )
         try:
             processed = process_grouped_cells(
                 pred_rows=rows_arr[keep],
@@ -93,8 +110,11 @@ def _make_evaluator(grouped, scan_metrics, bests, trace, progress=None):
             processed["mask_array"],
         )
         trace.append(
-            {"factor": float(factor), "cutoff": float(cutoff),
-             **{m: metrics[m] for m in scan_metrics}}
+            {
+                "factor": float(factor),
+                "cutoff": float(cutoff),
+                **{m: metrics[m] for m in scan_metrics},
+            }
         )
         for m in scan_metrics:
             v = metrics[m]
@@ -112,7 +132,7 @@ def _make_evaluator(grouped, scan_metrics, bests, trace, progress=None):
     return evaluate
 
 
-def _objective(evaluate: Callable, metric: str, factor: float, cutoff: float) -> float:
+def objective(evaluate: Callable, metric: str, factor: float, cutoff: float) -> float:
     """Sign-adjusted scalar objective (always minimized) with penalty on failure."""
     metrics = evaluate(factor, cutoff)
     if metrics is None:
@@ -123,17 +143,17 @@ def _objective(evaluate: Callable, metric: str, factor: float, cutoff: float) ->
     return float(v) if METRIC_DIRECTIONS[metric] == "min" else float(-v)
 
 
-def _optimize_metric(
+def optimize_metric(
     evaluate: Callable,
     metric: str,
-    bests: Dict[str, dict],
-    factor_bounds: Tuple[float, float],
-    cutoff_bounds: Tuple[float, float],
+    bests: dict[str, dict],
+    factor_bounds: tuple[float, float],
+    cutoff_bounds: tuple[float, float],
     n_probes: int,
     xtol_factor: float,
     xtol_cutoff: float,
     refine_maxiter: int,
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     """Ridge-aware search for one metric. Returns the fitted ridge (a, b).
 
     The "best" is tracked via side effects in `bests` — callers can read
@@ -144,10 +164,10 @@ def _optimize_metric(
 
     # --- Phase 1: probe the ridge at n_probes factors ---
     probe_factors = np.linspace(fb_lo, fb_hi, n_probes)
-    ridge_pts: List[Tuple[float, float]] = []
+    ridge_pts: list[tuple[float, float]] = []
     for f in probe_factors:
         res = minimize_scalar(
-            lambda c, _f=float(f): _objective(evaluate, metric, _f, c),
+            lambda c, _f=float(f): objective(evaluate, metric, _f, c),
             bounds=(cb_lo, cb_hi),
             method="bounded",
             options={"xatol": xtol_cutoff},
@@ -165,7 +185,7 @@ def _optimize_metric(
     # --- Phase 3: 1-D search along the fitted ridge ---
     def along_ridge(f: float) -> float:
         c = float(np.clip(a * f + b, cb_lo, cb_hi))
-        return _objective(evaluate, metric, f, c)
+        return objective(evaluate, metric, f, c)
 
     minimize_scalar(
         along_ridge,
@@ -182,7 +202,7 @@ def _optimize_metric(
         def obj2d(x):
             f = float(np.clip(x[0], fb_lo, fb_hi))
             c = float(np.clip(x[1], cb_lo, cb_hi))
-            return _objective(evaluate, metric, f, c)
+            return objective(evaluate, metric, f, c)
 
         minimize(
             obj2d,
@@ -200,8 +220,8 @@ def _optimize_metric(
 
 def scan_tile(
     grouped,
-    factor_bounds: Tuple[float, float],
-    cutoff_bounds: Tuple[float, float],
+    factor_bounds: tuple[float, float],
+    cutoff_bounds: tuple[float, float],
     scan_metrics,
     n_probes: int,
     xtol_factor: float,
@@ -217,15 +237,20 @@ def scan_tile(
       ridges[m]  = (a, b) of the fitted ridge cutoff = a*factor + b
     """
     bests = {
-        m: {"value": initial_best_value(m), "factor": None, "cutoff": None, "keep": None}
+        m: {
+            "value": initial_best_value(m),
+            "factor": None,
+            "cutoff": None,
+            "keep": None,
+        }
         for m in scan_metrics
     }
-    trace: List[Dict[str, float]] = []
+    trace: list[dict[str, float]] = []
 
-    evaluate = _make_evaluator(grouped, scan_metrics, bests, trace, progress=progress)
-    ridges: Dict[str, Tuple[float, float]] = {}
+    evaluate = make_evaluator(grouped, scan_metrics, bests, trace, progress=progress)
+    ridges: dict[str, tuple[float, float]] = {}
     for m in scan_metrics:
-        a, b = _optimize_metric(
+        a, b = optimize_metric(
             evaluate=evaluate,
             metric=m,
             bests=bests,
@@ -266,7 +291,7 @@ def plot_search_trace(
         values = np.array([t[metric] for t in trace], dtype=float)
         finite = np.isfinite(values)
         cmap = "viridis" if METRIC_DIRECTIONS[metric] == "max" else "viridis_r"
-        kwargs = dict(cmap=cmap, s=14)
+        kwargs = {"cmap": cmap, "s": 14}
         if metric == "spearman":
             kwargs.update(vmin=-1, vmax=1)
         sc = ax.scatter(factors[finite], cutoffs[finite], c=values[finite], **kwargs)
@@ -281,8 +306,12 @@ def plot_search_trace(
         bv = bests[metric]
         if bv["factor"] is not None:
             ax.scatter(
-                bv["factor"], bv["cutoff"],
-                color="white", edgecolor="black", marker="*", s=140,
+                bv["factor"],
+                bv["cutoff"],
+                color="white",
+                edgecolor="black",
+                marker="*",
+                s=140,
                 label=f"best {metric}",
             )
 
@@ -298,201 +327,271 @@ def plot_search_trace(
     plt.close(fig)
 
 
-def _parse_metrics(value: str):
-    metrics = [m.strip() for m in value.split(",") if m.strip()]
-    if not metrics:
-        return list(SCAN_METRICS_DEFAULT)
+def resolve_metrics(tuning_cfg: dict) -> tuple[str, list[str]]:
+    """Return (eval metric, metrics to track); the eval metric is always tracked."""
+    metric = tuning_cfg.get("metric", "rms")
+    metrics = list(tuning_cfg.get("metrics") or SCAN_METRICS_DEFAULT)
+    if metric not in metrics:
+        metrics.insert(0, metric)
     unknown = [m for m in metrics if m not in METRIC_DIRECTIONS]
     if unknown:
-        raise click.BadParameter(
+        raise click.ClickException(
             f"Unknown metric(s): {unknown}. Choose from {sorted(METRIC_DIRECTIONS)}."
         )
-    return metrics
+    return metric, metrics
+
+
+@dataclass(frozen=True)
+class ScanSettings:
+    """Validated inputs of one threshold scan, extracted from the config."""
+
+    input_path: str
+    pred_folder: str | None  # pre-merge prediction files (date-stamped)
+    master_grid: str
+    reference: object  # config for build_reference_source
+    out_dir: str
+    best_params_path: str
+    metric: str
+    scan_metrics: list[str]
+    factor_bounds: tuple[float, float]
+    cutoff_bounds: tuple[float, float]
+    ridge_probes: int
+    xtol_factor: float
+    xtol_cutoff: float
+    refine_maxiter: int
+    exclusion_zones: str | None
+
+    @property
+    def base_name(self) -> str:
+        return os.path.splitext(os.path.basename(self.input_path))[0]
+
+    @classmethod
+    def from_config(cls, params: dict) -> "ScanSettings":
+        """Extract and validate the scan settings from a resolved (flat) config."""
+        tuning = params.get("tuning") or {}
+        merge_cfg = params.get("merge") or {}
+
+        input_path = require(params, "tuning.input", "merge.output")
+        out_dir = tuning.get("out_dir") or "scan_results"
+        metric, scan_metrics = resolve_metrics(tuning)
+
+        factor_bounds = (
+            float(tuning.get("factor_min", 0.0)),
+            float(tuning.get("factor_max", 10.0)),
+        )
+        cutoff_bounds = (
+            float(tuning.get("cutoff_min", 0.0001)),
+            float(tuning.get("cutoff_max", 0.01)),
+        )
+        if factor_bounds[0] >= factor_bounds[1] or cutoff_bounds[0] >= cutoff_bounds[1]:
+            raise click.ClickException(
+                "tuning.factor_min/cutoff_min must be strictly less than their max."
+            )
+
+        return cls(
+            input_path=input_path,
+            pred_folder=merge_cfg.get("input_folder"),
+            master_grid=require(params, "tuning.master_grid"),
+            reference=require(params, "tuning.reference"),
+            out_dir=out_dir,
+            best_params_path=tuning.get("best_params")
+            or os.path.join(out_dir, "best_params.yaml"),
+            metric=metric,
+            scan_metrics=scan_metrics,
+            factor_bounds=factor_bounds,
+            cutoff_bounds=cutoff_bounds,
+            ridge_probes=int(tuning.get("ridge_probes", 5)),
+            xtol_factor=float(tuning.get("xtol_factor", 1e-3)),
+            xtol_cutoff=float(tuning.get("xtol_cutoff", 1e-6)),
+            refine_maxiter=int(tuning.get("refine_maxiter", 60)),
+            exclusion_zones=tuning.get("exclusion_zones"),
+        )
+
+
+def prediction_date(settings: ScanSettings):
+    """Median date stamped on the pre-merge prediction files (None if unknown).
+
+    Feeds unosat auto-discovery when reference.date is not set; the merged
+    scan input itself carries no meaningful date.
+    """
+    if not settings.pred_folder or not os.path.isdir(settings.pred_folder):
+        return None
+    return infer_target_date(list_point_files(settings.pred_folder))
+
+
+def _load_predictions(settings: ScanSettings, raster_crs) -> gpd.GeoDataFrame:
+    """Read the merged raw predictions, optionally clipped to the scan zones."""
+    pred_gdf = gpd.read_file(settings.input_path).to_crs(raster_crs)
+    if settings.exclusion_zones:
+        exclusion_geom = gpd.read_file(settings.exclusion_zones).geometry.union_all()
+        pred_gdf = pred_gdf.clip(exclusion_geom)
+    if pred_gdf.empty:
+        raise click.ClickException(
+            f"No predictions left to scan in {settings.input_path}"
+        )
+    return pred_gdf
+
+
+def _export_best(settings: ScanSettings, grouped, chosen, src_grid) -> dict[str, float]:
+    """Write the rasters at the chosen optimum; return its final metrics."""
+    pred_prepped = grouped["pred_prepped"]
+    processed = process_grouped_cells(
+        pred_rows=pred_prepped["row"].to_numpy(dtype=np.int32)[chosen["keep"]],
+        pred_cols=pred_prepped["col"].to_numpy(dtype=np.int32)[chosen["keep"]],
+        val_raster=grouped["val_raster"].copy(),
+        mask_array=grouped["mask_array"],
+        grid_shape=grouped["grid_shape"],
+        nodata_val=grouped["nodata_val"],
+    )
+    diff_masked = processed["diff"] * processed["mask_array"].astype(np.int32)
+    write_output_rasters(
+        out_dir=settings.out_dir,
+        base_name=settings.base_name,
+        pred_raster=processed["pred_raster"],
+        val_raster=processed["val_raster"],
+        diff_masked=diff_masked,
+        src_grid=src_grid,
+        grid_shape=grouped["grid_shape"],
+        out_transform=grouped["out_transform"],
+    )
+    return compute_metrics(
+        processed["pred_raster"],
+        processed["val_raster"],
+        processed["error_raster"],
+        processed["mask_array"],
+    )
+
+
+def _write_summary_csv(settings: ScanSettings, bests, ridges, trace, final_metrics):
+    row = {
+        "file": os.path.basename(settings.input_path),
+        "metric": settings.metric,
+        "n_evals": len(trace),
+    }
+    for m in settings.scan_metrics:
+        row[f"best_{m}"] = bests[m]["value"]
+        row[f"best_{m}_factor"] = bests[m]["factor"]
+        row[f"best_{m}_cutoff"] = bests[m]["cutoff"]
+        a, b = ridges.get(m, (None, None))
+        row[f"ridge_{m}_a"] = a
+        row[f"ridge_{m}_b"] = b
+    row.update({f"final_{k}": v for k, v in final_metrics.items()})
+    summary_path = os.path.join(settings.out_dir, "scan_summary.csv")
+    pd.DataFrame([row]).to_csv(summary_path, index=False)
+    click.echo(f"Summary saved to: {summary_path}")
+
+
+def write_best_params(settings: ScanSettings, bests, chosen) -> dict:
+    # The merge stage names the pair (adjustment_factor, min_adj_peak);
+    # h2_merge_tuned reads exactly these keys back.
+    best_params = {
+        "metric": settings.metric,
+        "value": float(chosen["value"]),
+        "adjustment_factor": float(chosen["factor"]),
+        "min_adj_peak": float(chosen["cutoff"]),
+        "input": str(settings.input_path),
+        "bests": {
+            m: {
+                "value": bests[m]["value"],
+                "adjustment_factor": bests[m]["factor"],
+                "min_adj_peak": bests[m]["cutoff"],
+            }
+            for m in settings.scan_metrics
+        },
+    }
+    path = settings.best_params_path
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(best_params, f, sort_keys=False)
+    click.echo(
+        f"Best parameters ({settings.metric}={chosen['value']:.4f}) saved to: {path}"
+    )
+    return best_params
+
+
+def run_scan(params: dict) -> dict:
+    """Run the threshold scan described by a resolved (flat) config.
+
+    Reads the ``tuning`` section (input defaults to ``merge.output``, the
+    unthresholded merge of the tune flow), writes the search trace plot,
+    ``scan_summary.csv``, best-parameter rasters and ``best_params.yaml``
+    into ``tuning.out_dir``, and returns the tuned parameters.
+    """
+    settings = ScanSettings.from_config(params)
+    os.makedirs(settings.out_dir, exist_ok=True)
+    reference = build_reference_source(
+        settings.reference, nearest_to=prediction_date(settings)
+    )
+
+    total_evals = _budget_per_metric(
+        settings.ridge_probes, settings.refine_maxiter
+    ) * len(settings.scan_metrics)
+    pbar = tqdm(total=total_evals, desc="evals", unit="eval")
+
+    with rasterio.open(settings.master_grid) as src_grid:
+        pred_gdf = _load_predictions(settings, src_grid.crs)
+        try:
+            grouped = prepare_grouped_cell_inputs(
+                pred_gdf, reference, src_grid, source=Path(settings.input_path).name
+            )
+        except Exception as exc:
+            raise click.ClickException(
+                f"Could not resolve {settings.input_path} onto the master grid: {exc}"
+            ) from exc
+
+        bests, trace, ridges = scan_tile(
+            grouped=grouped,
+            factor_bounds=settings.factor_bounds,
+            cutoff_bounds=settings.cutoff_bounds,
+            scan_metrics=settings.scan_metrics,
+            n_probes=settings.ridge_probes,
+            xtol_factor=settings.xtol_factor,
+            xtol_cutoff=settings.xtol_cutoff,
+            refine_maxiter=settings.refine_maxiter,
+            progress=lambda: pbar.update(1),
+        )
+        pbar.close()
+
+        best_summary = " | ".join(
+            f"{m}: {bests[m]['value']:.4f} @ f={bests[m]['factor']:.3f}, c={bests[m]['cutoff']:.4f}"
+            for m in settings.scan_metrics
+            if bests[m]["factor"] is not None
+        )
+        click.echo(f"{settings.base_name} ({len(trace)} evals) -> {best_summary}")
+
+        plot_search_trace(
+            trace=trace,
+            bests=bests,
+            ridges=ridges,
+            factor_bounds=settings.factor_bounds,
+            cutoff_bounds=settings.cutoff_bounds,
+            out_path=Path(settings.out_dir) / f"{settings.base_name}_search_trace.png",
+            title_prefix=settings.base_name,
+        )
+
+        chosen = bests[settings.metric]
+        if chosen["factor"] is None:
+            raise click.ClickException(
+                f"The scan found no finite value for metric {settings.metric!r}; "
+                "check the reference data and the factor/cutoff bounds."
+            )
+        final_metrics = _export_best(settings, grouped, chosen, src_grid)
+
+    _write_summary_csv(settings, bests, ridges, trace, final_metrics)
+    return write_best_params(settings, bests, chosen)
 
 
 @click.command()
-@click.option("--pred-dir", type=click.Path(exists=True), required=True)
-@click.option("--val-dir", type=click.Path(exists=True), required=True)
-@click.option("--master-grid", type=click.Path(exists=True), required=True)
-@click.option("--out-dir", type=click.Path(), default="scan_results")
-@click.option(
-    "--exclusion-zones",
-    type=click.Path(exists=True),
-    default=None,
-    help="Optional gpkg file of exclusion zones; predictions are clipped to its union.",
-)
-@click.option("--factor-min", type=float, default=0.0, show_default=True)
-@click.option("--factor-max", type=float, default=10.0, show_default=True)
-@click.option("--cutoff-min", type=float, default=0.0001, show_default=True)
-@click.option("--cutoff-max", type=float, default=0.01, show_default=True)
-@click.option(
-    "--ridge-probes", type=int, default=5, show_default=True,
-    help="Number of cutoffs at which the ridge is probed in Phase 1.",
-)
-@click.option(
-    "--xtol-factor", type=float, default=1e-3, show_default=True,
-    help="Absolute tolerance for the 1-D factor search (Brent's xatol).",
-)
-@click.option(
-    "--xtol-cutoff", type=float, default=1e-6, show_default=True,
-    help="Absolute tolerance for the 1-D cutoff search (Brent's xatol).",
-)
-@click.option(
-    "--refine-maxiter", type=int, default=60, show_default=True,
-    help="Max Nelder-Mead iterations for the 2-D refinement (0 disables).",
-)
-@click.option(
-    "--metrics",
-    default=",".join(SCAN_METRICS_DEFAULT),
-    show_default=True,
-    help=(
-        "Comma-separated metrics to optimize. Choices: "
-        + ", ".join(sorted(METRIC_DIRECTIONS))
-    ),
-)
-@click.option(
-    "--export-best",
-    type=str,
-    default="rms",
-    show_default=True,
-    help="Metric whose best parameters drive raster export. Must be in --metrics.",
-)
-def cli(
-    pred_dir, val_dir, master_grid, out_dir, exclusion_zones,
-    factor_min, factor_max, cutoff_min, cutoff_max,
-    ridge_probes, xtol_factor, xtol_cutoff, refine_maxiter,
-    metrics, export_best,
-):
-    """Ridge-aware search for the best (factor, cutoff) per metric."""
-    os.makedirs(out_dir, exist_ok=True)
-    scan_metrics = _parse_metrics(metrics)
-    if export_best not in scan_metrics:
-        raise click.BadParameter(
-            f"--export-best={export_best!r} must be among --metrics ({scan_metrics})."
-        )
-    if factor_min >= factor_max or cutoff_min >= cutoff_max:
-        raise click.BadParameter("factor/cutoff min must be strictly less than max.")
+@click.argument("config", type=click.Path(exists=True, dir_okay=False))
+@flow_option(default="tune")
+def cli(config: str, flow: str) -> None:
+    """Scan for the best merge hyperparameters against reference data.
 
-    factor_bounds = (factor_min, factor_max)
-    cutoff_bounds = (cutoff_min, cutoff_max)
-
-    exclusion_geom = None
-    if exclusion_zones:
-        exclusion_geom = gpd.read_file(exclusion_zones).geometry.union_all()
-
-    pairs = discover_pred_val_pairs(pred_dir, val_dir)
-    results = []
-
-    total_evals = (
-        _budget_per_metric(ridge_probes, refine_maxiter)
-        * len(scan_metrics)
-        * len(pairs)
-    )
-    pbar = tqdm(total=total_evals, desc="evals", unit="eval")
-
-    with rasterio.open(master_grid) as src_grid:
-        raster_crs = src_grid.crs
-
-        for pred_path, val_path, pred_date, val_date in pairs:
-            pred_file = os.path.basename(pred_path)
-            base_name = os.path.splitext(pred_file)[0]
-
-            pred_gdf = gpd.read_file(pred_path).to_crs(raster_crs)
-            val_gdf = gpd.read_file(val_path).to_crs(raster_crs)
-            if exclusion_geom is not None:
-                pred_gdf = pred_gdf.clip(exclusion_geom)
-            if pred_gdf.empty:
-                continue
-
-            try:
-                grouped = prepare_grouped_cell_inputs(
-                    pred_gdf, val_gdf, src_grid, source=pred_file
-                )
-            except Exception:
-                click.echo(f"Skipping {pred_file}: no overlap with master grid.")
-                continue
-
-            bests, trace, ridges = scan_tile(
-                grouped=grouped,
-                factor_bounds=factor_bounds,
-                cutoff_bounds=cutoff_bounds,
-                scan_metrics=scan_metrics,
-                n_probes=ridge_probes,
-                xtol_factor=xtol_factor,
-                xtol_cutoff=xtol_cutoff,
-                refine_maxiter=refine_maxiter,
-                progress=lambda: pbar.update(1),
-            )
-
-            best_summary = " | ".join(
-                f"{m}: {bests[m]['value']:.4f} @ f={bests[m]['factor']:.3f}, c={bests[m]['cutoff']:.4f}"
-                for m in scan_metrics
-                if bests[m]["factor"] is not None
-            )
-            click.echo(f"{base_name} ({len(trace)} evals) -> {best_summary}")
-
-            plot_search_trace(
-                trace=trace, bests=bests, ridges=ridges,
-                factor_bounds=factor_bounds, cutoff_bounds=cutoff_bounds,
-                out_path=Path(out_dir) / f"{base_name}_search_trace.png",
-                title_prefix=base_name,
-            )
-
-            chosen = bests[export_best]
-            final_metrics: Dict[str, float] = {}
-            if chosen["keep"] is not None:
-                pred_prepped = grouped["pred_prepped"]
-                processed = process_grouped_cells(
-                    pred_rows=pred_prepped["row"].to_numpy(dtype=np.int32)[chosen["keep"]],
-                    pred_cols=pred_prepped["col"].to_numpy(dtype=np.int32)[chosen["keep"]],
-                    val_raster=grouped["val_raster"].copy(),
-                    mask_array=grouped["mask_array"],
-                    grid_shape=grouped["grid_shape"],
-                    nodata_val=grouped["nodata_val"],
-                )
-                diff_masked = processed["diff"] * processed["mask_array"].astype(np.int32)
-                write_output_rasters(
-                    out_dir=out_dir,
-                    base_name=base_name,
-                    pred_raster=processed["pred_raster"],
-                    val_raster=processed["val_raster"],
-                    diff_masked=diff_masked,
-                    src_grid=src_grid,
-                    grid_shape=grouped["grid_shape"],
-                    out_transform=grouped["out_transform"],
-                )
-                final_metrics = compute_metrics(
-                    processed["pred_raster"],
-                    processed["val_raster"],
-                    processed["error_raster"],
-                    processed["mask_array"],
-                )
-
-            row = {
-                "file": pred_file,
-                "pred_date": pred_date.strftime("%Y-%m-%d"),
-                "val_date": val_date.strftime("%Y-%m-%d"),
-                "export_best_metric": export_best,
-                "n_evals": len(trace),
-            }
-            for m in scan_metrics:
-                row[f"best_{m}"] = bests[m]["value"]
-                row[f"best_{m}_factor"] = bests[m]["factor"]
-                row[f"best_{m}_cutoff"] = bests[m]["cutoff"]
-                a, b = ridges.get(m, (None, None))
-                row[f"ridge_{m}_a"] = a
-                row[f"ridge_{m}_b"] = b
-            row.update({f"final_{k}": v for k, v in final_metrics.items()})
-            results.append(row)
-
-    if not results:
-        click.echo("No results to summarize.")
-        return
-
-    df = pd.DataFrame(results)
-    summary_path = os.path.join(out_dir, "scan_summary.csv")
-    df.to_csv(summary_path, index=False)
-    click.echo(f"\nSummary saved to: {summary_path}")
+    Reads the ``tuning`` section of the YAML config; the input defaults to
+    ``merge.output`` (the unthresholded merge of the tune flow).
+    """
+    params = load_flow_config(config, flow)
+    run_scan(params)
 
 
 if __name__ == "__main__":

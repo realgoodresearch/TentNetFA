@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import json
 import os
 import random
@@ -99,15 +100,18 @@ class PairedImageDataset(Dataset):
             return len(self.indices)
         return len(self._rows)
 
-    def _standardise(self, raster_path: str, data: np.ndarray, per_tile: bool = False) -> np.ndarray:
+    def _standardise(
+        self, raster_path: str, data: np.ndarray, per_tile: bool = False
+    ) -> np.ndarray:
         if per_tile:
             return standardise_window(
-                data, np.mean(data, axis=(1,2)), np.std(data, axis=(1,2)), None
-                )
+                data, np.mean(data, axis=(1, 2)), np.std(data, axis=(1, 2)), None
+            )
         stats = self._raster_stats.get(raster_path)
         if stats is None:
             LOGGER.warning(
-                "No stats found for raster %s; returning unstandardised data", raster_path
+                "No stats found for raster %s; returning unstandardised data",
+                raster_path,
             )
             return data.astype(np.float32, copy=False)
         return standardise_window(
@@ -121,7 +125,9 @@ class PairedImageDataset(Dataset):
         raster_h = self._get_handle(raster_path)
         window = ((row["r0"], row["r1"]), (row["c0"], row["c1"]))
         rgb_raw = raster_h.read([1, 2, 3], window=window)
-        rgb = self._standardise(raster_path, rgb_raw, per_tile=self.per_tile_standardisation)
+        rgb = self._standardise(
+            raster_path, rgb_raw, per_tile=self.per_tile_standardisation
+        )
 
         h = row["r1"] - row["r0"]
         w = row["c1"] - row["c0"]
@@ -142,10 +148,16 @@ class PairedImageDataset(Dataset):
         else:
             prewar = None
         if prewar is None:
-            LOGGER.warning("No prewar data for row %d (prewar_path=%s); using zeros", idx, prewar_path)
+            LOGGER.warning(
+                "No prewar data for row %d (prewar_path=%s); using zeros",
+                idx,
+                prewar_path,
+            )
             prewar = np.zeros((3, h, w), dtype=np.float32)
         else:
-            prewar = self._standardise(prewar_path, prewar, per_tile=self.per_tile_standardisation)
+            prewar = self._standardise(
+                prewar_path, prewar, per_tile=self.per_tile_standardisation
+            )
         feats_for_tile: list[dict[str, Any]] = []
         labels_path = row["labels_path"]
         feature_ids = row["label_feature_ids"] or []
@@ -195,7 +207,7 @@ class PairedImageDataset(Dataset):
         save_loc: str | None = None,
         regenerate_splits: bool = False,
         seed: int | None = None,
-    ) -> tuple[list["PairedImageDataset"], list[list[int]]]:
+    ) -> tuple[list[PairedImageDataset], list[list[int]]]:
         if save_loc is None:
             cache_valid = False
         else:
@@ -215,7 +227,7 @@ class PairedImageDataset(Dataset):
                         [int(field.strip()) for field in row.strip().split(",")]
                     )
             else:
-                LOGGER.warn("Cached splits don't match args, ignoring cache")
+                LOGGER.warning("Cached splits don't match args, ignoring cache")
                 cache_valid = False
 
         idcs = list(range(len(self)))

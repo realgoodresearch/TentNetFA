@@ -20,21 +20,17 @@ click = "^8.2.1"
 tqdm = "^4.66.1"
 google-api-python-client = "^2.176.0"
 scipy = "1.15.3"
-h5py = "^3.11.0"
 pyarrow = "^17.0.0"
 PyYAML = "^6.0.1"
 
-# --- GIS libraries (with platform awareness) ---
-# These can be difficult to compile on M1 macOS. The markers below ensure pip uses prebuilt wheels.
+# --- GIS libraries ---
+# Both ship prebuilt wheels for every platform we target, including Apple
+# Silicon. They used to be split per-platform with a `gdal` extra on Darwin,
+# but neither project declares such an extra, so that branch selected the
+# same wheel as the other one.
 
-rasterio = [
-    { version = "^1.4.3", markers = "platform_system != 'Darwin'" },
-    { version = "^1.4.3", markers = "platform_system == 'Darwin'", extras = ["gdal"] }
-]
-fiona = [
-    { version = "^1.10.1", markers = "platform_system != 'Darwin'" },
-    { version = "^1.10.1", markers = "platform_system == 'Darwin'", extras = ["gdal"] }
-]
+rasterio = "^1.4.3"
+fiona = "^1.10.1"
 deprecated = "^1.3.1"
 torch = "^2.9.1"
 torchvision = "^0.24.1"
@@ -56,8 +52,11 @@ evaluate-geojson = "displacement_tracker.f_evaluate_geojson:cli"
 validate-geojson = "displacement_tracker.g2_validate_geojson:cli"
 scan-validation = "displacement_tracker.g1_scan_validation:cli"
 merge-geojsons = "displacement_tracker.h_merge_geojsons:cli"
+merge-tuned = "displacement_tracker.h2_merge_tuned:cli"
+run-evaluation = "displacement_tracker.evaluation.run_all_analyses:cli"
+annotation-reference = "displacement_tracker.evaluation.annotation_reference:cli"
 zonal-point-sums = "displacement_tracker.i_zonal_point_sums:cli"
-train-embedding = "displacement_tracker.util.train_embedding:cli"
+train-embedding = "displacement_tracker.util.train_metadata_embedding:cli"
 pipeline-ui = "displacement_tracker.pipelines.launch:main"
 pipeline-ui-stop = "displacement_tracker.pipelines.stop:cli"
 pipeline-run = "displacement_tracker.pipelines.cli:cli"
@@ -66,14 +65,73 @@ pipeline-run = "displacement_tracker.pipelines.cli:cli"
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [dependency-groups]
 dev = [
-    "ruff (>=0.15.0,<0.16.0)",
-    "remote-plot (>=1.2.1,<2.0.0)"
+    "ruff (>=0.16.0,<0.17.0)",
+    "remote-plot (>=1.2.1,<2.0.0)",
+    "pytest (>=9.1.1,<10.0.0)"
 ]
 ui = [
     "streamlit (>=1.40.0,<2.0.0)"
 ]
+# What `pytest tests/` needs, and nothing more. The unit tests cover
+# business logic only and never import torch, torchvision, selenium,
+# opencv or the Google API clients, so CI installs this group alone
+# (`poetry install --only test`) and skips a multi-GB download. Versions
+# are deliberately unconstrained here: these packages are already
+# constrained as project dependencies, so poetry.lock resolves one
+# version for both and the subset cannot drift away from the full
+# environment.
+test = [
+    "pytest (>=9.1.1,<10.0.0)",
+    "click",
+    "fiona",
+    "geopandas",
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "pyarrow",
+    "pyogrio",
+    "pyproj",
+    "python-dotenv",
+    "pyyaml",
+    "rasterio",
+    "scipy",
+    "shapely",
+    "tqdm"
+]
 
 [tool.poetry.group.ui]
 optional = true
+
+[tool.ruff]
+# `[project]` carries no `requires-python`, so ruff cannot infer the floor and
+# would fall back to its own default. State it here instead of adding
+# `requires-python` alongside `[tool.poetry.dependencies].python`, which would
+# give Poetry two sources for the same constraint.
+target-version = "py310"
+
+[tool.ruff.lint]
+# ruff 0.16 turned on 413 rules by default, up from 59. The expanded set is
+# adopted as-is apart from the families below, each of which flags a deliberate
+# pattern in this pipeline rather than a defect.
+ignore = [
+    # Blind `except Exception` is the fault-isolation strategy for the batch
+    # stages: one corrupt TIFF, tile or prediction date is skipped and logged
+    # so the rest of the run still completes. Narrowing these would let a
+    # single bad input abort a multi-hour scan.
+    "BLE001",
+    # Naive datetimes are correct here. Every parsed value is a calendar
+    # acquisition date lifted out of a filename (`YYYYMMDD`), not an instant,
+    # and the `datetime.now()` calls only stamp run directories in local time.
+    "DTZ001",
+    "DTZ005",
+    "DTZ007",
+    # The silent handlers this flags are best-effort cleanup — shutting down an
+    # already-broken executor, unlinking a temp file, closing raster handles, a
+    # UI stats widget. There is nothing actionable to log.
+    "S110",
+]

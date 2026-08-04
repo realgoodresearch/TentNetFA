@@ -14,12 +14,15 @@ prediction output without extra configuration.
 """
 
 import json
+import re
+import shutil
+from datetime import datetime
 from pathlib import Path
 
 import click
 import geopandas as gpd
-from shapely.geometry import Point
 import yaml
+from shapely.geometry import Point
 
 from displacement_tracker.util.config import flow_option, load_flow_config
 from displacement_tracker.util.deduplication import merge_close_points_global
@@ -31,6 +34,28 @@ from displacement_tracker.util.thresholding import (
 )
 
 LOGGER = setup_logging("merge_geojsons")
+
+DATE_PATTERN = re.compile(r"_(\d{8})(?=[_.])")
+
+GEOJSON_SUFFIXES = {".json", ".geojson"}
+
+
+def parse_compact_date(date_str: str) -> bool:
+    """True when date_str is a real YYYYMMDD calendar date."""
+    try:
+        datetime.strptime(date_str, "%Y%m%d")
+        return True
+    except ValueError:
+        return False
+
+
+def list_geojson_files(directory: Path) -> list[Path]:
+    """Sorted GeoJSON/JSON files in a directory, case-insensitive on suffix."""
+    return sorted(
+        p
+        for p in directory.iterdir()
+        if p.is_file() and p.suffix.lower() in GEOJSON_SUFFIXES
+    )
 
 
 def load_thresholds(thresholds_config: str | None) -> dict[str, float]:
@@ -106,7 +131,9 @@ def load_points_from_geojson(path: Path) -> list[PredictedPoint]:
             "  %s: %d/%d points carry no adjustment_signal; derived it as "
             "(adjusted_peak - peak_value), which assumes the predictions were "
             "made with selection.factor=1.0",
-            path.name, derived_signals, len(points),
+            path.name,
+            derived_signals,
+            len(points),
         )
 
     return points
@@ -133,9 +160,7 @@ def load_zone_geometry(zones_path: str | None, label: str):
         return None
 
     if zones_gdf.crs is None:
-        LOGGER.warning(
-            "%s zones CRS missing, assuming EPSG:4326: %s", label, path
-        )
+        LOGGER.warning("%s zones CRS missing, assuming EPSG:4326: %s", label, path)
         zones_gdf = zones_gdf.set_crs("EPSG:4326")
     else:
         zones_gdf = zones_gdf.to_crs("EPSG:4326")
@@ -145,23 +170,30 @@ def load_zone_geometry(zones_path: str | None, label: str):
     return geom
 
 
-def filter_points_by_geometry(
-    points: list[PredictedPoint], geom, *, keep_inside: bool
+def filter_points_by_zone(
+    points: list[PredictedPoint], zone_geom, keep_inside: bool
 ) -> list[PredictedPoint]:
-    """Keep points inside (or outside) ``geom``; a null geometry keeps everything."""
-    if geom is None:
+    """Keep only points inside (keep_inside) or outside the zone geometry."""
+    if zone_geom is None:
         return points
 
     return [
         point
         for point in points
-        if bool(geom.contains(Point(point.lon, point.lat))) == keep_inside
+        if bool(zone_geom.contains(Point(point.lon, point.lat))) == keep_inside
     ]
 
 
 def save_merged_gpkg(points: list[PredictedPoint], out_path: Path) -> None:
     """Save merged points to a GeoPackage file."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if out_path.exists():
+        out_path.unlink()
+
+    if not points:
+        LOGGER.warning("No points to write; skipping %s", out_path)
+        return
 
     rows = [
         {
@@ -178,6 +210,156 @@ def save_merged_gpkg(points: list[PredictedPoint], out_path: Path) -> None:
     gdf.to_file(str(out_path), driver="GPKG")
 
     LOGGER.info("Merged GeoPackage saved to %s (%d points)", out_path, len(gdf))
+
+
+def process_geojson_folder(
+    input_dir: Path,
+    output_gpkg: Path,
+    min_distance_m: float,
+    agreement: int,
+    min_adj_peak: float,
+    adjustment_factor: float,
+    thresholds_data: dict,
+    exclusion_geom,
+    inclusion_geom,
+) -> bool:
+    """Merge all GeoJSON/JSON files in one folder into one GPKG.
+
+    Returns False when the folder contains no GeoJSON files. Files that
+    cannot be parsed are logged and skipped; if every file fails, raises.
+    """
+    geojson_files = list_geojson_files(input_dir)
+
+    if not geojson_files:
+        LOGGER.warning("No GeoJSON files found in %s", input_dir)
+        return False
+
+    LOGGER.info("Found %d GeoJSON files in %s", len(geojson_files), input_dir)
+
+    flat: list[PredictedPoint] = []
+    unreadable = 0
+    for path in geojson_files:
+        try:
+            pts = load_points_from_geojson(path)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            LOGGER.error("Skipping unreadable GeoJSON %s: %s", path, exc)
+            unreadable += 1
+            continue
+        threshold = resolve_threshold(path.name, thresholds_data, min_adj_peak)
+        loaded = len(pts)
+        pts = filter_points_by_rescaled_peak(pts, threshold, adjustment_factor)
+        LOGGER.info(
+            "  %s: %d points loaded, %d kept (peak + %.4g * adjustment_signal >= %.4f)",
+            path.name,
+            loaded,
+            len(pts),
+            adjustment_factor,
+            threshold,
+        )
+
+        for label, zone_geom, keep_inside in (
+            ("exclusion", exclusion_geom, False),
+            ("inclusion", inclusion_geom, True),
+        ):
+            if zone_geom is None:
+                continue
+            before = len(pts)
+            pts = filter_points_by_zone(pts, zone_geom, keep_inside)
+            LOGGER.info(
+                "  %s: %d kept after %s filtering (%d removed)",
+                path.name,
+                len(pts),
+                label,
+                before - len(pts),
+            )
+
+        flat.extend(pts)
+
+    if unreadable == len(geojson_files):
+        raise ValueError(
+            f"All {unreadable} GeoJSON files in {input_dir} failed to load."
+        )
+
+    LOGGER.info("Total points before merge: %d", len(flat))
+
+    merged = merge_close_points_global(
+        flat, min_distance_m=min_distance_m, agreement=agreement
+    )
+
+    LOGGER.info("Total points after merge: %d", len(merged))
+    save_merged_gpkg(merged, output_gpkg)
+    return True
+
+
+def sort_preds_by_date(base_dir: Path) -> None:
+    """
+    Move root-level JSON/GeoJSON files into date-named subfolders.
+
+    A file like:
+        prediction_20240115_abc.json
+
+    becomes:
+        base_dir/20240115/prediction_20240115_abc.json
+    """
+    for path in list_geojson_files(base_dir):
+        match = DATE_PATTERN.search(path.name)
+        if not match:
+            LOGGER.warning("Skipping file without date pattern: %s", path.name)
+            continue
+
+        date_str = match.group(1)
+        if not parse_compact_date(date_str):
+            LOGGER.warning(
+                "Skipping file with invalid date %s: %s", date_str, path.name
+            )
+            continue
+
+        date_folder = base_dir / date_str
+        date_folder.mkdir(parents=True, exist_ok=True)
+
+        destination = date_folder / path.name
+        if destination.exists():
+            LOGGER.warning(
+                "Not moving %s: %s already exists; the root-level copy is "
+                "left in place and will NOT be merged.",
+                path.name,
+                destination,
+            )
+            continue
+
+        shutil.move(str(path), str(destination))
+        LOGGER.info("Moved: %s -> %s", path.name, date_folder)
+
+
+def iter_date_folders(base_dir: Path) -> list[Path]:
+    """Return only valid-YYYYMMDD subfolders under base_dir."""
+    return sorted(
+        p
+        for p in base_dir.iterdir()
+        if p.is_dir() and re.fullmatch(r"\d{8}", p.name) and parse_compact_date(p.name)
+    )
+
+
+MERGE_CONFIG_KEYS = (
+    "min_distance_m",
+    "agreement",
+    "min_adj_peak",
+    "adjustment_factor",
+    "thresholds_config",
+    "exclusion_zones_gpkg",
+    "inclusion_zone",
+)
+
+
+def merge_kwargs_from_config(
+    merge_cfg: dict, keys: tuple[str, ...] = MERGE_CONFIG_KEYS
+) -> dict:
+    """Merge kwargs for the keys the config actually sets.
+
+    ``merge_geojsons()`` signature defaults are the single source of truth
+    for everything else.
+    """
+    return {key: merge_cfg[key] for key in keys if merge_cfg.get(key) is not None}
 
 
 @click.command()
@@ -201,30 +383,20 @@ def cli(config: str, flow: str) -> None:
             "(or prediction.output_folder as fallback)"
         )
     output_gpkg = merge_cfg.get("output")
-    if not output_gpkg:
+    if not output_gpkg and not merge_cfg.get("process_by_date"):
         raise click.ClickException("Missing required config key: merge.output")
 
-    # only pass keys the config actually sets — merge_geojsons() signature
-    # defaults are the single source of truth for the rest
-    kwargs = {
-        key: merge_cfg[key]
-        for key in (
-            "min_distance_m",
-            "agreement",
-            "min_adj_peak",
-            "adjustment_factor",
-            "thresholds_config",
-            "exclusion_zones_gpkg",
-            "inclusion_zone",
-        )
-        if merge_cfg.get(key) is not None
-    }
-    merge_geojsons(input_folder, output_gpkg, **kwargs)
+    merge_geojsons(
+        input_folder,
+        output_gpkg,
+        process_by_date=bool(merge_cfg.get("process_by_date")),
+        **merge_kwargs_from_config(merge_cfg),
+    )
 
 
 def merge_geojsons(
     input_folder: str,
-    output_gpkg: str,
+    output_gpkg: str | None,
     *,
     min_distance_m: float = 3.0,
     agreement: int = 1,
@@ -233,55 +405,66 @@ def merge_geojsons(
     thresholds_config: str | None = None,
     exclusion_zones_gpkg: str | None = None,
     inclusion_zone: str | None = None,
+    process_by_date: bool = False,
 ) -> None:
+    """Merge a folder of prediction GeoJSONs into deduplicated GeoPackage(s).
+
+    With ``process_by_date`` set, root-level predictions are first sorted
+    into YYYYMMDD folders and each date is merged separately into
+    ``<input_folder>/YYYYMMDD.gpkg`` (``output_gpkg`` is unused); otherwise
+    the whole folder is merged into ``output_gpkg``.
+    """
     input_dir = Path(input_folder)
     if not input_dir.is_dir():
         raise click.ClickException(f"Input folder not found: {input_dir}")
-    geojson_files = sorted(input_dir.glob("*.geojson")) + sorted(input_dir.glob("*.json"))
-
-    if not geojson_files:
-        raise click.ClickException(f"No GeoJSON files found in {input_dir}")
-
-    LOGGER.info("Found %d GeoJSON files in %s", len(geojson_files), input_dir)
 
     thresholds_data = load_thresholds(thresholds_config)
     exclusion_geom = load_zone_geometry(exclusion_zones_gpkg, "exclusion")
     inclusion_geom = load_zone_geometry(inclusion_zone, "inclusion")
 
-    flat: list[PredictedPoint] = []
-    for path in geojson_files:
-        pts = load_points_from_geojson(path)
-        threshold = resolve_threshold(path.name, thresholds_data, min_adj_peak)
-        loaded = len(pts)
-        pts = filter_points_by_rescaled_peak(pts, threshold, adjustment_factor)
-        LOGGER.info(
-            "  %s: %d points loaded, %d kept (peak + %.4g * adjustment_signal >= %.4f)",
-            path.name, loaded, len(pts), adjustment_factor, threshold,
-        )
+    merge_kwargs = {
+        "min_distance_m": min_distance_m,
+        "agreement": agreement,
+        "min_adj_peak": min_adj_peak,
+        "adjustment_factor": adjustment_factor,
+        "thresholds_data": thresholds_data,
+        "exclusion_geom": exclusion_geom,
+        "inclusion_geom": inclusion_geom,
+    }
 
-        for geom, keep_inside, label in (
-            (exclusion_geom, False, "inside exclusion zones"),
-            (inclusion_geom, True, "outside the inclusion zone"),
-        ):
-            if geom is None:
-                continue
-            before = len(pts)
-            pts = filter_points_by_geometry(pts, geom, keep_inside=keep_inside)
-            LOGGER.info(
-                "  %s: %d kept, %d removed %s",
-                path.name, len(pts), before - len(pts), label,
+    if process_by_date:
+        sort_preds_by_date(input_dir)
+
+        date_folders = iter_date_folders(input_dir)
+        if not date_folders:
+            raise click.ClickException(
+                f"No date folders found in {input_dir} after sorting."
             )
 
-        flat.extend(pts)
+        failed: list[str] = []
+        for date_dir in date_folders:
+            out_path = input_dir / f"{date_dir.name}.gpkg"
+            LOGGER.info("Processing date folder %s -> %s", date_dir, out_path)
+            try:
+                process_geojson_folder(date_dir, out_path, **merge_kwargs)
+            except Exception:
+                LOGGER.exception("Failed to process date folder %s", date_dir)
+                failed.append(date_dir.name)
 
-    LOGGER.info("Total points before merge: %d", len(flat))
+        if failed:
+            raise click.ClickException(
+                f"Failed to process {len(failed)} of {len(date_folders)} "
+                f"date folder(s): {', '.join(failed)}"
+            )
+        return
 
-    merged = merge_close_points_global(
-        flat, min_distance_m=min_distance_m, agreement=agreement
-    )
+    if not output_gpkg:
+        raise click.ClickException(
+            "merge.output is required unless merge.process_by_date is set."
+        )
 
-    LOGGER.info("Total points after merge: %d", len(merged))
-    save_merged_gpkg(merged, Path(output_gpkg))
+    if not process_geojson_folder(input_dir, Path(output_gpkg), **merge_kwargs):
+        raise click.ClickException(f"No GeoJSON files found in {input_dir}")
 
 
 if __name__ == "__main__":

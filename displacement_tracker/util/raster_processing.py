@@ -66,9 +66,7 @@ def _iter_chunk_windows(width: int, height: int, chunk: int):
             yield Window(col_off=col_off, row_off=row_off, width=w, height=h)
 
 
-def _accumulate_chunk_stats(
-    data: np.ndarray, nodata, sums, sumsq, counts
-) -> None:
+def _accumulate_chunk_stats(data: np.ndarray, nodata, sums, sumsq, counts) -> None:
     """Vectorised per-band sum/sumsq/count update for one chunk."""
     valid = np.isfinite(data)
     if nodata is not None:
@@ -110,7 +108,7 @@ def _stream_per_channel_stats(
 
     safe_counts = np.maximum(counts, 1)
     means = sums / safe_counts
-    var = np.maximum(0.0, sumsq / safe_counts - means ** 2)
+    var = np.maximum(0.0, sumsq / safe_counts - means**2)
     stds = np.sqrt(var)
     means[counts == 0] = 0.0
     stds[counts == 0] = 0.0
@@ -140,7 +138,9 @@ def compute_standardisation_stats(
     )
 
     # Remove last element, alpha channel
-    return means.astype(np.float32, copy=False)[:-1], stds.astype(np.float32, copy=False)[:-1]
+    return means.astype(np.float32, copy=False)[:-1], stds.astype(
+        np.float32, copy=False
+    )[:-1]
 
 
 def standardise_window(

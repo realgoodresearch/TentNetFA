@@ -1,9 +1,11 @@
 """Shared per-TIFF orchestration: file collection, output layout, writer lifecycle."""
+
 from __future__ import annotations
 
 import glob
 import os
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import rasterio
 
@@ -21,9 +23,7 @@ def collect_tif_files(geotiff_dir: str, params: dict | None = None) -> list[str]
     if search_files:
         all_tifs = glob.glob(os.path.join(geotiff_dir, "*.tif"))
         return [
-            p
-            for p in all_tifs
-            if any(s in os.path.basename(p) for s in search_files)
+            p for p in all_tifs if any(s in os.path.basename(p) for s in search_files)
         ]
     return glob.glob(os.path.join(geotiff_dir, "*.tif"))
 
@@ -64,6 +64,9 @@ def run_scans(
 
 
 def require_keys(params: dict[str, Any], keys: tuple[str, ...]) -> None:
+    """Like ``util.config.require``, but raises ``KeyError``: this runs in a
+    worker process/pool, not a Click CLI, so a ``ClickException`` would not
+    be handled — it needs to propagate as a plain exception."""
     for key in keys:
         if key not in params:
             raise KeyError(f"Missing required config key: {key}")

@@ -12,6 +12,7 @@ Run directory layout (fixed names, see ``Pipeline.artifact_paths``)::
         logs/           one log file per stage
         manifests/ preds/ merged/          (predict)
         manifests/ dataset/ model/         (train)
+        merged_raw/ tuning/ merged/        (tune)
 """
 
 from __future__ import annotations
@@ -23,15 +24,15 @@ import os
 import signal
 import subprocess
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 import yaml
 from dotenv import load_dotenv
 
-from displacement_tracker.util.config import deep_merge, deep_set, load_flow_config
 from displacement_tracker.pipelines.spec import Pipeline, Stage
+from displacement_tracker.util.config import deep_merge, deep_set, load_flow_config
 
 
 class StageFailedError(RuntimeError):
@@ -80,7 +81,7 @@ class StageLoadMonitor:
 
         self._psutil = psutil
         self._root_pid = proc.pid
-        self._procs: dict[int, "psutil.Process"] = {}
+        self._procs: dict[int, psutil.Process] = {}
         self.cpu_count: int = psutil.cpu_count() or 1
         self.total_memory: int = psutil.virtual_memory().total
         self.sample()  # prime the cpu_percent counters
@@ -121,8 +122,8 @@ def prepare_run(
     ``overrides`` maps dotted config paths to values; artifact locations are
     then forced into the run directory regardless of base config/overrides.
 
-    The pipeline's flow section (``train``/``predict``, matching the
-    pipeline key) is resolved against ``shared`` here, so the config written
+    The pipeline's flow section (``train``/``predict``/``tune``, matching
+    the pipeline key) is resolved against ``shared`` here, so the config written
     into the run directory — and read by every stage — is already flat.
     """
     config = load_flow_config(str(base_config_path), pipeline.key)
@@ -135,6 +136,10 @@ def prepare_run(
         config[section] = merged
 
     for dotted, value in (overrides or {}).items():
+        deep_set(config, dotted, value)
+
+    # Pipeline invariants win over base config and overrides alike.
+    for dotted, value in pipeline.forced_values.items():
         deep_set(config, dotted, value)
 
     run_root = Path(run_root or default_run_root())
@@ -151,7 +156,9 @@ def prepare_run(
     with open(config_path, "w") as f:
         yaml.safe_dump(config, f, sort_keys=False)
 
-    return RunContext(pipeline=pipeline, run_dir=run_dir, config_path=config_path, config=config)
+    return RunContext(
+        pipeline=pipeline, run_dir=run_dir, config_path=config_path, config=config
+    )
 
 
 def stage_argv(ctx: RunContext, stage: Stage) -> list[str]:

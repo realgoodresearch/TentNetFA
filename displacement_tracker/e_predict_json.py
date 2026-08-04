@@ -1,28 +1,26 @@
-import click
-import torch
+import gc
 import json
+import os
+import tempfile
 from pathlib import Path
-from scipy.ndimage import label, center_of_mass, gaussian_filter
+
+import click
 import geopandas as gpd
+import psutil
+import torch
+from scipy.ndimage import center_of_mass, gaussian_filter, label
 from shapely.geometry import Point
 from torch.utils.data import DataLoader
-import gc
-import os
-import psutil
-import tempfile
 from tqdm.auto import tqdm
-# import matplotlib.pyplot as plt
 
+# import matplotlib.pyplot as plt
 from displacement_tracker.paired_image_dataset import PairedImageDataset
 from displacement_tracker.simple_cnn import SimpleCNN
 from displacement_tracker.util.config import flow_option, load_flow_config
-from displacement_tracker.util.logging_config import setup_logging
-from displacement_tracker.util.distance import interpolate_centroid
 from displacement_tracker.util.deduplication import merge_close_points_global
+from displacement_tracker.util.distance import interpolate_centroid
+from displacement_tracker.util.logging_config import setup_logging
 from displacement_tracker.util.thresholding import PredictedPoint, passes_threshold
-from displacement_tracker.util.tiff_predictions import (
-    merge_prediction_tiffs,
-)
 
 LOGGER = setup_logging("predict_json")
 
@@ -62,11 +60,15 @@ def extract_tile_centroids(probs_np, bounds, threshold, min_area, crop_pixels=0)
     return coords
 
 
-def extract_tile_nms(probs_np, bounds, threshold, factor=1.0, kernel_size=7, sigma=50.0, crop_pixels=0):
+def extract_tile_nms(
+    probs_np, bounds, threshold, factor=1.0, kernel_size=7, sigma=50.0, crop_pixels=0
+):
     """Return interpolated local maxima above threshold as PredictedPoints."""
     probs_t = torch.as_tensor(probs_np, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
     blurred_np = gaussian_filter(probs_np, sigma=sigma)
-    blurred_t = torch.as_tensor(blurred_np, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+    blurred_t = (
+        torch.as_tensor(blurred_np, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+    )
     score_t = probs_t + blurred_t * factor
 
     # Pad manually so the pooled map always matches score_t's shape: max_pool2d's
@@ -125,7 +127,6 @@ def predict(
     device,
     selection_cfg,
     sample_cfg=None,
-    validation_tifs=False,
     batch_size=12,
     num_workers=4,
     progress_label=None,
@@ -143,7 +144,8 @@ def predict(
     agreement = selection_cfg.get("agreement", False)
     min_distance_m = selection_cfg.get("min_distance_m", 2.0)
     factor = selection_cfg.get("factor", 0.0)
-    LOGGER.info(f"🔹 Prediction selection parameters: method={selection_cfg.get('method', 'centroid')}, "
+    LOGGER.info(
+        f"🔹 Prediction selection parameters: method={selection_cfg.get('method', 'centroid')}, "
         f"threshold={threshold}, min_area={min_area}, nms_kernel_size={nms_kernel_size}, "
         f"crop_pixels={crop_pixels}, nms_sigma={nms_sigma}, agreement={agreement}, "
         f"min_distance_m={min_distance_m}, factor={factor}"
@@ -152,9 +154,7 @@ def predict(
     batch_size = max(1, int(batch_size))
 
     if method not in {"centroid", "nms"}:
-        raise click.ClickException(
-            "selection.method must be one of: 'centroid', 'nms'"
-        )
+        raise click.ClickException("selection.method must be one of: 'centroid', 'nms'")
 
     if method == "nms" and "min_area" in selection_cfg:
         raise click.ClickException(
@@ -185,19 +185,19 @@ def predict(
             except Exception:
                 LOGGER.warning(f"Could not remove existing tmp file {tmp_ndjson}")
     else:
-        tmp_handle = tempfile.NamedTemporaryFile(
-            prefix="pred_points_", suffix=".ndjson", delete=False
-        )
-        tmp_handle.close()
-        tmp_ndjson = Path(tmp_handle.name)
+        # mkstemp rather than NamedTemporaryFile(delete=False): the file has
+        # to outlive this block, so there is no context manager to open.
+        tmp_fd, tmp_name = tempfile.mkstemp(prefix="pred_points_", suffix=".ndjson")
+        os.close(tmp_fd)
+        tmp_ndjson = Path(tmp_name)
 
-    loader_kwargs: dict = dict(
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        pin_memory=(device.type == "cuda"),
-        persistent_workers=False,
-    )
+    loader_kwargs: dict = {
+        "batch_size": batch_size,
+        "shuffle": True,
+        "num_workers": num_workers,
+        "pin_memory": (device.type == "cuda"),
+        "persistent_workers": False,
+    }
     if num_workers and num_workers > 0:
         loader_kwargs["worker_init_fn"] = PairedImageDataset.worker_init_fn
     loader = DataLoader(subset, **loader_kwargs)
@@ -229,7 +229,7 @@ def predict(
                         postfix["rss_gb"] = f"{mem_gb:.2f}"
                         if device.type == "cuda":
                             postfix["cuda_gb"] = (
-                                f"{torch.cuda.memory_allocated(device)/(1024**3):.2f}"
+                                f"{torch.cuda.memory_allocated(device) / (1024**3):.2f}"
                             )
 
                     try:
@@ -259,11 +259,21 @@ def predict(
 
                             if method == "nms":
                                 coords = extract_tile_nms(
-                                    probs_np, bounds, threshold, factor=factor, kernel_size=nms_kernel_size, sigma=nms_sigma, crop_pixels=crop_pixels
+                                    probs_np,
+                                    bounds,
+                                    threshold,
+                                    factor=factor,
+                                    kernel_size=nms_kernel_size,
+                                    sigma=nms_sigma,
+                                    crop_pixels=crop_pixels,
                                 )
                             else:
                                 coords = extract_tile_centroids(
-                                    probs_np, bounds, threshold, min_area, crop_pixels=crop_pixels
+                                    probs_np,
+                                    bounds,
+                                    threshold,
+                                    min_area,
+                                    crop_pixels=crop_pixels,
                                 )
 
                             tile_tent_count = len(coords)
@@ -308,13 +318,15 @@ def predict(
         tmp_ndjson.unlink()
     except Exception:
         pass
-    
-    print("")  # add new line after tqdm bars
+
+    print()  # add new line after tqdm bars
 
     LOGGER.info(f"Total number of tents (pre-merge): {len(flat_results)}")
 
     # Only keep points with agreement between overlaps
-    if isinstance(agreement, bool):  # convert to int, False -> 1 point agreement, True -> 2 point agreement
+    if isinstance(
+        agreement, bool
+    ):  # convert to int, False -> 1 point agreement, True -> 2 point agreement
         agreement = 2 if agreement else 1
 
     # global deduplication in meters
@@ -416,13 +428,14 @@ def run_prediction_job(
     device,
     selection_cfg,
     sample_cfg,
-    validation_tifs,
     boundaries_path,
     batch_size,
     num_workers,
     per_tile_standardisation=False,
 ):
-    dataset = PairedImageDataset(str(input_path), per_tile_standardisation=per_tile_standardisation)
+    dataset = PairedImageDataset(
+        str(input_path), per_tile_standardisation=per_tile_standardisation
+    )
     try:
         results = predict(
             dataset,
@@ -430,7 +443,6 @@ def run_prediction_job(
             device,
             selection_cfg,
             sample_cfg,
-            validation_tifs=validation_tifs,
             batch_size=batch_size,
             num_workers=num_workers,
             progress_label=input_path.stem,
@@ -462,9 +474,11 @@ def cli(config, flow) -> None:
 
     processing_cfg = params.get("processing", {})
     if "margin_metres" not in processing_cfg:
-        raise click.ClickException("Missing required config key: processing.margin_metres")
+        raise click.ClickException(
+            "Missing required config key: processing.margin_metres"
+        )
     margin_metres = float(processing_cfg["margin_metres"])
-    margin_pixels = int(round(margin_metres / PIXEL_METRES))
+    margin_pixels = round(margin_metres / PIXEL_METRES)
     selection_cfg["crop_pixels"] = margin_pixels
     selection_cfg["nms_sigma"] = NMS_SIGMA_FRACTION * margin_pixels
     LOGGER.info(
@@ -480,7 +494,6 @@ def cli(config, flow) -> None:
     model = SimpleCNN.from_pth(
         pred_cfg["model"], model_args={"n_channels": 3, "n_classes": 1}
     )
-    validation_tifs = pred_cfg.get("validation_tifs", False)
     boundaries_path = params.get("boundaries")
 
     device = torch.device(device)
@@ -496,17 +509,11 @@ def cli(config, flow) -> None:
             device,
             selection_cfg,
             sample_cfg,
-            validation_tifs,
             boundaries_path,
             batch_size,
             num_workers,
             per_tile_standardisation=per_tile_standardisation,
         )
-
-    if validation_tifs:
-        tiff_dir = Path(selection_cfg.get("tiff_output_dir", "prediction_tiffs"))
-        mosaic_out = Path(pred_cfg.get("tiff_mosaic_output", "predictions_mosaic.tif"))
-        merge_prediction_tiffs(tiff_dir, str(mosaic_out))
 
 
 if __name__ == "__main__":

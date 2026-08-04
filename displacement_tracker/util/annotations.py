@@ -80,5 +80,3 @@ def group_coords(
             for j in range(j_min, j_max + 1):
                 grouped[(i, j)].append(feat)
     return grouped
-
-

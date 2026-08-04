@@ -18,9 +18,9 @@ This automated detection supports population nowcasting in the Gaza strip in col
 
 -   **Data Ingestion**: Processes Planet GeoTIFF satellite images and GeoJSON files containing labeled tent locations.
 -   **Data Processing**:
-    -   Scans satellite imagery based on geographic coordinates to extract image tiles.
+    -   Scans satellite imagery on a metric tile lattice to extract image tiles.
     -   Generates paired datasets of image patches and corresponding label masks indicating tent locations.
-    -   Creates HDF5 datasets for efficient handling during training.
+    -   Records tiles in per-TIFF Parquet manifests, which the runtime dataset streams from the source GeoTIFFs.
 -   **Model Training**: Trains a custom CNN (`SimpleCNN`) for pixel-wise semantic segmentation to predict tent presence as a density map.
 -   **Prediction & Evaluation**:
     -   Generates GeoJSON point clouds of predicted tent locations from new satellite imagery.
@@ -75,6 +75,7 @@ The individual stages below can also be run end-to-end through the pipeline runn
     logs/           # one log file per stage
     manifests/ preds/ merged/    # prediction pipeline
     manifests/ dataset/ model/   # training pipeline
+    merged_raw/ tuning/ merged/  # hyperparameter tuning pipeline
 ```
 
 The run root defaults to `${DATA_DIR}/results/TentNetFA/pipeline_runs`; the run name defaults to a timestamp.
@@ -127,6 +128,29 @@ flowchart TB
     merge --> out
 ```
 
+Hyperparameter tuning pipeline (the `tune` section of `config.yaml`) — the typical follow-up once predictions exist: it finds the merge thresholds (`min_adj_peak`, `adjustment_factor`) that best match a reference dataset, then re-merges the predictions with them:
+
+```mermaid
+flowchart TB
+    preds["Prediction GeoJSONs<br/>(merge.input_folder — the preds/ folder<br/>of an earlier prediction run)"]
+    refdata["Reference data<br/>(tuning.reference:<br/>vector | unosat | raster | manual_eval)"]
+    grid["Master grid raster<br/>(tuning.master_grid)"]
+    merge_raw["<b>merge_raw</b> — h_merge_geojsons<br/>merges & deduplicates WITHOUT thresholding"]
+    scan["<b>scan</b> — g1_scan_validation<br/>rasterizes predictions vs. reference on the master grid,<br/>searches (adjustment_factor, min_adj_peak) optimising tuning.metric"]
+    merge_tuned["<b>merge_tuned</b> — h2_merge_tuned<br/>re-merges the raw predictions with the tuned thresholds"]
+    out(["merged/merged_tuned.gpkg"])
+
+    preds --> merge_raw
+    merge_raw -- "merged_raw/merged_raw.gpkg" --> scan
+    refdata --> scan
+    grid --> scan
+    scan -- "tuning/best_params.yaml" --> merge_tuned
+    preds --> merge_tuned
+    merge_tuned --> out
+```
+
+The reference data is declared through a generic interface (`displacement_tracker/util/reference_data.py`): `vector` point annotations in any OGR-readable file (GeoJSON, GPKG, SHP, ...), a `unosat` export (a file, or a directory of exports — pinned by an explicit `date`, or auto-discovered as the export closest to the dates stamped on the prediction files, which logs a warning), a `raster` of counts already resolved on the master grid, or `manual_eval`, the manual tile annotations CSV pinned to one acquisition `date`. The type is inferred from the path suffix when left unset. Any other source of master-grid-resolved ground truth can be added by implementing a `ReferenceSource`.
+
 The same diagrams, together with a full reference of every config key, are available in the UI's **Help** tab (sourced from [`displacement_tracker/pipelines/help.md`](displacement_tracker/pipelines/help.md)).
 
 ### Browser UI
@@ -136,7 +160,7 @@ poetry install --with ui   # installs streamlit
 poetry run pipeline-ui
 ```
 
-This starts a local web server and opens a browser session where you pick the pipeline (training or prediction), override any parameter from the matching section of `config.yaml` in a form (plus a free-form YAML box for anything not exposed), toggle individual stages, and watch live logs while the run executes.
+This starts a local web server and opens a browser session where you pick the pipeline (training, prediction or hyperparameter tuning), override any parameter from the matching section of `config.yaml` in a form (plus a free-form YAML box for anything not exposed), toggle individual stages, and watch live logs while the run executes.
 
 A run is tied to its browser session: switching pipeline, refreshing or closing the page cancels the running stage and terminates all of its child processes. Completed artifacts and per-stage logs remain in the run directory, so you can resume by re-running with only the remaining stages enabled. For long unattended runs prefer the headless CLI below inside tmux/screen.
 
@@ -173,6 +197,7 @@ The same orchestration is scriptable without a browser:
 ```bash
 poetry run pipeline-run predict --set prediction.batch_size=16 --name 2026-02-rerun
 poetry run pipeline-run train --skip download --set training.epochs=500
+poetry run pipeline-run tune --set merge.input_folder=/path/to/earlier/run/preds
 poetry run pipeline-run predict --dry-run   # print the plan without executing
 ```
 
@@ -180,7 +205,7 @@ poetry run pipeline-run predict --dry-run   # print the plan without executing
 
 ## Workflow and CLI Usage
 
-The core workflow is managed through a series of command-line scripts. All scripts read the single `config.yaml`: each resolves its own flow section (`train` or `predict`, deep-merged over `shared`) by default, and accepts `--flow train|predict` to override — e.g. `poetry run image-scanner config.yaml --flow train` to scan training imagery with the image-only scanner.
+The core workflow is managed through a series of command-line scripts. All scripts read the single `config.yaml`: each resolves its own flow section (`train`, `predict` or `tune`, deep-merged over `shared`) by default, and accepts `--flow train|predict|tune` to override — e.g. `poetry run image-scanner config.yaml --flow train` to scan training imagery with the image-only scanner.
 
 ### 1. Download Satellite Imagery
 Download GeoTIFF files from Google Drive based on the filenames specified in your configuration file. The download stage runs in both flows, so tell it which section to use:
@@ -216,17 +241,29 @@ This will generate GeoJSON files containing the coordinates of predicted tents.
 The repository includes several scripts for analyzing the results:
 
 -   `evaluate-geojson`: Compare a prediction GeoJSON against a ground truth GeoJSON to compute metrics like precision, recall, and F1-score.
--   `validate-geojson`: Perform spatial validation by comparing rasterized prediction counts against validation counts on a master grid.
--   `merge-geojsons`: Merge multiple prediction GeoJSONs into a single, deduplicated GeoPackage file.
+-   `validate-geojson`: Perform spatial validation by comparing rasterized prediction counts against an explicitly selected reference source on a master grid (`--reference`, plus `--reference-type/-date/-layer/-where`; see `displacement_tracker/util/reference_data.py`).
+-   `merge-geojsons`: Merge multiple prediction GeoJSONs into a single, deduplicated GeoPackage file. With `merge.process_by_date: true`, predictions are first sorted into `YYYYMMDD/` folders and each date is merged into its own `YYYYMMDD.gpkg` instead.
+
+### 6. Tune the Merge Thresholds
+The `tune` section of `config.yaml` configures the hyperparameter tuning flow, which finds the `merge.min_adj_peak` / `merge.adjustment_factor` pair that best matches a reference dataset:
+
+```bash
+poetry run merge-geojsons config.yaml --flow tune   # unthresholded merge of the raw predictions
+poetry run scan-validation config.yaml              # scan thresholds, write tuning.best_params
+poetry run merge-tuned config.yaml                  # final merge with the tuned thresholds
+```
+
+The same three stages run end-to-end as the *Hyperparameter tuning pipeline* in the pipeline UI / `pipeline-run tune`.
 
 ---
 ## Configuration File (config.yaml)
 
-Both flows are configured through the single `config.yaml`, which has three top-level sections:
+All flows are configured through the single `config.yaml`, which has four top-level sections:
 
 - **`shared`** — the single source of truth for values used by more than one flow (boundaries, pre-war raster, tile geometry).
 - **`train`** — everything the training flow needs (annotated imagery paths, manifests, rebalancing, CNN hyperparameters).
 - **`predict`** — everything the prediction flow needs (new imagery paths, model checkpoint, selection/merge parameters).
+- **`tune`** — everything the hyperparameter tuning flow needs (predictions to tune on, master grid, reference data, search bounds and evaluation metric).
 
 When a stage runs, its flow section is deep-merged over `shared` (the flow section wins), producing a flat config. This means shared values are defined exactly once, while each flow section makes explicit which paths and parameters its stages use — e.g. `train.geotiff_dir` and `predict.geotiff_dir` are independent keys, but both flows tile imagery with the same `shared.processing.core_metres`.
 
@@ -255,6 +292,19 @@ predict:
     quality_thresholds:
       min_valid_fraction: 0.1   # loose for prediction
   prediction: { ... }
+
+tune:
+  merge:
+    input_folder: ${DATA_DIR}/results/TentNetFA/2026-02/preds
+    min_adj_peak: 0.0           # raw pass keeps everything; thresholds are tuned
+    adjustment_factor: 1.0
+  tuning:
+    master_grid: ${DATA_DIR}/data/master_grid_100m.tif
+    reference:                  # vector | unosat | raster | manual_eval
+      type: unosat
+      path: ${DATA_DIR}/data/reference/unosat
+      date: 2026-02-15          # explicit selection — no timestamp inference
+    metric: rms                 # optimum of this metric drives the final merge
 ```
 
 See the checked-in [`config.yaml`](./config.yaml) for the full set of keys, and the [pipeline help](displacement_tracker/pipelines/help.md) for a reference of what each key does. Flat single-flow configs (the historic `config.yaml` / `predict_config.yaml` layout, and the resolved configs the pipeline runner writes into run directories) are still accepted by every script.
@@ -355,9 +405,114 @@ poetry run python -m displacement_tracker.h_merge_geojsons config.yaml
 
 This deduplicates overlapping predictions and produces a consolidated output. Note: this merges everything in the input folder into a single gpkg file. Only do this if the predictions in the input folder are intended to be merged and deduplicated into one file.
 
+### Step 4: Evaluate Model Predictions
+
+The `displacement_tracker/evaluation/` package compares model predictions
+against the manually annotated tiles in
+`displacement_tracker/evaluation/manual_eval/manual_annotation_results.csv`
+and produces CSV summaries and plots of tile-level error: overall and
+hex-aggregated error (analytic and bootstrap CIs), error by municipality,
+month, building density, agriculture and destruction areas, and
+manual-vs-model correlations.
+
+Run the full suite from the `evaluation` section of the config, like any
+other stage:
+
+```bash
+poetry run run-evaluation config.yaml
+```
+
+The section lives under `predict`, so `--flow` defaults to `predict` and the
+municipal boundaries come from `shared.boundaries` — the same layer the scan
+stages tile against. Paths are used as configured: relative ones resolve
+against the working directory, so pointing the command at the resolved
+`config.yaml` a pipeline run writes into its run directory evaluates that
+run.
+
+The three spatial context layers the analyses read (`agriculture.json`,
+`h3_density.json`, `destruction.json`) are deliberately **not committed**
+(~40 MB). Obtain them from the team data share — or from the original
+evaluation branch, which still carries them:
+
+```bash
+git fetch origin eval-postprocessing-pipeline
+git checkout origin/eval-postprocessing-pipeline -- \
+  displacement_tracker/evaluation/spatial_data/layers/agriculture.json \
+  displacement_tracker/evaluation/spatial_data/layers/h3_density.json \
+  displacement_tracker/evaluation/spatial_data/layers/destruction.json
+git restore --staged displacement_tracker/evaluation/spatial_data/layers/
+```
+
+The fetch is needed because a fresh clone has no
+`origin/eval-postprocessing-pipeline` ref to check out from, and the
+`git restore --staged` keeps the 40 MB out of your next commit. The
+directory is gitignored, so the files stay local. `run-evaluation` checks
+for them up front and lists anything missing.
+
+By default the suite evaluates the `model_column` already present in the
+annotation CSV. To evaluate a new model instead, uncomment
+`evaluation.new_model` and set `column` (the name for the added count
+column), `sample_tif` (any GeoTIFF with the prediction CRS) and
+`output_csv`; the new model's counts are joined onto the annotations before
+the analyses run. `prediction_dir` — a folder of per-date `YYYYMMDD.gpkg`
+files produced by `merge-geojsons` with `merge.process_by_date: true` —
+defaults to `prediction.output_folder`, so evaluation chains onto a
+prediction run without restating the path.
+
+Results are written to `evaluation.output_dir`
+(`displacement_tracker/evaluation/results/` by default, which is
+gitignored). Note that the shared config references `${DATA_DIR}` in other
+sections, so the `.env` from the setup step above has to be in place even
+though the evaluation keys themselves need no data share.
+
+#### Using the manual annotations as validation reference data
+
+The manual annotations also plug into the generic reference-data interface
+used by the validation and tuning flows (`util/reference_data.py`). Two
+options:
+
+- Reference type `manual_eval`: point `reference.path` at the annotation
+  CSV and set `reference.date` to pick one acquisition date — each
+  annotated tile's count lands in the master-grid cell containing the tile
+  centroid. A `.csv` path infers the type, so `reference.type` may be left
+  unset:
+
+```yaml
+reference:
+  type: manual_eval       # optional; inferred from the .csv suffix
+  path: displacement_tracker/evaluation/manual_eval/manual_annotation_results.csv
+  date: 2024-10-14        # required whenever the CSV spans several dates
+```
+
+  The same source is available on `validate-geojson`:
+
+```bash
+poetry run validate-geojson --pred-dir path/to/merged_preds \
+  --reference displacement_tracker/evaluation/manual_eval/manual_annotation_results.csv \
+  --reference-type manual_eval --reference-date 2024-10-14 \
+  --master-grid path/to/master_grid.tif
+```
+
+- Materialize one date as a counts raster consumable by the built-in
+  `raster` reference type:
+
+```bash
+poetry run annotation-reference --date 2024-10-14 \
+  --master-grid path/to/master_grid.tif \
+  --output reference_20241014.tif
+```
+
+Both routes resolve the same counts. The raster export stays useful for
+handing one date's counts to external tooling, or as a fixed input that
+does not re-read the CSV.
+
+Note the annotations are a sparse sample of tiles: cells without an
+annotated tile read as zero reference counts, so restrict comparisons to
+annotated areas.
+
 ## Output
 
--   **HDF5 Datasets**: The `coordinate-scanner` script produces HDF5 files containing `feature`, `prewar`, `label`, and `meta` datasets for training and prediction.
+-   **Tile Manifests**: The `annotated-scanner` and `image-scanner` scripts produce per-TIFF Parquet manifests (one row per tile: raster path, pixel window, bbox and standardisation stats), plus a labels JSON alongside the training manifests.
 -   **Model Checkpoints**: The training script saves the best-performing model (`best_model.pth`) and dataset split information in the `runs/<timestamp>/` directory.
 -   **Prediction GeoJSONs**: The prediction script generates GeoJSON files with point coordinates for each detected tent, including `peak_value` (the raw model probability at the peak), `adjustment_signal` (the raw blurred neighbourhood score, before any factor is applied) and `adjusted_peak` (`peak_value + factor × adjustment_signal`). That identity holds in every file the pipeline writes, including the merged GeoPackage: later stages multiply the raw signal by their own factor — e.g. `merge.adjustment_factor` — to decide what to keep, but leave the recorded values alone, so the three columns always reconcile and can be sanity checked against each other.
 -   **Evaluation Reports**: Validation and evaluation scripts produce CSV reports and difference rasters summarizing model performance.

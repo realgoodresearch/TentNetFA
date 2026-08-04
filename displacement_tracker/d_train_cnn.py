@@ -1,18 +1,21 @@
 from __future__ import annotations
+
+import datetime
+import os
 from pathlib import Path
 
 import click
 import torch
+from torch import optim
 from torch.utils.data import DataLoader
-import torch.optim as optim
-import os
-import datetime
+
 from displacement_tracker.paired_image_dataset import PairedImageDataset
 from displacement_tracker.simple_cnn import SimpleCNN
 from displacement_tracker.util.config import flow_option, load_flow_config
 from displacement_tracker.util.logging_config import setup_logging
 
 LOGGER = setup_logging("train-cnn")
+
 
 class CachedDataset(torch.utils.data.Dataset):
     def __init__(self, base_ds, num_workers: int = 0):
@@ -43,7 +46,7 @@ def custom_collate(batch):
     collated_dict = {}
 
     # Iterate over keys in the first dictionary of the batch
-    for key in batch[0].keys():
+    for key in batch[0]:
         entry = [d[key] for d in batch]
 
         if key != "meta":
@@ -66,7 +69,11 @@ def cli(config: str, flow: str) -> None:
         raise click.ClickException(
             "Missing required config key: manifest (or manifest_folder)"
         )
-    train(manifest_path, artifact_dir=params.get("artifact_dir", "runs"), **params["training"])
+    train(
+        manifest_path,
+        artifact_dir=params.get("artifact_dir", "runs"),
+        **params["training"],
+    )
 
 
 def train(
@@ -76,7 +83,7 @@ def train(
     batch_size: int,
     epochs: int,
     learning_rate: float,
-    weight_decay: float = 0.,
+    weight_decay: float = 0.0,
     sigma: float = 3.0,
     checkpoint: str | None = None,
     device: str | None = None,
@@ -96,7 +103,7 @@ def train(
         device = torch.device("cpu")
         LOGGER.info("Using CPU")
     else:
-        raise Exception(f"Could not find device {device}")
+        raise ValueError(f"Could not find device {device}")
 
     if checkpoint:
         checkpoint = Path(checkpoint)
@@ -120,16 +127,18 @@ def train(
         LOGGER.info("Caching training dataset in RAM...")
         train_set = CachedDataset(train_set, num_workers=int(num_workers))
         val_set = CachedDataset(val_set, num_workers=int(num_workers))
-        LOGGER.info(f"Cached {len(train_set)} training and {len(val_set)} validation samples.")
+        LOGGER.info(
+            f"Cached {len(train_set)} training and {len(val_set)} validation samples."
+        )
         loader_workers = 0
     else:
         loader_workers = int(num_workers)
 
-    loader_kwargs = dict(
-        batch_size=batch_size,
-        collate_fn=custom_collate,
-        num_workers=loader_workers,
-    )
+    loader_kwargs = {
+        "batch_size": batch_size,
+        "collate_fn": custom_collate,
+        "num_workers": loader_workers,
+    }
     if loader_workers > 0:
         loader_kwargs["worker_init_fn"] = PairedImageDataset.worker_init_fn
         loader_kwargs["persistent_workers"] = True
@@ -145,15 +154,12 @@ def train(
         # pixelwise loss
         mse = torch.nn.functional.mse_loss(x, y)
 
-        # count loss (mass difference)
-        pred_count = x.sum(dim=(1, 2, 3))
-        true_count = y.sum(dim=(1, 2, 3))
-        count_loss = torch.nn.functional.mse_loss(pred_count, true_count)
+        # a count loss (mass difference) term was tried here and dropped
+        return 1e6 * mse
 
-        # small weight keeps spatial quality dominant
-        return 1e6 * mse # + 0.1 * count_loss
-
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    optimizer = optim.Adam(
+        model.parameters(), lr=learning_rate, weight_decay=weight_decay
+    )
 
     # Create timestamped run directory
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -163,8 +169,9 @@ def train(
     # caching splits for future use
     with open(os.path.join(run_dir, "splits.csv"), "w") as split_file:
         split_file.write(",".join([str(split) for split in splits]) + "\n")
-        for idcs in idcs_list:
-            split_file.write(",".join([str(idx) for idx in idcs]) + "\n")
+        split_file.writelines(
+            ",".join([str(idx) for idx in idcs]) + "\n" for idcs in idcs_list
+        )
 
     best_eval = float("inf")
 

@@ -1,14 +1,16 @@
-# TentNetFA configuration — single file for both pipelines.
+# TentNetFA configuration — single file for all pipelines.
 #
 #   shared:   values used by more than one flow (single source of truth).
 #   train:    training flow    (a_tif_loader -> b1_annotated_scanner
 #                               -> c_resample_manifest -> d_train_cnn)
 #   predict:  prediction flow  (a_tif_loader -> b2_image_scanner
 #                               -> e_predict_json -> h_merge_geojsons)
+#   tune:     hyperparameter tuning flow  (h_merge_geojsons [unthresholded]
+#                               -> g1_scan_validation -> h2_merge_tuned)
 #
 # Each stage resolves its config as deep_merge(shared, <flow section>); the
 # flow section wins on conflicts. Stage CLIs default to their natural flow
-# and accept --flow train|predict to override; the pipeline runner/UI picks
+# and accept --flow train|predict|tune to override; the pipeline runner/UI picks
 # the flow matching the selected pipeline automatically.
 
 shared:
@@ -104,7 +106,6 @@ predict:
     quality_thresholds:
       min_valid_fraction: 0.1
   prediction:
-    save_bounds: true
     # input_folder: null  # defaults to manifest_folder above
     output_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/preds
     model: /home/karim/TentNetFA/runs/v2.0/best_model.pth
@@ -122,9 +123,9 @@ predict:
       nms_kernel_size: 7
       min_distance_m: 3.0
       # crop_pixels and nms_sigma are derived from processing.margin_metres
-    validation_tifs: false # ideally set to false if sampling is false
     per_tile_standardisation: true
   merge:
+    # process_by_date: true   # sort predictions into YYYYMMDD/ folders and write one <input_folder>/YYYYMMDD.gpkg per date (ignores merge.output)
     # input_folder: null  # defaults to prediction.output_folder
     output: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/merged/merged.gpkg
     min_distance_m: 3.0
@@ -134,3 +135,71 @@ predict:
     thresholds_config: null     # optional YAML with per-file adj_peak thresholds
     exclusion_zones_gpkg: null  # drop points inside these geometries
     inclusion_zone: null        # drop points outside this geometry
+  evaluation:
+    # Scores predictions against the manually annotated tiles; boundary layer comes from shared.boundaries.
+    annotation_csv: displacement_tracker/evaluation/manual_eval/manual_annotation_results.csv
+    # Gitignored; CSV summaries and plots land here.
+    output_dir: displacement_tracker/evaluation/results
+    # ~40 MB, deliberately not committed — see the README's 'Evaluate Model Predictions' section.
+    layers:
+      agriculture: displacement_tracker/evaluation/spatial_data/layers/agriculture.json
+      h3_density: displacement_tracker/evaluation/spatial_data/layers/h3_density.json
+      destruction: displacement_tracker/evaluation/spatial_data/layers/destruction.json
+    # hex_size_m: 1000.0        # hex diameter for the two hex analyses
+    # manual_column: manual_tent_count   # ground-truth counts
+    # model_column: model_tent_count     # counts to score against them
+    # Uncomment to score a new model: its counts are joined onto the annotations before evaluating.
+    # new_model:
+    #   column: model_beta2.0        # name for the added count column
+    #   sample_tif: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/tiffs/example.tif
+    #   output_csv: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/evaluation/annotations_with_new_model.csv
+    #   prediction_dir: null   # defaults to prediction.output_folder
+
+tune:
+  merge:
+    # Prediction GeoJSONs to tune on — typically the preds/ folder of an
+    # earlier prediction pipeline run.
+    input_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/preds
+    # First pass merges WITHOUT thresholding so the scan sees every
+    # candidate point — the pipeline runner forces min_adj_peak: 0,
+    # adjustment_factor: 1 and thresholds_config: null here (and the
+    # merge-geojsons CLI defaults to the same), so don't set them.
+    output: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/tuning/merged_raw.gpkg
+    min_distance_m: 3.0
+    agreement: 1
+    exclusion_zones_gpkg: null
+    inclusion_zone: null
+  tuning:
+    # input: null  # merged raw predictions; defaults to merge.output
+    # Master grid the reference data and predictions are resolved onto.
+    master_grid: ${DATA_DIR}/data/master_grid_100m.tif
+    # Ground-truth reference (see displacement_tracker/util/reference_data.py):
+    #   vector       point annotations in any OGR-readable file (GeoJSON/GPKG/SHP)
+    #   unosat       a UNOSAT export — a file, or a directory (pin with date, or
+    #                auto-discover the export nearest the prediction dates)
+    #   raster       counts already resolved on the master grid
+    #   manual_eval  the manual tile annotations CSV (pin one acquisition
+    #                date with date); inferred from a .csv path
+    reference:
+      type: unosat
+      path: ${DATA_DIR}/data/reference/unosat
+      # Pins one export when path is a directory (searched recursively).
+      # Leave unset to auto-discover the export closest to the dates
+      # stamped on the prediction files — logged with a warning.
+      date: 2026-02-15
+      # layer: null           # layer in multi-layer files (GPKG/GDB)
+      # where: null           # OGR SQL attribute filter
+    metric: rms               # optimum of this metric drives the final merge
+    metrics: [rms, mae, abs_total_diff]   # tracked during the scan
+    factor_min: 0.0           # adjustment_factor search bounds
+    factor_max: 10.0
+    cutoff_min: 0.0001        # min_adj_peak search bounds
+    cutoff_max: 0.01
+    ridge_probes: 5
+    xtol_factor: 1.0e-3
+    xtol_cutoff: 1.0e-6
+    refine_maxiter: 60
+    exclusion_zones: null     # optional gpkg; predictions are clipped to its union
+    out_dir: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/tuning
+    best_params: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/tuning/best_params.yaml
+    final_output: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/merged/merged_tuned.gpkg

@@ -68,7 +68,9 @@ def _with_descendants(roots: list[psutil.Process]) -> dict[int, psutil.Process]:
 @click.command()
 @click.option("--dry-run", is_flag=True, help="List what would be terminated and exit.")
 @click.option(
-    "--timeout", default=10.0, show_default=True,
+    "--timeout",
+    default=10.0,
+    show_default=True,
     help="Seconds to wait after SIGTERM before escalating to SIGKILL.",
 )
 def cli(dry_run: bool, timeout: float) -> None:
@@ -85,7 +87,9 @@ def cli(dry_run: bool, timeout: float) -> None:
     LOGGER.info(
         "%d process(es) to terminate (%d server(s), %d orphaned stage(s), "
         "rest are their children).",
-        len(targets), len(servers), len(orphans),
+        len(targets),
+        len(servers),
+        len(orphans),
     )
     if dry_run:
         return
@@ -96,7 +100,7 @@ def cli(dry_run: bool, timeout: float) -> None:
             proc.terminate()
         except psutil.NoSuchProcess:
             continue
-    gone, alive = psutil.wait_procs(procs, timeout=timeout)
+    _gone, alive = psutil.wait_procs(procs, timeout=timeout)
     for proc in alive:
         LOGGER.warning("pid %d did not exit within %.0fs — killing", proc.pid, timeout)
         try:

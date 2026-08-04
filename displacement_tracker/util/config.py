@@ -1,10 +1,11 @@
 """Single-config resolution: a shared section plus per-flow sections.
 
-The repository ships one ``config.yaml`` with three top-level sections:
+The repository ships one ``config.yaml`` with four top-level sections:
 
     shared:    values used by more than one flow (single source of truth)
     train:     the training flow    (scan -> rebalance -> train CNN)
     predict:   the prediction flow  (scan -> predict -> merge)
+    tune:      the tuning flow      (raw merge -> threshold scan -> tuned merge)
 
 A stage resolves its configuration by deep-merging its flow section over
 ``shared`` — flow values win on conflicts. The result has the same flat
@@ -22,7 +23,7 @@ import click
 
 from displacement_tracker.util.env_loader import load_yaml_with_env
 
-FLOWS = ("train", "predict")
+FLOWS = ("train", "predict", "tune")
 _SECTION_KEYS = ("shared", *FLOWS)
 
 
@@ -59,8 +60,30 @@ def deep_merge(base: dict, extra: dict) -> dict:
     return base
 
 
+def require(cfg: dict, *dotted: str):
+    """First value set at one of ``dotted``, or fail naming all of them.
+
+    Empty counts as missing, so a path resolving to ``""`` is rejected the
+    same as one that is absent.
+    """
+    for path in dotted:
+        value = deep_get(cfg, path)
+        if value:
+            return value
+    fallbacks = f" (or {' / '.join(dotted[1:])} as fallback)" if dotted[1:] else ""
+    raise click.ClickException(f"Missing required config key: {dotted[0]}{fallbacks}")
+
+
+def forwarded(cfg: dict, *keys: str) -> dict:
+    """Only the keys ``cfg`` sets non-null, so callee defaults hold.
+
+    Unlike ``require``, ``0``/``False`` count as set, not missing.
+    """
+    return {key: cfg[key] for key in keys if cfg.get(key) is not None}
+
+
 def is_sectioned_config(config: dict) -> bool:
-    """True if the config uses the shared/train/predict layout."""
+    """True if the config uses the sectioned shared/per-flow layout."""
     return isinstance(config, dict) and any(key in config for key in _SECTION_KEYS)
 
 
@@ -86,7 +109,7 @@ def resolve_flow_config(config: dict, flow: str | None) -> dict:
         )
     if flow is None:
         raise click.UsageError(
-            "This config uses shared/train/predict sections; pass "
+            "This config uses shared/per-flow sections; pass "
             f"--flow to pick one of: {', '.join(FLOWS)}."
         )
     if flow not in FLOWS:
@@ -112,6 +135,6 @@ def flow_option(default: str | None):
         type=click.Choice(list(FLOWS)),
         default=default,
         show_default=default is not None,
-        help="Config section to resolve (shared/train/predict layout only; "
-        "ignored for legacy flat configs).",
+        help="Config section to resolve (sectioned shared/per-flow layout "
+        "only; ignored for legacy flat configs).",
     )

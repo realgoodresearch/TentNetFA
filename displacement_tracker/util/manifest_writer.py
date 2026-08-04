@@ -1,19 +1,20 @@
 """Per-TIFF Parquet manifest writer.
 
-Replaces the gzip-chunked HDF5 tile dump with a small columnar manifest. Each
-row describes a tile by reference (raster path + pixel window + bbox) rather
-than carrying the raw pixels, so the dataset can stream tiles directly from
+A tile is described by reference (raster path + pixel window + bbox) rather
+than by carrying the raw pixels, so the dataset can stream tiles directly from
 the source GeoTIFFs at training/inference time. Per-channel standardisation
 stats live in the Parquet file metadata so the dataset can normalise windows
 on the fly.
 """
+
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 import pyarrow as pa
@@ -49,7 +50,7 @@ MANIFEST_STATS_KEY = "raster_stats"
 def compute_tile_id(raster_path: str, r0: int, c0: int) -> int:
     """Deterministic uint64 hash so split caches stay stable across re-runs."""
     digest = hashlib.blake2b(
-        f"{raster_path}|{r0}|{c0}".encode("utf-8"), digest_size=8
+        f"{raster_path}|{r0}|{c0}".encode(), digest_size=8
     ).digest()
     return int.from_bytes(digest, byteorder="little", signed=False)
 
@@ -63,7 +64,7 @@ def labels_sibling_path(manifest_path: str | os.PathLike[str]) -> Path:
 class ManifestWriter:
     """Buffer manifest rows in memory, atomically write Parquet on close.
 
-    For per-TIFF outputs the row count is bounded (raster_extent / step)^2 —
+    For per-TIFF outputs the row count is bounded (raster_extent / core_m)^2 —
     well below memory limits — so a single end-of-TIFF write is simpler than
     incremental flushing and keeps the on-disk file a single Parquet object.
     """
@@ -121,7 +122,9 @@ class ManifestWriter:
         os.replace(tmp, self.path)
         return table
 
-    def __enter__(self) -> "ManifestWriter":
+    # PYI034 wants `Self` here, which typing only gained in 3.11; the project
+    # floor is 3.10, so the class name stays.
+    def __enter__(self) -> ManifestWriter:  # noqa: PYI034
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:

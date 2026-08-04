@@ -2,19 +2,20 @@
 
 Each worker computes tile windows + validity and emits manifest rows. The main
 process aggregates rows and writes a single Parquet manifest at end-of-TIFF.
-The HDF5 materialisation step is gone — the runtime dataset reads tiles
-directly from the standardised raster.
+The runtime dataset reads tiles directly from the standardised raster.
 """
+
 from __future__ import annotations
 
 import inspect
 import math
 import os
 import sys
+from collections.abc import Iterable, Iterator
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from concurrent.futures.process import BrokenProcessPool
 from itertools import islice
-from typing import Any, Iterable, Iterator
+from typing import Any
 
 import click
 import rasterio
@@ -121,9 +122,10 @@ def _chunked(seq: Iterable, n: int) -> Iterator[list]:
 def _supports_max_tasks_per_child() -> bool:
     """ProcessPoolExecutor.max_tasks_per_child was added in Python 3.11."""
     try:
-        return "max_tasks_per_child" in inspect.signature(
-            ProcessPoolExecutor.__init__
-        ).parameters
+        return (
+            "max_tasks_per_child"
+            in inspect.signature(ProcessPoolExecutor.__init__).parameters
+        )
     except (TypeError, ValueError):
         return sys.version_info >= (3, 11)
 
@@ -168,9 +170,7 @@ def scan_all_coordinates(
         return
 
     src_means, src_stds = compute_standardisation_stats(src)
-    manifest_writer.set_raster_stats(
-        src.name, src_means, src_stds, nodata=src.nodata
-    )
+    manifest_writer.set_raster_stats(src.name, src_means, src_stds, nodata=src.nodata)
 
     bounds = src.bounds
     LOGGER.info(
@@ -305,9 +305,8 @@ def scan_all_coordinates(
                         completed += 1
                         pbar.update(1)
 
-                    if pool_broken:
-                        if not _restart_pool("future"):
-                            return
+                    if pool_broken and not _restart_pool("future"):
+                        return
         finally:
             try:
                 executor.shutdown(wait=False, cancel_futures=True)
@@ -332,7 +331,7 @@ def cli(config, flow):
     """Run the image-only (no annotations) scan flow from a YAML config."""
     params = load_flow_config(config, flow)
     try:
-        require_keys(params, ("geotiff_dir", "processing"))
+        require_keys(params, ("geotiff_dir", "processing", "manifest_folder"))
     except KeyError as e:
         raise click.ClickException(str(e))
 
@@ -353,9 +352,7 @@ def cli(config, flow):
         max_tasks_per_child = int(max_tasks_per_child) or None
     max_pool_restarts = int(proc.get("max_pool_restarts", 3))
 
-    manifest_folder = params.get("manifest_folder") or params.get("hdf5_folder")
-    if not manifest_folder:
-        raise click.ClickException("Missing required config key: manifest_folder")
+    manifest_folder = params["manifest_folder"]
 
     tif_files = collect_tif_files(params["geotiff_dir"], params)
     if not tif_files:

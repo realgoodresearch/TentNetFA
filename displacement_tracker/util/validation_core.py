@@ -1,15 +1,13 @@
-"""Shared utilities for validating predicted point sets against ground-truth points.
+"""Shared utilities for validating predicted point sets against reference data.
 
-The validation flow rasterizes predicted and reference points onto a master grid,
-restricted to the convex hull of the predictions, then derives per-cell error
-metrics inside that hull.
+The validation flow resolves predictions and a reference source (see
+``util/reference_data.py``) onto a master grid, restricted to the convex
+hull of the predictions, then derives per-cell error metrics inside that
+hull.
 """
 
 import os
-import re
-from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import geopandas as gpd
 import numpy as np
@@ -19,6 +17,7 @@ from rasterio.transform import rowcol
 from scipy.stats import spearmanr
 
 from displacement_tracker.util.logging_config import setup_logging
+from displacement_tracker.util.reference_data import ReferenceSource
 from displacement_tracker.util.thresholding import (
     adjusted_peak_from_signal,
     adjustment_signal_from_peaks,
@@ -29,7 +28,7 @@ LOGGER = setup_logging("validation_core")
 
 
 # Direction of optimization for each metric: "min" = lower is better.
-METRIC_DIRECTIONS: Dict[str, str] = {
+METRIC_DIRECTIONS: dict[str, str] = {
     "rms": "min",
     "mae": "min",
     "rmsle": "min",
@@ -39,39 +38,22 @@ METRIC_DIRECTIONS: Dict[str, str] = {
 }
 
 
-def extract_date_from_path(path: str) -> Optional[datetime]:
-    """Match YYYY-MM-DD or YYYYMMDD in a filename."""
-    match = re.search(r"(\d{4}-\d{2}-\d{2})|(\d{8})", os.path.basename(path))
-    if not match:
-        return None
-    date_str = match.group(0).replace("-", "")
-    return datetime.strptime(date_str, "%Y%m%d")
-
-
-def get_point_counts(
-    gdf: gpd.GeoDataFrame, out_shape: Tuple[int, int], transform: rasterio.Affine
-) -> np.ndarray:
-    """Rasterize point geometries into counts per cell."""
-    if gdf.empty:
-        return np.zeros(out_shape, dtype=np.float32)
-    shapes = ((geom, 1) for geom in gdf.geometry)
-    return features.rasterize(
-        shapes=shapes,
-        out_shape=out_shape,
-        transform=transform,
-        merge_alg=rasterio.enums.MergeAlg.add,
-        fill=0,
-        dtype="float32",
+def list_point_files(directory: str) -> list[str]:
+    """Sorted point-set files (predictions) in a directory."""
+    return sorted(
+        os.path.join(directory, f)
+        for f in os.listdir(directory)
+        if f.endswith((".gpkg", ".geojson", ".json"))
     )
 
 
 def prepare_grouped_cell_inputs(
     pred_gdf: gpd.GeoDataFrame,
-    val_gdf: gpd.GeoDataFrame,
+    reference: ReferenceSource,
     src_grid: rasterio.io.DatasetReader,
     nodata_val: float = -9999.0,
     source: str | None = None,
-) -> Dict[str, object]:
+) -> dict[str, object]:
     """Build one-time geometry/grid products and per-point cell assignments.
 
     ``source`` names the prediction file in fallback warnings.
@@ -93,8 +75,12 @@ def prepare_grouped_cell_inputs(
         invert=True,
     )
 
-    val_in_hull = val_gdf.clip(prediction_extent_geom)
-    val_raster = get_point_counts(val_in_hull, grid_shape, out_transform)
+    val_raster = reference.counts_on_grid(
+        grid_shape,
+        out_transform,
+        src_grid.crs,
+        clip_geom=prediction_extent_geom,
+    )
 
     xs = pred_gdf.geometry.x.to_numpy()
     ys = pred_gdf.geometry.y.to_numpy()
@@ -103,10 +89,7 @@ def prepare_grouped_cell_inputs(
     cols = np.asarray(cols, dtype=np.int32)
 
     in_bounds = (
-        (rows >= 0)
-        & (rows < grid_shape[0])
-        & (cols >= 0)
-        & (cols < grid_shape[1])
+        (rows >= 0) & (rows < grid_shape[0]) & (cols >= 0) & (cols < grid_shape[1])
     )
 
     # peak_value is required — selecting it by label keeps a file that lacks it
@@ -152,9 +135,9 @@ def process_grouped_cells(
     pred_cols: np.ndarray,
     val_raster: np.ndarray,
     mask_array: np.ndarray,
-    grid_shape: Tuple[int, int],
+    grid_shape: tuple[int, int],
     nodata_val: float = -9999.0,
-) -> Dict[str, np.ndarray]:
+) -> dict[str, np.ndarray]:
     """Build a prediction raster from pre-grouped cells and derive diff/error rasters.
 
     `val_raster` is mutated in place to hold `nodata_val` outside the mask, so the
@@ -196,7 +179,7 @@ def compute_metrics(
     val_raster: np.ndarray,
     error_raster: np.ndarray,
     mask_array: np.ndarray,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """Compute per-tile error metrics restricted to the analysis mask."""
     pred_in = pred_raster[mask_array]
     val_in = val_raster[mask_array]
@@ -239,40 +222,6 @@ def compute_metrics(
     }
 
 
-def discover_pred_val_pairs(
-    pred_dir: str, val_dir: str
-) -> List[Tuple[str, str, datetime, datetime]]:
-    """Pair each prediction file with the temporally nearest validation file."""
-    val_paths = [
-        os.path.join(val_dir, f)
-        for f in os.listdir(val_dir)
-        if f.endswith((".gpkg", ".geojson", ".json"))
-    ]
-    val_map = {
-        extract_date_from_path(p): p
-        for p in val_paths
-        if extract_date_from_path(p) is not None
-    }
-    if not val_map:
-        raise ValueError(f"No date-stamped validation files found in {val_dir}")
-
-    pred_paths = sorted(
-        os.path.join(pred_dir, f)
-        for f in os.listdir(pred_dir)
-        if f.endswith((".gpkg", ".geojson", ".json"))
-    )
-
-    val_dates = list(val_map.keys())
-    pairs = []
-    for pp in pred_paths:
-        pd_date = extract_date_from_path(pp)
-        if pd_date is None:
-            continue
-        closest = min(val_dates, key=lambda d: abs(d - pd_date))
-        pairs.append((pp, val_map[closest], pd_date, closest))
-    return pairs
-
-
 def write_output_rasters(
     out_dir: str,
     base_name: str,
@@ -280,7 +229,7 @@ def write_output_rasters(
     val_raster: np.ndarray,
     diff_masked: np.ndarray,
     src_grid: rasterio.io.DatasetReader,
-    grid_shape: Tuple[int, int],
+    grid_shape: tuple[int, int],
     out_transform: rasterio.Affine,
     nodata_val: float = -9999.0,
 ) -> None:

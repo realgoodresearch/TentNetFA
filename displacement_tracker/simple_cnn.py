@@ -1,10 +1,11 @@
-import torch
-import torch.nn as nn
+from typing import ClassVar
 
+import torch
+from torch import nn
 
 
 class SimpleCNN(nn.Module):
-    ALLOWED_KWARGS = {"kernel_size", "dropout"}
+    ALLOWED_KWARGS: ClassVar[set[str]] = {"kernel_size", "dropout"}
 
     def __init__(self, n_channels, n_classes=1, **kwargs):
         super().__init__()
@@ -115,7 +116,7 @@ class SimpleCNN(nn.Module):
         g = self.global_pool(x)  # (B, 8, 1, 1)
         g = self.global_fc(g)  # (B, 8, 1, 1)
         g = self.global_relu(g)
-        x = x # + g  # broadcast add  # COMMENTED OUT DELIBERATELY TO REMOVE BUG BUT KEEP COMPATIBILITY WITH TRAINED MODEL
+        x = x  # noqa: PLW0127  # + g  # broadcast add  # COMMENTED OUT DELIBERATELY TO REMOVE BUG BUT KEEP COMPATIBILITY WITH TRAINED MODEL
 
         x = self.convend(x)
         return x

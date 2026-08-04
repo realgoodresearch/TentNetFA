@@ -57,6 +57,9 @@ class Pipeline:
     # Config sections injected if absent from the base YAML (e.g. the merge
     # settings, which historically lived in CLI flags rather than config).
     extra_defaults: dict = field(default_factory=dict)
+    # Dotted config path -> value applied after base config and overrides,
+    # like artifact_paths: invariants the pipeline depends on, not defaults.
+    forced_values: dict = field(default_factory=dict)
 
     @property
     def subfolders(self) -> list[str]:
@@ -75,22 +78,35 @@ PREDICT = Pipeline(
     base_config="config.yaml",
     stages=(
         Stage(
-            "download", "Download GeoTIFFs from Drive", "displacement_tracker.a_tif_loader",
+            "download",
+            "Download GeoTIFFs from Drive",
+            "displacement_tracker.a_tif_loader",
             default_enabled=False,
         ),
-        Stage("scan", "Scan imagery & build manifests", "displacement_tracker.b2_image_scanner"),
+        Stage(
+            "scan",
+            "Scan imagery & build manifests",
+            "displacement_tracker.b2_image_scanner",
+        ),
         Stage("predict", "Run model inference", "displacement_tracker.e_predict_json"),
-        Stage("merge", "Merge & deduplicate predictions", "displacement_tracker.h_merge_geojsons"),
+        Stage(
+            "merge",
+            "Merge & deduplicate predictions",
+            "displacement_tracker.h_merge_geojsons",
+        ),
     ),
     params=(
         Param("geotiff_dir", "GeoTIFF directory", "path", "Inputs"),
         Param(
-            "loading.files", "GeoTIFF files / search strings", "list", "Inputs",
+            "loading.files",
+            "GeoTIFF files / search strings",
+            "list",
+            "Inputs",
             optional=True,
             help="One entry per line. Download stage: entries are Drive search "
-                 "strings — if empty, the stage downloads nothing. Scan stage: "
-                 "entries are filename filters — if empty, ALL .tif files in "
-                 "the GeoTIFF directory are scanned.",
+            "strings — if empty, the stage downloads nothing. Scan stage: "
+            "entries are filename filters — if empty, ALL .tif files in "
+            "the GeoTIFF directory are scanned.",
         ),
         Param("boundaries", "Municipal boundaries (.shp)", "path", "Inputs"),
         Param("prewar_gaza", "Pre-war reference raster", "path", "Inputs"),
@@ -99,32 +115,61 @@ PREDICT = Pipeline(
         Param("processing.margin_metres", "Tile margin (m)", "int", "Processing"),
         Param(
             "processing.quality_thresholds.min_valid_fraction",
-            "Min valid fraction", "float", "Processing",
+            "Min valid fraction",
+            "float",
+            "Processing",
             help="Minimum non-black/NaN fraction for a tile to be kept.",
         ),
         Param("prediction.batch_size", "Batch size", "int", "Prediction"),
         Param("prediction.num_workers", "Data-loader workers", "int", "Prediction"),
-        Param("prediction.per_tile_standardisation", "Per-tile standardisation", "bool", "Prediction"),
+        Param(
+            "prediction.per_tile_standardisation",
+            "Per-tile standardisation",
+            "bool",
+            "Prediction",
+        ),
         Param("prediction.sample.enable", "Sample tiles only", "bool", "Prediction"),
         Param("prediction.sample.size", "Sample size", "int", "Prediction"),
         Param("prediction.sample.seed", "Sample seed", "int", "Prediction"),
-        Param("prediction.selection.threshold", "Selection threshold", "float", "Selection"),
+        Param(
+            "prediction.selection.threshold",
+            "Selection threshold",
+            "float",
+            "Selection",
+        ),
         Param("prediction.selection.factor", "Selection factor", "float", "Selection"),
         Param(
-            "prediction.selection.nms_kernel_size", "NMS kernel size (px)", "int", "Selection",
+            "prediction.selection.nms_kernel_size",
+            "NMS kernel size (px)",
+            "int",
+            "Selection",
             help="Max-pool kernel for NMS peak picking. For the 'centroid' "
-                 "method set selection.min_area via the YAML overrides instead.",
+            "method set selection.min_area via the YAML overrides instead.",
         ),
-        Param("prediction.selection.min_distance_m", "Min peak distance (m)", "float", "Selection"),
+        Param(
+            "prediction.selection.min_distance_m",
+            "Min peak distance (m)",
+            "float",
+            "Selection",
+        ),
         Param("merge.min_distance_m", "Merge distance (m)", "float", "Merge"),
         Param("merge.agreement", "Min cluster size", "int", "Merge"),
         Param("merge.min_adj_peak", "Min adjusted peak", "float", "Merge"),
         Param("merge.adjustment_factor", "Adjustment factor", "float", "Merge"),
         Param(
-            "merge.thresholds_config", "Per-file thresholds YAML", "path", "Merge",
+            "merge.thresholds_config",
+            "Per-file thresholds YAML",
+            "path",
+            "Merge",
             optional=True,
         ),
-        Param("merge.exclusion_zones_gpkg", "Exclusion zones", "path", "Merge", optional=True),
+        Param(
+            "merge.exclusion_zones_gpkg",
+            "Exclusion zones",
+            "path",
+            "Merge",
+            optional=True,
+        ),
         Param("merge.inclusion_zone", "Inclusion zone", "path", "Merge", optional=True),
     ),
     artifact_paths={
@@ -153,22 +198,35 @@ TRAIN = Pipeline(
     base_config="config.yaml",
     stages=(
         Stage(
-            "download", "Download GeoTIFFs from Drive", "displacement_tracker.a_tif_loader",
+            "download",
+            "Download GeoTIFFs from Drive",
+            "displacement_tracker.a_tif_loader",
             default_enabled=False,
         ),
-        Stage("scan", "Scan annotated imagery", "displacement_tracker.b1_annotated_scanner"),
-        Stage("rebalance", "Rebalance manifest", "displacement_tracker.c_resample_manifest"),
+        Stage(
+            "scan",
+            "Scan annotated imagery",
+            "displacement_tracker.b1_annotated_scanner",
+        ),
+        Stage(
+            "rebalance",
+            "Rebalance manifest",
+            "displacement_tracker.c_resample_manifest",
+        ),
         Stage("train", "Train CNN", "displacement_tracker.d_train_cnn"),
     ),
     params=(
         Param("geotiff_dir", "GeoTIFF directory", "path", "Inputs"),
         Param(
-            "loading.files", "GeoTIFF files / search strings", "list", "Inputs",
+            "loading.files",
+            "GeoTIFF files / search strings",
+            "list",
+            "Inputs",
             optional=True,
             help="One entry per line. Download stage: entries are Drive search "
-                 "strings — if empty, the stage downloads nothing. Scan stage: "
-                 "entries are filename filters — if empty, ALL .tif files in "
-                 "the GeoTIFF directory are scanned.",
+            "strings — if empty, the stage downloads nothing. Scan stage: "
+            "entries are filename filters — if empty, ALL .tif files in "
+            "the GeoTIFF directory are scanned.",
         ),
         Param("geojson", "Tent annotations (.geojson)", "path", "Inputs"),
         Param("boundaries", "Municipal boundaries (.shp)", "path", "Inputs"),
@@ -178,13 +236,24 @@ TRAIN = Pipeline(
         Param("processing.max_workers", "Scan workers", "int", "Processing"),
         Param(
             "processing.quality_thresholds.min_valid_fraction",
-            "Min valid fraction", "float", "Processing",
+            "Min valid fraction",
+            "float",
+            "Processing",
         ),
         Param("rebalancing.rng_seed", "Rebalancing seed", "int", "Rebalancing"),
-        Param("rebalancing.null_keep_fraction", "Null keep fraction", "float", "Rebalancing"),
         Param(
-            "training.checkpoint", "Resume checkpoint (.pth)", "path", "Training",
-            optional=True, help="Leave empty to train from scratch.",
+            "rebalancing.null_keep_fraction",
+            "Null keep fraction",
+            "float",
+            "Rebalancing",
+        ),
+        Param(
+            "training.checkpoint",
+            "Resume checkpoint (.pth)",
+            "path",
+            "Training",
+            optional=True,
+            help="Leave empty to train from scratch.",
         ),
         Param("training.device", "Device", "str", "Training"),
         Param("training.epochs", "Epochs", "int", "Training"),
@@ -205,7 +274,181 @@ TRAIN = Pipeline(
 )
 
 
-PIPELINES: dict[str, Pipeline] = {p.key: p for p in (PREDICT, TRAIN)}
+TUNE = Pipeline(
+    key="tune",
+    label="Hyperparameter tuning pipeline",
+    base_config="config.yaml",
+    stages=(
+        Stage(
+            "merge_raw",
+            "Merge predictions (no thresholding)",
+            "displacement_tracker.h_merge_geojsons",
+        ),
+        Stage(
+            "scan",
+            "Scan validation & optimise thresholds",
+            "displacement_tracker.g1_scan_validation",
+        ),
+        Stage(
+            "merge_tuned",
+            "Re-merge with tuned thresholds",
+            "displacement_tracker.h2_merge_tuned",
+        ),
+    ),
+    params=(
+        Param(
+            "merge.input_folder",
+            "Prediction GeoJSONs folder",
+            "path",
+            "Inputs",
+            help="Predictions to tune on — typically the preds/ folder of an "
+            "earlier prediction pipeline run.",
+        ),
+        Param(
+            "tuning.master_grid",
+            "Master grid raster",
+            "path",
+            "Inputs",
+            help="Grid the predictions and reference data are resolved onto.",
+        ),
+        Param(
+            "tuning.reference.type",
+            "Reference type",
+            "str",
+            "Reference",
+            help="vector (point annotations: GeoJSON/GPKG/SHP), unosat "
+            "(export file or directory + date), raster (counts "
+            "already on the master grid), or manual_eval (the manual "
+            "tile annotations CSV + date). Empty: inferred from the "
+            "path suffix.",
+        ),
+        Param("tuning.reference.path", "Reference data path", "path", "Reference"),
+        Param(
+            "tuning.reference.date",
+            "Reference date",
+            "str",
+            "Reference",
+            optional=True,
+            help="YYYY-MM-DD; pins one export when the path is a directory, "
+            "or one acquisition date out of the annotation CSV "
+            "(manual_eval, where it is required whenever the CSV spans "
+            "several). Empty for unosat: the export closest to the dates "
+            "stamped on the prediction files is auto-discovered (with a "
+            "warning).",
+        ),
+        Param(
+            "tuning.reference.layer",
+            "Layer",
+            "str",
+            "Reference",
+            optional=True,
+            help="Layer to read from multi-layer files (GPKG/GDB).",
+        ),
+        Param(
+            "tuning.reference.where",
+            "Attribute filter",
+            "str",
+            "Reference",
+            optional=True,
+            help="OGR SQL filter applied to the reference features.",
+        ),
+        Param(
+            "tuning.metric",
+            "Evaluation metric",
+            "str",
+            "Tuning",
+            help="The optimum of this metric becomes the tuned "
+            "(min_adj_peak, adjustment_factor) used by the final merge. "
+            "Choices: rms, mae, rmsle, abs_total_diff, abs_total_pdiff, "
+            "spearman.",
+        ),
+        Param(
+            "tuning.metrics",
+            "Metrics to track",
+            "list",
+            "Tuning",
+            optional=True,
+            help="One metric per line; the evaluation metric is always tracked.",
+        ),
+        Param("tuning.factor_min", "Factor min", "float", "Tuning"),
+        Param("tuning.factor_max", "Factor max", "float", "Tuning"),
+        Param("tuning.cutoff_min", "Cutoff min", "float", "Tuning"),
+        Param("tuning.cutoff_max", "Cutoff max", "float", "Tuning"),
+        Param(
+            "tuning.ridge_probes",
+            "Ridge probes",
+            "int",
+            "Tuning",
+            help="Number of factors at which the cutoff ridge is probed.",
+        ),
+        Param(
+            "tuning.refine_maxiter",
+            "Refinement iterations",
+            "int",
+            "Tuning",
+            help="Max Nelder-Mead iterations for the 2-D refinement (0 disables).",
+        ),
+        Param(
+            "tuning.exclusion_zones",
+            "Scan clip zones",
+            "path",
+            "Tuning",
+            optional=True,
+            help="Optional gpkg; predictions are clipped to its union before the scan.",
+        ),
+        Param("merge.min_distance_m", "Merge distance (m)", "float", "Merge"),
+        Param("merge.agreement", "Min cluster size", "int", "Merge"),
+        Param(
+            "merge.exclusion_zones_gpkg",
+            "Exclusion zones",
+            "path",
+            "Merge",
+            optional=True,
+        ),
+        Param("merge.inclusion_zone", "Inclusion zone", "path", "Merge", optional=True),
+    ),
+    artifact_paths={
+        "merge.output": "merged_raw/merged_raw.gpkg",
+        "tuning.input": "merged_raw/merged_raw.gpkg",
+        "tuning.out_dir": "tuning",
+        "tuning.best_params": "tuning/best_params.yaml",
+        "tuning.final_output": "merged/merged_tuned.gpkg",
+    },
+    forced_values={
+        # The scan must see every candidate point (the thresholds are
+        # exactly what is being tuned), and per-file thresholds would
+        # shadow the tuned global threshold — the raw pass is always
+        # unthresholded, whatever the base config or overrides say.
+        "merge.min_adj_peak": 0.0,
+        "merge.adjustment_factor": 1.0,
+        "merge.thresholds_config": None,
+    },
+    extra_defaults={
+        "merge": {
+            "min_distance_m": 3.0,
+            "agreement": 1,
+            "exclusion_zones_gpkg": None,
+            "inclusion_zone": None,
+        },
+        "tuning": {
+            "reference": {"type": "vector"},
+            "metric": "rms",
+            "metrics": ["rms", "mae", "abs_total_diff"],
+            "factor_min": 0.0,
+            "factor_max": 10.0,
+            "cutoff_min": 0.0001,
+            "cutoff_max": 0.01,
+            "ridge_probes": 5,
+            "xtol_factor": 1.0e-3,
+            "xtol_cutoff": 1.0e-6,
+            "refine_maxiter": 60,
+            "exclusion_zones": None,
+        },
+    },
+)
+
+
+PIPELINES: dict[str, Pipeline] = {p.key: p for p in (PREDICT, TRAIN, TUNE)}
 
 # The runner and UI resolve each pipeline's config section by its key.
 assert set(PIPELINES) <= set(FLOWS), "pipeline keys must be config flow names"

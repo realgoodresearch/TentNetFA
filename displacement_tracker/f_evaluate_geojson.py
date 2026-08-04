@@ -1,9 +1,8 @@
 import json
+import math
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional
 
 import click
-import math
 
 
 @dataclass(frozen=True)
@@ -27,25 +26,25 @@ def lonlat_dist(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
     return math.hypot(lon2 - lon1, lat2 - lat1)
 
 
-def load_geojson(path: str) -> Dict:
+def load_geojson(path: str) -> dict:
     with open(path, "r") as f:
         return json.load(f)
 
 
-def is_point_feature(feat: Dict) -> bool:
+def is_point_feature(feat: dict) -> bool:
     return feat.get("geometry", {}).get("type") == "Point"
 
 
-def is_polygon_feature(feat: Dict) -> bool:
+def is_polygon_feature(feat: dict) -> bool:
     return feat.get("geometry", {}).get("type") in {"Polygon", "MultiPolygon"}
 
 
-def feature_coords(feat: Dict) -> List:
+def feature_coords(feat: dict) -> list:
     return feat.get("geometry", {}).get("coordinates", [])
 
 
 def extract_bounds_from_polygon_feature(
-    feat: Dict, default_width: int = 0, default_height: int = 0
+    feat: dict, default_width: int = 0, default_height: int = 0
 ) -> Bounds:
     geom = feat.get("geometry", {})
     coords = geom.get("coordinates")
@@ -87,8 +86,8 @@ def extract_bounds_from_polygon_feature(
     )
 
 
-def collect_points(fc: Dict) -> List[Tuple[float, float, Dict]]:
-    pts: List[Tuple[float, float, Dict]] = []
+def collect_points(fc: dict) -> list[tuple[float, float, dict]]:
+    pts: list[tuple[float, float, dict]] = []
     for feat in fc.get("features", []):
         if is_point_feature(feat):
             lon, lat = feature_coords(feat)
@@ -96,8 +95,8 @@ def collect_points(fc: Dict) -> List[Tuple[float, float, Dict]]:
     return pts
 
 
-def collect_bounds(fc: Dict) -> List[Bounds]:
-    bounds_list: List[Bounds] = []
+def collect_bounds(fc: dict) -> list[Bounds]:
+    bounds_list: list[Bounds] = []
     for feat in fc.get("features", []):
         if is_polygon_feature(feat):
             try:
@@ -110,9 +109,9 @@ def collect_bounds(fc: Dict) -> List[Bounds]:
 
 
 def group_points_by_bounds(
-    points: List[Tuple[float, float, Dict]], bounds_list: List[Bounds]
-) -> Dict[int, List[Tuple[float, float, Dict]]]:
-    groups: Dict[int, List[Tuple[float, float, Dict]]] = {
+    points: list[tuple[float, float, dict]], bounds_list: list[Bounds]
+) -> dict[int, list[tuple[float, float, dict]]]:
+    groups: dict[int, list[tuple[float, float, dict]]] = {
         i: [] for i in range(len(bounds_list))
     }
     for lon, lat, props in points:
@@ -134,7 +133,7 @@ class TileStats:
         self.fp += other.fp
         self.fn += other.fn
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         total_pred = self.tp + self.fp
         total_gt = self.tp + self.fn
         denom = self.tp + self.fp + self.fn
@@ -162,8 +161,8 @@ class TileStats:
 
 
 def match_points_per_tile_lonlat(
-    gt_pts: List[Tuple[float, float, Dict]],
-    pred_pts: List[Tuple[float, float, Dict]],
+    gt_pts: list[tuple[float, float, dict]],
+    pred_pts: list[tuple[float, float, dict]],
     dist_deg: float,
 ) -> TileStats:
     # Prepare coordinate lists
@@ -171,8 +170,8 @@ def match_points_per_tile_lonlat(
     pr_coords = [(lon, lat) for lon, lat, _ in pred_pts]
 
     # Build list of (distance, gt_idx, pred_idx) for pairs within threshold (degrees)
-    pairs: List[Tuple[float, int, int]] = []
-    near_gt_for_pred: List[List[int]] = [[] for _ in range(len(pr_coords))]
+    pairs: list[tuple[float, int, int]] = []
+    near_gt_for_pred: list[list[int]] = [[] for _ in range(len(pr_coords))]
 
     for gi, (glon, glat) in enumerate(gt_coords):
         for pi, (plon, plat) in enumerate(pr_coords):
@@ -237,7 +236,7 @@ def cli(
     pred_geojson: str,
     dist_deg: float,
     per_tile: bool,
-    save_report: Optional[str],
+    save_report: str | None,
     global_match: bool,
 ):
     """
@@ -282,7 +281,7 @@ def cli(
         pr_by_tile = group_points_by_bounds(pred_points, bounds_list)
 
         overall = TileStats()
-        per_tile_stats: List[Dict] = []
+        per_tile_stats: list[dict] = []
 
         for i, bounds in enumerate(bounds_list):
             gt_tile = gt_by_tile.get(i, [])
