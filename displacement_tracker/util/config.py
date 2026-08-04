@@ -26,6 +26,11 @@ from displacement_tracker.util.env_loader import load_yaml_with_env
 FLOWS = ("train", "predict", "tune")
 _SECTION_KEYS = ("shared", *FLOWS)
 
+# Ground sample distance of the imagery, in metres per pixel. Legacy flat
+# configs predate ``processing.pixel_metres``, so they resolve to the value
+# the pipeline was hardcoded to when they were written.
+DEFAULT_PIXEL_METRES = 0.5
+
 
 def deep_get(cfg: dict, dotted: str, default=None):
     """Look up a dotted path (``"a.b.c"``) in nested dicts."""
@@ -72,6 +77,24 @@ def require(cfg: dict, *dotted: str):
             return value
     fallbacks = f" (or {' / '.join(dotted[1:])} as fallback)" if dotted[1:] else ""
     raise click.ClickException(f"Missing required config key: {dotted[0]}{fallbacks}")
+
+
+def resolve_pixel_metres(processing_cfg: dict | None) -> float:
+    """``processing.pixel_metres``, or ``DEFAULT_PIXEL_METRES`` if unset.
+
+    Validated rather than merely cast, unlike its ``core_metres`` neighbours:
+    this one is a divisor, in the tile-size guard and in the margin-to-pixels
+    conversion, so a zero or negative value fails far from its cause.
+    """
+    value = (processing_cfg or {}).get("pixel_metres")
+    if value is None:
+        return DEFAULT_PIXEL_METRES
+    pixel_metres = float(value)
+    if pixel_metres <= 0:
+        raise click.ClickException(
+            f"processing.pixel_metres must be positive, got {pixel_metres}."
+        )
+    return pixel_metres
 
 
 def forwarded(cfg: dict, *keys: str) -> dict:

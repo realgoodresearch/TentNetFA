@@ -16,15 +16,16 @@ from tqdm.auto import tqdm
 # import matplotlib.pyplot as plt
 from displacement_tracker.paired_image_dataset import PairedImageDataset
 from displacement_tracker.simple_cnn import SimpleCNN
-from displacement_tracker.util.config import flow_option, load_flow_config
+from displacement_tracker.util.config import (
+    flow_option,
+    load_flow_config,
+    resolve_pixel_metres,
+)
 from displacement_tracker.util.deduplication import merge_close_points_global
 from displacement_tracker.util.distance import interpolate_centroid
 from displacement_tracker.util.logging_config import setup_logging
+from displacement_tracker.util.selection import selection_pixels
 from displacement_tracker.util.thresholding import passes_threshold
-from displacement_tracker.util.tile_builder import (
-    derive_selection_geometry,
-    resolve_pixel_metres,
-)
 
 LOGGER = setup_logging("predict_json")
 
@@ -473,11 +474,8 @@ def cli(config, flow) -> None:
             "Missing required config key: processing.margin_metres"
         )
     margin_metres = float(processing_cfg["margin_metres"])
-    try:
-        pixel_metres = resolve_pixel_metres(processing_cfg)
-    except ValueError as exc:
-        raise click.ClickException(str(exc))
-    crop_pixels, nms_sigma = derive_selection_geometry(margin_metres, pixel_metres)
+    pixel_metres = resolve_pixel_metres(processing_cfg)
+    crop_pixels, nms_sigma = selection_pixels(margin_metres, pixel_metres)
     selection_cfg["crop_pixels"] = crop_pixels
     selection_cfg["nms_sigma"] = nms_sigma
     LOGGER.info(

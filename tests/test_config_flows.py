@@ -5,6 +5,7 @@ import click
 import pytest
 
 from displacement_tracker.util.config import (
+    DEFAULT_PIXEL_METRES,
     deep_get,
     deep_merge,
     deep_set,
@@ -13,6 +14,7 @@ from displacement_tracker.util.config import (
     load_flow_config,
     require,
     resolve_flow_config,
+    resolve_pixel_metres,
 )
 
 
@@ -332,3 +334,43 @@ def test_load_flow_config_reads_yaml_substitutes_env_and_resolves(
         "geotiff_dir": "/mnt/data/tifs",
         "training": {"batch_size": 32},
     }
+
+
+# ---------------------------------------------------------------------------
+# processing.pixel_metres
+# ---------------------------------------------------------------------------
+
+
+def test_a_config_without_pixel_metres_keeps_the_historic_pixel_size():
+    # Given: a legacy flat processing section, written before the key existed
+    processing = {"margin_metres": 15}
+
+    # When: the pixel size is resolved
+    pixel_metres = resolve_pixel_metres(processing)
+
+    # Then: it falls back to the 0.5 m the pipeline was hardcoded to, so an
+    #       existing run directory re-executes with the same tile geometry
+    assert pixel_metres == DEFAULT_PIXEL_METRES == 0.5
+
+
+def test_a_configured_pixel_metres_overrides_the_default():
+    # Given: a processing section naming quarter-metre imagery
+    processing = {"margin_metres": 15, "pixel_metres": 0.25}
+
+    # When: the pixel size is resolved
+    pixel_metres = resolve_pixel_metres(processing)
+
+    # Then: the configured value wins over the 0.5 m default
+    assert pixel_metres == 0.25
+
+
+@pytest.mark.parametrize("value", [0, -0.5])
+def test_a_non_positive_pixel_metres_is_rejected(value):
+    # Given: a config setting the pixel size to zero or a negative distance
+    processing = {"pixel_metres": value}
+
+    # When: the pixel size is resolved
+    # Then: it refuses as a CLI error naming the key the user must fix, rather
+    #       than dividing by it in the guard and the margin conversion
+    with pytest.raises(click.ClickException, match=r"processing\.pixel_metres"):
+        resolve_pixel_metres(processing)

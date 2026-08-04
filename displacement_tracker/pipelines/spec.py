@@ -119,8 +119,8 @@ PREDICT = Pipeline(
             "float",
             "Processing",
             help="Ground sample distance of the imagery. Sets the prediction "
-            "crop and NMS sigma; rasters at a different resolution are "
-            "skipped by the scan stage.",
+            "crop and NMS sigma; rasters that would tile at a different "
+            "pixel size are skipped by the scan stage.",
         ),
         Param(
             "processing.quality_thresholds.min_valid_fraction",
@@ -247,8 +247,8 @@ TRAIN = Pipeline(
             "Pixel size (m)",
             "float",
             "Processing",
-            help="Ground sample distance of the imagery. Rasters at a "
-            "different resolution are skipped by the scan stage.",
+            help="Ground sample distance of the imagery. Rasters that would "
+            "tile at a different pixel size are skipped by the scan stage.",
         ),
         Param("processing.max_workers", "Scan workers", "int", "Processing"),
         Param(

@@ -1,147 +1,120 @@
-"""Tile geometry derived from the configured pixel size.
+"""Which rasters the scan stages will tile.
 
-Covers the two things `processing.pixel_metres` decides: how the tile margin
-becomes the prediction crop band, and which rasters a scan stage will accept.
+`pixel_size_mismatch` is the scan-stage guard: it admits a raster only when a
+tile off it is the same pixel size as a tile off imagery at the configured
+`processing.pixel_metres`, which is what makes tiles batchable downstream.
 """
+
+import contextlib
 
 import pytest
 import rasterio
+from _helpers import CRS_UTM, write_geotiff
 from rasterio.transform import from_origin
 
-from _helpers import CRS_UTM, write_geotiff
-from displacement_tracker.util.tile_builder import (
-    DEFAULT_PIXEL_METRES,
-    derive_selection_geometry,
-    pixel_size_mismatch,
-    resolve_pixel_metres,
-    tile_pixel_size,
-)
+from displacement_tracker.util.tile_builder import pixel_size_mismatch, tile_pixel_size
 
 # The tile span in use: core 70 m + 2 x 15 m margin.
 SPAN_M = 100.0
 
 
-def _raster_at(tmp_path, pixel_size, name="tile.tif"):
-    """A small single-band GeoTIFF whose pixels are `pixel_size` metres."""
-    transform = from_origin(500000.0, 3500000.0, pixel_size, pixel_size)
+@contextlib.contextmanager
+def raster_at(tmp_path, x_metres, y_metres=None, name="tile.tif"):
+    """A small GeoTIFF whose pixels are `x_metres` x `y_metres` on the ground."""
+    transform = from_origin(500000.0, 3500000.0, x_metres, y_metres or x_metres)
     path = write_geotiff(tmp_path / name, [[1.0, 1.0], [1.0, 1.0]], transform, CRS_UTM)
-    return rasterio.open(path)
-
-
-# ---------------------------------------------------------------------------
-# Resolving the configured pixel size
-# ---------------------------------------------------------------------------
-
-
-def test_pixel_metres_comes_from_the_processing_section():
-    # Given: a processing section naming a half-metre ground sample distance
-    processing = {"margin_metres": 15, "pixel_metres": 0.5}
-
-    # When: the pixel size is resolved
-    pixel_metres = resolve_pixel_metres(processing)
-
-    # Then: the configured value is used
-    assert pixel_metres == 0.5
-
-
-def test_a_config_without_pixel_metres_keeps_the_historic_pixel_size():
-    # Given: a legacy flat config, written before the key existed
-    processing = {"margin_metres": 15}
-
-    # When: the pixel size is resolved
-    pixel_metres = resolve_pixel_metres(processing)
-
-    # Then: it falls back to the 0.5 m the pipeline was hardcoded to, so an
-    #       existing run directory re-executes with the same tile geometry
-    assert pixel_metres == DEFAULT_PIXEL_METRES == 0.5
-
-
-def test_a_non_positive_pixel_metres_is_rejected():
-    # Given: a config setting the pixel size to zero
-    processing = {"pixel_metres": 0}
-
-    # When: the pixel size is resolved
-    # Then: it refuses, naming the key the user has to fix rather than
-    #       dividing by it downstream
-    with pytest.raises(ValueError, match=r"processing\.pixel_metres"):
-        resolve_pixel_metres(processing)
-
-
-# ---------------------------------------------------------------------------
-# Margin -> prediction crop band
-# ---------------------------------------------------------------------------
-
-
-def test_the_margin_becomes_the_crop_band_in_pixels():
-    # Given: a 15 m margin on half-metre imagery
-    # When: the selection geometry is derived
-    crop_pixels, nms_sigma = derive_selection_geometry(15.0, 0.5)
-
-    # Then: the band is 15 / 0.5 = 30 px wide, and the NMS sigma is
-    #       three quarters of it: 0.75 * 30 = 22.5
-    assert crop_pixels == 30
-    assert nms_sigma == pytest.approx(22.5)
-
-
-def test_a_coarser_pixel_size_shrinks_the_crop_band():
-    # Given: the same 15 m margin, but on 1 m imagery
-    # When: the selection geometry is derived
-    crop_pixels, nms_sigma = derive_selection_geometry(15.0, 1.0)
-
-    # Then: the same ground distance is half as many pixels — 15 / 1.0 = 15,
-    #       and 0.75 * 15 = 11.25 — so the crop tracks the imagery rather
-    #       than the 0.5 m the code once assumed
-    assert crop_pixels == 15
-    assert nms_sigma == pytest.approx(11.25)
-
-
-# ---------------------------------------------------------------------------
-# The scan-stage resolution guard
-# ---------------------------------------------------------------------------
+    with rasterio.open(path) as src:
+        yield src
 
 
 def test_a_raster_at_the_configured_resolution_is_accepted(tmp_path):
     # Given: a raster whose pixels are exactly the configured 0.5 m
-    src = _raster_at(tmp_path, 0.5)
+    with raster_at(tmp_path, 0.5) as src:
+        # When: it is checked against the configured pixel size
+        # Then: nothing is reported, so the scan proceeds
+        assert pixel_size_mismatch(src, 0.5, SPAN_M) is None
 
-    # When: it is checked against the configured pixel size
-    # Then: nothing is reported, so the scan proceeds
-    assert pixel_size_mismatch(src, 0.5) is None
 
-
-def test_a_raster_at_another_resolution_is_reported_with_both_sizes(tmp_path):
+def test_a_raster_that_tiles_at_another_pixel_size_is_reported(tmp_path):
     # Given: a 1 m raster where the config expects 0.5 m
-    src = _raster_at(tmp_path, 1.0)
+    with raster_at(tmp_path, 1.0) as src:
+        # When: it is checked against the configured pixel size
+        message = pixel_size_mismatch(src, 1.0 / 2, SPAN_M)
 
-    # When: it is checked against the configured pixel size
-    message = pixel_size_mismatch(src, 0.5)
-
-    # Then: the mismatch is reported, naming the raster's own resolution and
-    #       the key that has to change to accept it
+    # Then: the mismatch is reported in the terms that matter — a 100 m span
+    #       tiles at 100 px here against the expected 200 px — and names the
+    #       key the user can change to accept the raster
     assert message is not None
-    assert "1 m" in message
+    assert "100x100 px" in message
+    assert "200 px" in message
     assert "processing.pixel_metres=0.5 m" in message
+
+
+def test_a_raster_with_non_square_pixels_is_rejected(tmp_path):
+    # Given: a raster at the configured 0.5 m across but 1 m down. `world_window`
+    #        sizes both axes from the x resolution, so this would tile 100 m x
+    #        200 m of ground into one square 200 px window — geometrically
+    #        stretched imagery, with nothing else in the pipeline to catch it.
+    with raster_at(tmp_path, 0.5, 1.0) as src:
+        # When: it is checked against the configured pixel size
+        message = pixel_size_mismatch(src, 0.5, SPAN_M)
+
+    # Then: it is rejected on the y axis alone — 200 px across, 100 px down
+    assert message is not None
+    assert "200x100 px" in message
 
 
 def test_the_guard_admits_exactly_the_rasters_that_keep_the_tile_pixel_size(tmp_path):
     # Given: three rasters off the configured 0.5 m by 0.1 %, 0.5 % and 1 %.
-    #        At a 100 m span a tile is round(100 / pixel_size) px, so the
-    #        reference tile is 200 px and only the first still rounds to it:
-    #        100/0.5005 = 199.80 -> 200, but 100/0.5025 = 199.01 -> 199 and
-    #        100/0.505 = 198.02 -> 198.
-    within = _raster_at(tmp_path, 0.5005, "within.tif")
-    half_percent = _raster_at(tmp_path, 0.5025, "half_percent.tif")
-    one_percent = _raster_at(tmp_path, 0.505, "one_percent.tif")
+    #        A tile is round(span_m / pixel_size) px, so the reference tile is
+    #        200 px and only the first still rounds to it: 100/0.5005 = 199.80
+    #        -> 200, but 100/0.5025 = 199.01 -> 199 and 100/0.505 = 198.02 -> 198.
+    sizes = {0.5005: 200, 0.5025: 199, 0.505: 198}
 
     # When: each is checked against the configured pixel size
-    # Then: the guard accepts precisely the raster whose tiles stay 200 px —
-    #       a 1 % band would admit all three and let 198 px tiles into a
-    #       batch of 200 px ones
-    assert tile_pixel_size(within, SPAN_M) == 200
-    assert pixel_size_mismatch(within, 0.5) is None
+    # Then: the guard admits precisely the raster whose tiles stay 200 px, so
+    #       a 198 px tile can never reach a batch of 200 px ones
+    for i, (pixel_size, expected_px) in enumerate(sizes.items()):
+        with raster_at(tmp_path, pixel_size, name=f"r{i}.tif") as src:
+            assert tile_pixel_size(src, SPAN_M) == expected_px
+            accepted = pixel_size_mismatch(src, 0.5, SPAN_M) is None
+            assert accepted == (expected_px == 200)
 
-    assert tile_pixel_size(half_percent, SPAN_M) == 199
-    assert pixel_size_mismatch(half_percent, 0.5) is not None
 
-    assert tile_pixel_size(one_percent, SPAN_M) == 198
-    assert pixel_size_mismatch(one_percent, 0.5) is not None
+def test_the_admitted_band_follows_the_span_rather_than_a_fixed_tolerance(tmp_path):
+    # Given: a raster 0.2 % off the configured 0.5 m
+    with raster_at(tmp_path, 0.501) as src:
+        # When: it is checked at the 100 m span in use today, then at the
+        #       130 m span the master-grid migration moves to
+        # Then: the same raster is admitted at one span and rejected at the
+        #       other — 100/0.501 = 199.60 -> 200 px, but 130/0.501 = 259.48
+        #       -> 259 px against the expected 260. A fixed percentage band
+        #       cannot express this; the tile size it protects is span-relative.
+        assert pixel_size_mismatch(src, 0.5, 100.0) is None
+
+        message = pixel_size_mismatch(src, 0.5, 130.0)
+        assert message is not None
+        assert "259x259 px" in message
+
+
+def test_a_pixel_size_far_from_the_configured_one_is_rejected(tmp_path):
+    # Given: a 5 m raster, coarse enough that a 100 m span is only 20 px
+    with raster_at(tmp_path, 5.0) as src:
+        # When: it is checked against the configured 0.5 m
+        message = pixel_size_mismatch(src, 0.5, SPAN_M)
+
+    # Then: it is rejected, reporting the 20 px it would actually tile at
+    assert message is not None
+    assert "20x20 px" in message
+
+
+@pytest.mark.parametrize("pixel_metres", [0.5, 0.25])
+def test_a_raster_matching_the_configured_size_is_accepted_at_any_resolution(
+    tmp_path, pixel_metres
+):
+    # Given: imagery whose resolution is whatever the config says it is
+    with raster_at(tmp_path, pixel_metres, name=f"{pixel_metres}.tif") as src:
+        # When: it is checked against that same configured pixel size
+        # Then: it is admitted — the guard pins agreement with the config, not
+        #       a hardcoded half metre
+        assert pixel_size_mismatch(src, pixel_metres, SPAN_M) is None
