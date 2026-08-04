@@ -5,7 +5,8 @@ import json
 import click
 import geopandas as gpd
 import pytest
-from _helpers import predicted_point as point, write_geojson
+from _helpers import predicted_point as point
+from _helpers import write_geojson
 from shapely.geometry import Point, box
 
 from displacement_tracker.h_merge_geojsons import (
