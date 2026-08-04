@@ -9,12 +9,21 @@ arrive intact, or a pinned model silently stops being pinned.
 import pytest
 
 from displacement_tracker.util.config import load_flow_config
-from displacement_tracker.util.model_ref import HubRef, parse_model_ref
+from displacement_tracker.util.model_ref import (
+    HubRef,
+    ModelRefError,
+    parse_model_ref,
+    resolve_model_ref,
+)
 
 REPO = "realgoodresearch/tentnetfa"
 SHA = "a" * 40
 FILE = "best_model.safetensors"
 REF = f"hf:{REPO}@{SHA}#{FILE}"
+
+# Unquoted, and every character an octal digit: YAML 1.1 resolves this to an
+# int, not a string. Written the way a user would write it in config.yaml.
+OCTAL_LOOKING_DIGEST = "01234567" * 8
 
 CONFIG = f"""
 shared:
@@ -25,6 +34,7 @@ train:
 predict:
   prediction:
     model: {REF}
+    model_sha256: {OCTAL_LOOKING_DIGEST}
 """
 
 
@@ -63,3 +73,27 @@ def test_a_pinned_reference_from_a_config_parses_back(config_path):
 
     # Then: the round trip through YAML yields the same three parts
     assert ref == HubRef(REPO, SHA, FILE)
+
+
+def test_a_digest_yaml_read_as_a_number_names_the_quoting_fix(config_path, tmp_path):
+    # Given: a config whose digest was written unquoted and is all octal
+    #        digits, so YAML hands back an int rather than a string
+    digest = load_flow_config(config_path, "predict")["prediction"]["model_sha256"]
+    assert isinstance(digest, int)  # the hazard this test exists for
+
+    # Given: a local checkpoint to resolve against
+    checkpoint = tmp_path / "best_model.pth"
+    checkpoint.write_bytes(b"weights")
+
+    # When: the checkpoint is resolved with that value as its expected digest
+    with pytest.raises(ModelRefError) as err:
+        resolve_model_ref(str(checkpoint), sha256=digest)
+
+    # Then: the error names the real fix — quoting the value — rather than
+    #       raising AttributeError from a string method on an int
+    message = str(err.value)
+    assert "not a 64-character hex digest" in message
+    assert "quote it" in message
+
+    # Then: it does not tell the user to delete a checkpoint that is fine
+    assert "Delete it" not in message
