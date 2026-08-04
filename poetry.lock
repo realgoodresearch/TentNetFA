@@ -42,12 +42,24 @@ doc = ["docutils", "jinja2", "myst-parser", "numpydoc", "pillow", "pydata-sphinx
 save = ["vl-convert-python (>=1.9.0)"]
 
 [[package]]
+name = "annotated-doc"
+version = "0.0.5"
+description = "Document parameters, class attributes, return types, and variables inline, with Annotated."
+optional = false
+python-versions = ">=3.9"
+groups = ["main", "test"]
+files = [
+    {file = "annotated_doc-0.0.5-py3-none-any.whl", hash = "sha256:117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101"},
+    {file = "annotated_doc-0.0.5.tar.gz", hash = "sha256:c7e58ce09192557605d8bbd92836d7e1d520ac9580096042c0bfd197efacf1bb"},
+]
+
+[[package]]
 name = "anyio"
 version = "4.14.1"
 description = "High-level concurrency and networking framework on top of asyncio or Trio"
 optional = false
 python-versions = ">=3.10"
-groups = ["ui"]
+groups = ["main", "test", "ui"]
 files = [
     {file = "anyio-4.14.1-py3-none-any.whl", hash = "sha256:4e5533c5b8ff0a24f5d7a176cbe6877129cd183893f66b537f8f227d10527d72"},
     {file = "anyio-4.14.1.tar.gz", hash = "sha256:8d648a3544c1a700e3ff78615cd679e4c5c3f149904287e73687b2596963629e"},
@@ -603,7 +615,7 @@ version = "3.24.3"
 description = "A platform independent file lock."
 optional = false
 python-versions = ">=3.10"
-groups = ["main"]
+groups = ["main", "test"]
 files = [
     {file = "filelock-3.24.3-py3-none-any.whl", hash = "sha256:426e9a4660391f7f8a810d71b0555bce9008b0a1cc342ab1f6947d37639e002d"},
     {file = "filelock-3.24.3.tar.gz", hash = "sha256:011a5644dc937c22699943ebbfc46e969cdde3e171470a6e40b9533e5a72affa"},
@@ -736,7 +748,7 @@ version = "2026.2.0"
 description = "File-system specification"
 optional = false
 python-versions = ">=3.10"
-groups = ["main"]
+groups = ["main", "test"]
 files = [
     {file = "fsspec-2026.2.0-py3-none-any.whl", hash = "sha256:98de475b5cb3bd66bedd5c4679e87b4fdfe1a3bf4d707b151b3c07e58c9a2437"},
     {file = "fsspec-2026.2.0.tar.gz", hash = "sha256:6544e34b16869f5aacd5b90bdf1a71acb37792ea3ddf6125ee69a22a53fb8bff"},
@@ -941,11 +953,64 @@ version = "0.16.0"
 description = "A pure-Python, bring-your-own-I/O implementation of HTTP/1.1"
 optional = false
 python-versions = ">=3.8"
-groups = ["main", "ui"]
+groups = ["main", "test", "ui"]
 files = [
     {file = "h11-0.16.0-py3-none-any.whl", hash = "sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86"},
     {file = "h11-0.16.0.tar.gz", hash = "sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1"},
 ]
+
+[[package]]
+name = "hf-xet"
+version = "1.5.2"
+description = "Fast transfer of large files with the Hugging Face Hub."
+optional = false
+python-versions = ">=3.8"
+groups = ["main", "test"]
+markers = "platform_machine == \"x86_64\" or platform_machine == \"amd64\" or platform_machine == \"AMD64\" or platform_machine == \"arm64\" or platform_machine == \"aarch64\""
+files = [
+    {file = "hf_xet-1.5.2-cp314-cp314t-macosx_10_12_x86_64.whl", hash = "sha256:4a5ecb9cda8512ba2aa8ee5d37c87a1422992165892d653098c7b90247481c3b"},
+    {file = "hf_xet-1.5.2-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:8764488197c1d7b1378c8438c18d2eea902e150dbca0b0f0d2d32603fb9b5576"},
+    {file = "hf_xet-1.5.2-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:8d7446f72abbf7e01ca5ff131786bc2e74a56393462c17a6bf1e303fbab81db4"},
+    {file = "hf_xet-1.5.2-cp314-cp314t-manylinux_2_28_aarch64.whl", hash = "sha256:580e59e29bf37aece1f2b68537de1e3fb04f43a23d910dcf6f128280b5bfbba4"},
+    {file = "hf_xet-1.5.2-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:bee28c619622d36968056532fd49cf2b35ca75099b1d616c31a618a893491380"},
+    {file = "hf_xet-1.5.2-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:e396ab0faf6298199ad7a95305c3ca8498cb825978a6485be6d00587ee4ec577"},
+    {file = "hf_xet-1.5.2-cp314-cp314t-win_amd64.whl", hash = "sha256:fd3add255549e8ef58fa35b2e42dc016961c050600444e7d77d030ba6b57120e"},
+    {file = "hf_xet-1.5.2-cp314-cp314t-win_arm64.whl", hash = "sha256:d6f9c58549407b84b9a5383afd68db0acc42345326a3159990b36a5ca8a20e4e"},
+    {file = "hf_xet-1.5.2-cp38-abi3-macosx_10_12_x86_64.whl", hash = "sha256:f922b8f5fb84f1dd3d7ab7a1316354a1bca9b1c73ecfc19c76e51a2a49d29799"},
+    {file = "hf_xet-1.5.2-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:045f84440c55cdeb659cf1a1dd48c77bcd0d2e93632e2fea8f2c3bdee79f38ed"},
+    {file = "hf_xet-1.5.2-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:db78c39c83d6279daddc98e2238f373ab8980685556d42472b4ec51abcf03e8c"},
+    {file = "hf_xet-1.5.2-cp38-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:7db73c810500c54c6760be8c39d4b2e476974de85424c50063efc22fdda13025"},
+    {file = "hf_xet-1.5.2-cp38-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:6395cfe3c9cbead4f16b31808b0e67eac428b66c656f856e99636adaddea878f"},
+    {file = "hf_xet-1.5.2-cp38-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:cde8cd167126bb6109b2ceb19b844433a4988643e8f3e01dd9dd0e4a34535097"},
+    {file = "hf_xet-1.5.2-cp38-abi3-win_amd64.whl", hash = "sha256:ecf63d1cb69a9a7319910f8f83fcf9b46e7a32dfcf4b8f8eeddb55f647306e65"},
+    {file = "hf_xet-1.5.2-cp38-abi3-win_arm64.whl", hash = "sha256:1da28519496eb7c8094c11e4d25509b4a468457a0302d58136099db2fd9a671d"},
+    {file = "hf_xet-1.5.2.tar.gz", hash = "sha256:73044bd31bae33c984af832d19c752a0dffb67518fee9ddbd91d616e1101cf47"},
+]
+
+[package.extras]
+tests = ["pytest"]
+
+[[package]]
+name = "httpcore"
+version = "1.0.9"
+description = "A minimal low-level HTTP client."
+optional = false
+python-versions = ">=3.8"
+groups = ["main", "test"]
+files = [
+    {file = "httpcore-1.0.9-py3-none-any.whl", hash = "sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55"},
+    {file = "httpcore-1.0.9.tar.gz", hash = "sha256:6e34463af53fd2ab5d807f399a9b45ea31c3dfa2276f15a2c3f00afff6e176e8"},
+]
+
+[package.dependencies]
+certifi = "*"
+h11 = ">=0.16"
+
+[package.extras]
+asyncio = ["anyio (>=4.0,<5.0)"]
+http2 = ["h2 (>=3,<5)"]
+socks = ["socksio (==1.*)"]
+trio = ["trio (>=0.22.0,<1.0)"]
 
 [[package]]
 name = "httplib2"
@@ -1023,12 +1088,73 @@ files = [
 ]
 
 [[package]]
+name = "httpx"
+version = "0.28.1"
+description = "The next generation HTTP client."
+optional = false
+python-versions = ">=3.8"
+groups = ["main", "test"]
+files = [
+    {file = "httpx-0.28.1-py3-none-any.whl", hash = "sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad"},
+    {file = "httpx-0.28.1.tar.gz", hash = "sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc"},
+]
+
+[package.dependencies]
+anyio = "*"
+certifi = "*"
+httpcore = "==1.*"
+idna = "*"
+
+[package.extras]
+brotli = ["brotli ; platform_python_implementation == \"CPython\"", "brotlicffi ; platform_python_implementation != \"CPython\""]
+cli = ["click (==8.*)", "pygments (==2.*)", "rich (>=10,<14)"]
+http2 = ["h2 (>=3,<5)"]
+socks = ["socksio (==1.*)"]
+zstd = ["zstandard (>=0.18.0)"]
+
+[[package]]
+name = "huggingface-hub"
+version = "1.16.1"
+description = "Client library to download and publish models, datasets and other repos on the huggingface.co hub"
+optional = false
+python-versions = ">=3.10.0"
+groups = ["main", "test"]
+files = [
+    {file = "huggingface_hub-1.16.1-py3-none-any.whl", hash = "sha256:64340de934b9ce37857ef85a82de72f5629e8a270f9119eabb12bf495eb53c22"},
+    {file = "huggingface_hub-1.16.1.tar.gz", hash = "sha256:7f1dc4c5ec21aed69be630ad0c3378616be16f3de1a47b141c0e812965d9c832"},
+]
+
+[package.dependencies]
+filelock = ">=3.10.0"
+fsspec = ">=2023.5.0"
+hf-xet = {version = ">=1.4.3,<2.0.0", markers = "platform_machine == \"x86_64\" or platform_machine == \"amd64\" or platform_machine == \"AMD64\" or platform_machine == \"arm64\" or platform_machine == \"aarch64\""}
+httpx = ">=0.23.0,<1"
+packaging = ">=20.9"
+pyyaml = ">=5.1"
+tqdm = ">=4.42.1"
+typer = ">=0.20.0"
+typing-extensions = ">=4.1.0"
+
+[package.extras]
+all = ["Jinja2", "Pillow", "authlib (>=1.3.2)", "duckdb", "fastapi", "fastapi", "httpx", "itsdangerous", "jedi", "libcst (>=1.4.0)", "mypy (==1.15.0)", "numpy", "pytest (>=8.4.2)", "pytest-asyncio", "pytest-cov", "pytest-env", "pytest-mock", "pytest-rerunfailures (<16.0)", "pytest-vcr", "pytest-xdist", "ruff (>=0.9.0)", "soundfile", "ty", "types-PyYAML", "types-simplejson", "types-toml", "types-tqdm", "types-urllib3", "typing-extensions (>=4.8.0)", "urllib3 (<2.0)"]
+dev = ["Jinja2", "Pillow", "authlib (>=1.3.2)", "duckdb", "fastapi", "fastapi", "httpx", "itsdangerous", "jedi", "libcst (>=1.4.0)", "mypy (==1.15.0)", "numpy", "pytest (>=8.4.2)", "pytest-asyncio", "pytest-cov", "pytest-env", "pytest-mock", "pytest-rerunfailures (<16.0)", "pytest-vcr", "pytest-xdist", "ruff (>=0.9.0)", "soundfile", "ty", "types-PyYAML", "types-simplejson", "types-toml", "types-tqdm", "types-urllib3", "typing-extensions (>=4.8.0)", "urllib3 (<2.0)"]
+fastai = ["fastai (>=2.4)", "fastcore (>=1.3.27)", "toml"]
+gradio = ["gradio (>=5.0.0)", "requests"]
+hf-xet = ["hf-xet (>=1.4.3,<2.0.0)"]
+mcp = ["mcp (>=1.8.0)"]
+oauth = ["authlib (>=1.3.2)", "fastapi", "httpx", "itsdangerous"]
+quality = ["libcst (>=1.4.0)", "mypy (==1.15.0)", "ruff (>=0.9.0)", "ty"]
+testing = ["Jinja2", "Pillow", "authlib (>=1.3.2)", "duckdb", "fastapi", "fastapi", "httpx", "itsdangerous", "jedi", "numpy", "pytest (>=8.4.2)", "pytest-asyncio", "pytest-cov", "pytest-env", "pytest-mock", "pytest-rerunfailures (<16.0)", "pytest-vcr", "pytest-xdist", "soundfile", "urllib3 (<2.0)"]
+torch = ["safetensors[torch]", "torch"]
+typing = ["types-PyYAML", "types-simplejson", "types-toml", "types-tqdm", "types-urllib3", "typing-extensions (>=4.8.0)"]
+
+[[package]]
 name = "idna"
 version = "3.11"
 description = "Internationalized Domain Names in Applications (IDNA)"
 optional = false
 python-versions = ">=3.8"
-groups = ["main", "dev", "ui"]
+groups = ["main", "dev", "test", "ui"]
 files = [
     {file = "idna-3.11-py3-none-any.whl", hash = "sha256:771a87f49d9defaf64091e6e6fe9c18d4833f140bd19464795bc32d966ca37ea"},
     {file = "idna-3.11.tar.gz", hash = "sha256:795dafcc9c04ed0c1fb032c2aa73654d8e8c5023a7df64a53f39190ada629902"},
@@ -1240,6 +1366,30 @@ files = [
 ]
 
 [[package]]
+name = "markdown-it-py"
+version = "4.2.0"
+description = "Python port of markdown-it. Markdown parsing, done right!"
+optional = false
+python-versions = ">=3.10"
+groups = ["main", "test"]
+files = [
+    {file = "markdown_it_py-4.2.0-py3-none-any.whl", hash = "sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a"},
+    {file = "markdown_it_py-4.2.0.tar.gz", hash = "sha256:04a21681d6fbb623de53f6f364d352309d4094dd4194040a10fd51833e418d49"},
+]
+
+[package.dependencies]
+mdurl = ">=0.1,<1.0"
+
+[package.extras]
+benchmarking = ["psutil", "pytest", "pytest-benchmark"]
+compare = ["commonmark (>=0.9,<1.0)", "markdown (>=3.4,<4.0)", "markdown-it-pyrs", "mistletoe (>=1.0,<2.0)", "mistune (>=3.0,<4.0)", "panflute (>=2.3,<3.0)"]
+linkify = ["linkify-it-py (>=1,<3)"]
+plugins = ["mdit-py-plugins (>=0.5.0)"]
+profiling = ["gprof2dot"]
+rtd = ["ipykernel", "jupyter_sphinx", "mdit-py-plugins (>=0.5.0)", "myst-parser", "pyyaml", "sphinx", "sphinx-book-theme (>=1.0,<2.0)", "sphinx-copybutton", "sphinx-design"]
+testing = ["coverage", "pytest", "pytest-cov", "pytest-regressions", "pytest-timeout", "requests"]
+
+[[package]]
 name = "markupsafe"
 version = "3.0.3"
 description = "Safely add untrusted strings to HTML/XML markup."
@@ -1416,6 +1566,18 @@ python-dateutil = ">=2.7"
 
 [package.extras]
 dev = ["meson-python (>=0.13.1,<0.17.0)", "pybind11 (>=2.13.2,!=2.13.3)", "setuptools (>=64)", "setuptools_scm (>=7)"]
+
+[[package]]
+name = "mdurl"
+version = "0.1.2"
+description = "Markdown URL utilities"
+optional = false
+python-versions = ">=3.7"
+groups = ["main", "test"]
+files = [
+    {file = "mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8"},
+    {file = "mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba"},
+]
 
 [[package]]
 name = "mpmath"
@@ -2344,7 +2506,7 @@ version = "2.20.0"
 description = "Pygments is a syntax highlighting package written in Python."
 optional = false
 python-versions = ">=3.9"
-groups = ["dev", "test"]
+groups = ["main", "dev", "test"]
 files = [
     {file = "pygments-2.20.0-py3-none-any.whl", hash = "sha256:81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176"},
     {file = "pygments-2.20.0.tar.gz", hash = "sha256:6757cd03768053ff99f3039c1a36d6c0aa0b263438fcab17520b30a303a82b5f"},
@@ -2849,6 +3011,25 @@ urllib3 = ">=1.21.1,<3"
 [package.extras]
 socks = ["PySocks (>=1.5.6,!=1.5.7)"]
 use-chardet-on-py3 = ["chardet (>=3.0.2,<6)"]
+
+[[package]]
+name = "rich"
+version = "15.0.0"
+description = "Render rich text, tables, progress bars, syntax highlighting, markdown and more to the terminal"
+optional = false
+python-versions = ">=3.9.0"
+groups = ["main", "test"]
+files = [
+    {file = "rich-15.0.0-py3-none-any.whl", hash = "sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb"},
+    {file = "rich-15.0.0.tar.gz", hash = "sha256:edd07a4824c6b40189fb7ac9bc4c52536e9780fbbfbddf6f1e2502c31b068c36"},
+]
+
+[package.dependencies]
+markdown-it-py = ">=2.2.0"
+pygments = ">=2.13.0,<3.0.0"
+
+[package.extras]
+jupyter = ["ipywidgets (>=7.5.1,<9)"]
 
 [[package]]
 name = "rpds-py"
@@ -3447,6 +3628,18 @@ docs = ["matplotlib", "numpydoc (==1.1.*)", "sphinx", "sphinx-book-theme", "sphi
 test = ["pytest", "pytest-cov", "scipy-doctest"]
 
 [[package]]
+name = "shellingham"
+version = "1.5.4"
+description = "Tool to Detect Surrounding Shell"
+optional = false
+python-versions = ">=3.7"
+groups = ["main", "test"]
+files = [
+    {file = "shellingham-1.5.4-py2.py3-none-any.whl", hash = "sha256:7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686"},
+    {file = "shellingham-1.5.4.tar.gz", hash = "sha256:8dbca0739d487e5bd35ab3ca4b36e11c4078f3a234bfce294b0a0291363404de"},
+]
+
+[[package]]
 name = "six"
 version = "1.17.0"
 description = "Python 2 and 3 compatibility utilities"
@@ -3903,6 +4096,24 @@ tests = ["autopep8", "isort", "llnl-hatchet", "numpy", "pytest", "pytest-forked"
 tutorials = ["matplotlib", "pandas", "tabulate"]
 
 [[package]]
+name = "typer"
+version = "0.27.0"
+description = "Typer, build great CLIs. Easy to code. Based on Python type hints."
+optional = false
+python-versions = ">=3.10"
+groups = ["main", "test"]
+files = [
+    {file = "typer-0.27.0-py3-none-any.whl", hash = "sha256:6f4b27631e47f077871b7dc30e933ec0131c1390fbe0e387ea5574b5bac9ccf1"},
+    {file = "typer-0.27.0.tar.gz", hash = "sha256:629bd12ea5d13a17148125d9a264f949eb171fb3f120f9b04d85873cab054fa5"},
+]
+
+[package.dependencies]
+annotated-doc = ">=0.0.2"
+colorama = {version = "*", markers = "platform_system == \"Windows\""}
+rich = ">=13.8.0"
+shellingham = ">=1.3.0"
+
+[[package]]
 name = "typing-extensions"
 version = "4.15.0"
 description = "Backported and Experimental Type Hints for Python 3.9+"
@@ -3913,7 +4124,7 @@ files = [
     {file = "typing_extensions-4.15.0-py3-none-any.whl", hash = "sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548"},
     {file = "typing_extensions-4.15.0.tar.gz", hash = "sha256:0cea48d173cc12fa28ecabc3b837ea3cf6f38c6d1136f85cbaaf598984861466"},
 ]
-markers = {dev = "python_version == \"3.10\"", test = "python_version == \"3.10\""}
+markers = {dev = "python_version == \"3.10\""}
 
 [[package]]
 name = "tzdata"
@@ -4218,4 +4429,4 @@ h11 = ">=0.16.0,<1"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10,<3.15"
-content-hash = "23898313afb0575a30a8e6d7b6a5e99e7fe6701a44d0806f58ad54a0f935e6d6"
+content-hash = "a83ceb8064a19e387011e533f9b41495a5be11eb14ec115c3d71cec6de754a2e"

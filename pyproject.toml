@@ -22,6 +22,7 @@ google-api-python-client = "^2.176.0"
 scipy = "1.15.3"
 pyarrow = "^17.0.0"
 PyYAML = "^6.0.1"
+huggingface-hub = "^1.0"
 
 # --- GIS libraries ---
 # Both ship prebuilt wheels for every platform we target, including Apple
@@ -90,6 +91,7 @@ test = [
     "click",
     "fiona",
     "geopandas",
+    "huggingface-hub",
     "matplotlib",
     "numpy",
     "pandas",

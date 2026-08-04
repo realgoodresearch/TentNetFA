@@ -151,6 +151,32 @@ reason about: a handful of points, a 3×3 grid, two dates.
 Passing a plain function or lambda where the code under test takes a callable
 is not mocking — that is the function's real parameter contract.
 
+### The network boundary
+
+One narrow exception, for code whose subject *is* a remote service:
+`displacement_tracker/util/model_ref.py` resolves a model reference against
+the Hugging Face Hub, and there is no offline equivalent of a private
+repository the way `tmp_path` is an offline equivalent of a file. The Hub
+client's entry points may therefore be stubbed, on the same reasoning as
+`load_dotenv`: a remote service is ambient environment, and a suite that
+reaches it would be neither deterministic nor runnable in CI.
+
+The carve-out is deliberately small:
+
+- **Stub the boundary, never the module under test.** Replace the Hub
+  client's entry points; `parse_model_ref`, `resolve_model_ref` and the
+  functions they call run for real.
+- **Drive behavior through it, don't assert traffic across it.** Make a stub
+  raise what the Hub would raise, then assert on the resulting error message
+  — the thing a user acts on. §1 still applies: "the mock was called with X"
+  is not a test, so pass-through parameters and zero-call counts stay out.
+- **One exception to that, for credentials.** Which credential is sent is a
+  security-relevant invariant that is only observable at this boundary:
+  sending `None` instead of `False` lets a credential saved by `hf auth
+  login` decide whether a run works, so `HF_TOKEN` would silently stop being
+  the single source. That assertion is allowed, and is the only call-record
+  assertion that is.
+
 ## 4. Derive expectations by hand
 
 Compute the expected value yourself from the definition of the behavior, on
