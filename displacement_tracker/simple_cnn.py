@@ -140,5 +140,7 @@ class SimpleCNN(nn.Module):
             state_dict = checkpoint["state_dict"]
         else:
             state_dict = checkpoint
-        model.load_state_dict(state_dict)
+        # Older checkpoints (e.g. v1.0) predate global_fc; those weights are
+        # unused in forward() so allow partial loads.
+        model.load_state_dict(state_dict, strict=False)
         return model
