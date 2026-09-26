@@ -224,3 +224,4 @@ runs/
 tmp/
 *.log
 *.csv
+.Rlibrary/

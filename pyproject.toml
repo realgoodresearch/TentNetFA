@@ -61,6 +61,8 @@ train-embedding = "displacement_tracker.util.train_embedding:cli"
 pipeline-ui = "displacement_tracker.pipelines.launch:main"
 pipeline-ui-stop = "displacement_tracker.pipelines.stop:cli"
 pipeline-run = "displacement_tracker.pipelines.cli:cli"
+point-match = "displacement_tracker.point_match.cli:cli"
+spatial-cv = "displacement_tracker.spatial_cv.cli:cli"
 
 [build-system]
 requires = ["poetry-core"]

@@ -64,8 +64,16 @@ train:
     validation_frac: 0.19
     memory: True
     num_workers: 4
+    # Leave holdout_fold unset here so `train-cnn` stays the usual random 80/19 + checkpoint.
+    # Spatial CV reads `spatial_cv:` below (see displacement_tracker/spatial_cv/README.md).
     model_kwargs:
       kernel_size: 3
+  spatial_cv:
+    # Locked after the 2026-09-22 north_south fold-3 pilot (from scratch, RTX 2000 Ada).
+    scheme: north_south
+    epochs: 83
+    early_stop_patience: 30
+    inner_val_frac: 0.1
   metadata_embedding:
     embedding_dim: 128
     hidden_dim: 128
@@ -86,28 +94,25 @@ train:
     checkpoint_path: ./checkpoints/metadata_embedding.pth
 
 predict:
-  # New imagery to run inference on (download stage writes here, scan stage reads).
-  geotiff_dir: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/tiffs
-  # Per-image tile manifests (written by the scan stage, read by prediction).
-  manifest_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/manifests
+  # Planet month folder (inputs stay in the archive, not under model_v2.2).
+  # This pass: 20251201, 20260220, 20260325 — each pipeline-run overrides
+  # geotiff_dir and loading.files. Default below is the last of those dates.
+  geotiff_dir: "/data/common/planet/Gaza/2026 03 (Mar)"
+  # Filename filter; empty = scan every .tif in geotiff_dir.
   loading:
     files:
-      # - "khan_yunis_al_mawasi_deir_el_balah_20260220_122923_ssc10_u0003_visual_clip.tif"
-      # - "gaza_city_jabalia_beit_hanoun_20260220_123000_ssc10_u0001_visual_clip.tif"
-      # - "gaza_city_jabalia_beit_lahiya_20260220_122923_ssc10_u0001_visual_clip.tif"
-      # - "deir_el_balah_nuseirat_gaza_city_20260220_122923_ssc10_u0002_visual_clip.tif"
-      # - "kerem_shalom_crossing_al_nasr_20260220_055911_ssc1_u0001_visual_clip.tif"
-      # - "khan_yunis_al_maghazi_bureij_20260220_123000_ssc10_u0002_visual_clip.tif"
-      # - "rafah_rafah_crossing_khan_yunis_20260220_123000_ssc10_u0003_visual_clip.tif"
-      # - "tel_al_sultan_20260220_122923_ssc10_u0004_visual_clip.tif"
+      - "20260325"
   processing:
     quality_thresholds:
       min_valid_fraction: 0.1
+  # Intermediates stay in pipeline_runs/predict/<run-name>/. Copy only the
+  # cleaned merge to ${DATA_DIR}/results/TentNetFA/model_v2.2/<YYYYMMDD>/preds_final/.
+  manifest_folder: ${DATA_DIR}/results/TentNetFA/pipeline_runs/predict/scratch/manifests
   prediction:
     save_bounds: true
-    # input_folder: null  # defaults to manifest_folder above
-    output_folder: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/preds
-    model: /home/karim/TentNetFA/runs/v2.0/best_model.pth
+    # input_folder: null  # defaults to manifest_folder; runner sets both to <run>/manifests
+    output_folder: ${DATA_DIR}/results/TentNetFA/pipeline_runs/predict/scratch/preds
+    model: /home/wenlan/models/model-v2.2.pth
     batch_size: 8
     num_workers: 4  # Optional sampling configuration
     sample:
@@ -126,11 +131,12 @@ predict:
     per_tile_standardisation: true
   merge:
     # input_folder: null  # defaults to prediction.output_folder
-    output: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/merged/merged.gpkg
+    output: ${DATA_DIR}/results/TentNetFA/pipeline_runs/predict/scratch/merged/merged.gpkg
     min_distance_m: 3.0
     agreement: 1
-    min_adj_peak: 0.0
-    adjustment_factor: 1.0
+    min_adj_peak: 0.003
+    adjustment_factor: 10
     thresholds_config: null     # optional YAML with per-file adj_peak thresholds
-    exclusion_zones_gpkg: null  # drop points inside these geometries
+    # Drop tents inside the yellow-line zone (east/south buffer); keep the west/coast side.
+    exclusion_zones_gpkg: ${DATA_DIR}/results/TentNetFA/tent_postprocessing/layers/yellow-line-zone.json
     inclusion_zone: null        # drop points outside this geometry

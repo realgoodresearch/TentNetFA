@@ -202,7 +202,13 @@ Train the CNN using the generated manifests.
 ```bash
 poetry run train-cnn config.yaml
 ```
-Model checkpoints and training logs will be saved to a timestamped directory inside `runs/`.
+Model checkpoints and training logs will be saved to a timestamped directory inside `runs/`. That command uses the random 80/19 split and the yaml checkpoint.
+
+Spatial 5-strip (or east–west / governorate) CV is separate: it trains **from scratch** and reads `train.spatial_cv` in `config.yaml`. Recipe: [`displacement_tracker/spatial_cv/README.md`](displacement_tracker/spatial_cv/README.md).
+
+```bash
+python -m displacement_tracker.spatial_cv run config.yaml --folds 3
+```
 
 ### 4. Predict on New Imagery
 Use a trained model to predict tent locations on new satellite images, configured by the `predict` section of `config.yaml`.

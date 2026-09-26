@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import rasterio
 import torch
 from scipy.ndimage import gaussian_filter
@@ -187,6 +188,68 @@ class PairedImageDataset(Dataset):
         idx = self.indices[i] if self.indices is not None else i
         feature_ids = self._rows[idx].get("label_feature_ids") or []
         return len(feature_ids) == 0
+
+    def subset(self, indices: list[int]) -> "PairedImageDataset":
+        return PairedImageDataset(
+            self.manifest_path,
+            indices=list(indices),
+            sigma=self.sigma,
+            gdal_cache_mb=self.gdal_cache_mb,
+            per_tile_standardisation=self.per_tile_standardisation,
+        )
+
+    def create_fold_subsets(
+        self,
+        folds_path: str | os.PathLike[str],
+        holdout_fold: int,
+        inner_val_frac: float = 0.1,
+        seed: int = 42,
+        buffer_deg: float = 0.01,
+    ) -> tuple["PairedImageDataset", "PairedImageDataset", "PairedImageDataset", dict]:
+        """Train / inner-val / holdout splits from a locked spatial fold table."""
+        from displacement_tracker.spatial_cv.folds import train_test_masks
+
+        folds_path = Path(folds_path)
+        folds = pd.read_parquet(folds_path)
+        meta = json.loads(folds_path.with_name("folds_meta.json").read_text())
+        scheme = meta.get("scheme", "north_south")
+        buf = float(meta.get("buffer_deg", buffer_deg))
+
+        if len(folds) != len(self._rows):
+            raise ValueError(
+                f"Fold table has {len(folds)} rows but dataset has {len(self._rows)}; "
+                "re-run assign-folds on the same training manifest."
+            )
+        if "fold_id" not in folds.columns or "lat_c" not in folds.columns:
+            raise ValueError("tiles_with_folds.parquet must include fold_id and lat_c")
+
+        train_mask, test_mask = train_test_masks(folds, holdout_fold, meta, buf)
+        train_idcs = [i for i, keep in enumerate(train_mask.tolist()) if keep]
+        test_idcs = [i for i, keep in enumerate(test_mask.tolist()) if keep]
+        rng = random.Random(seed)
+        shuffled = list(train_idcs)
+        rng.shuffle(shuffled)
+        n_val = max(1, int(len(shuffled) * inner_val_frac)) if shuffled else 0
+        val_idcs = shuffled[:n_val]
+        train_idcs = shuffled[n_val:]
+        labels = meta.get("fold_labels") or {}
+        info = {
+            "scheme": scheme,
+            "holdout_fold": int(holdout_fold),
+            "fold_name": labels.get(str(int(holdout_fold))),
+            "n_train": len(train_idcs),
+            "n_inner_val": len(val_idcs),
+            "n_holdout": len(test_idcs),
+            "cuts": meta.get("cuts") or meta.get("cuts_lat"),
+            "cuts_lat": meta.get("cuts_lat"),
+            "buffer_deg": buf,
+        }
+        return (
+            self.subset(train_idcs),
+            self.subset(val_idcs),
+            self.subset(test_idcs),
+            info,
+        )
 
     def create_subsets(
         self,
