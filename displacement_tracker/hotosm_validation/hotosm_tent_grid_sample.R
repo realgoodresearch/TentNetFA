@@ -4,6 +4,10 @@ library(sampling)
 
 #### USER OPTIONS ####
 
+# Grid cell size in metres; NULL keeps the original mastergrid.
+# Set to 60 for a 60-m grid.
+grid_resolution_m <- 60
+
 # sample size
 n <- 500
 
@@ -75,13 +79,13 @@ exclusion_zone <- st_read(file.path(
   'buffer_zone_2025-10-10.gpkg'
 ))
 
-# load tent raster
-tent_rast <- rast(file.path(
+# load tent points
+tent_points <- st_read(file.path(
   data_dir,
   'publications',
-  '2026-08-05',
+  date_tents,
   'supplementary_data',
-  paste0('gaza_tent_counts_100m_grid_', gsub('-', '', date_tents), '.tif')
+  paste0('gaza_tent_points_', gsub('-', '', date_tents), '.gpkg')
 ))
 
 # load non-zero strata boundaries
@@ -108,6 +112,45 @@ strata_zero_poly <- st_read(
 
 
 #---- update mastergrid ----#
+
+if (!is.null(grid_resolution_m)) {
+  if (
+    !is.numeric(grid_resolution_m) ||
+      length(grid_resolution_m) != 1L ||
+      !is.finite(grid_resolution_m) ||
+      grid_resolution_m <= 0
+  ) {
+    stop('grid_resolution_m must be NULL or one positive, finite number.')
+  }
+  if (
+    is.lonlat(mastergrid) ||
+      !isTRUE(st_crs(crs(mastergrid))$units_gdal %in% c('metre', 'meter'))
+  ) {
+    stop('Resampling in metres requires a mastergrid with a metre-based CRS.')
+  }
+  if (any(res(mastergrid) != grid_resolution_m)) {
+    # Anchor at the upper-left corner and expand right/bottom to full cells.
+    grid_cols <- ceiling(
+      ncol(mastergrid) * res(mastergrid)[1] / grid_resolution_m
+    )
+    grid_rows <- ceiling(
+      nrow(mastergrid) * res(mastergrid)[2] / grid_resolution_m
+    )
+    new_grid <- rast(
+      nrows = grid_rows,
+      ncols = grid_cols,
+      xmin = xmin(mastergrid),
+      xmax = xmin(mastergrid) + grid_cols * grid_resolution_m,
+      ymin = ymax(mastergrid) - grid_rows * grid_resolution_m,
+      ymax = ymax(mastergrid),
+      crs = crs(mastergrid)
+    )
+    # Preserve categorical values and NA study-area holes at cell centres.
+    mastergrid <- resample(mastergrid, new_grid, method = 'near')
+  }
+}
+grid_size_label <- paste(format(res(mastergrid), trim = TRUE), collapse = ' x ')
+
 
 # Remove cells whose centroids fall in an exclusion polygon.
 exclusion_zone <- st_transform(exclusion_zone, crs(mastergrid))
@@ -137,12 +180,17 @@ for (image_file in file.path(image_dir, planet_images)) {
 }
 mastergrid[study_cells[!image_covered]] <- NA
 
-# Restrict tent counts to the study area on the mastergrid.
-stopifnot(compareGeom(tent_rast, mastergrid))
+# Count tent points in each cell of the active grid, then restrict counts to the
+# retained study area. Empty study-area cells are zero; excluded cells are NA.
+tent_points <- st_transform(tent_points, crs(mastergrid))
+tent_rast <- rasterize(
+  vect(tent_points),
+  mastergrid,
+  field = 1,
+  fun = 'sum',
+  background = 0
+)
 tent_rast <- mask(tent_rast, mastergrid)
-
-# Missing tent counts inside the study area represent zero tents.
-tent_rast <- ifel(mastergrid == 1 & is.na(tent_rast), 0, tent_rast)
 
 
 #---- summary stats for tents ----#
@@ -150,7 +198,7 @@ tent_rast <- ifel(mastergrid == 1 & is.na(tent_rast), 0, tent_rast)
 # count of grid cells with tents
 sum(tent_rast[!is.na(tent_rast)] > 0)
 
-# sample proportion of total cells
+# sample proportion of total cells with tents
 n / sum(tent_rast[!is.na(tent_rast)] > 0)
 
 # summary stats of tent counts
@@ -158,7 +206,7 @@ hist(
   tent_rast[!is.na(tent_rast)],
   main = 'Tent count frequencies',
   xlab = 'Tents',
-  ylab = '100-m grid cells'
+  ylab = paste0(grid_size_label, ' grid cells (CRS units)')
 )
 
 quantile(tent_rast[!is.na(tent_rast)], probs = seq(0, 1, by = 0.1))
@@ -291,7 +339,13 @@ for (h in seq_len(nrow(allocation))) {
   }
   pik <- sampling::inclusionprobabilities(frame$size[i], allocation$n[h])
   frame$inclusion_probability[i] <- pik
-  frame$selected[i] <- sampling::UPrandompivotal(pik, eps = 1e-10) > 0.5
+  # Fully sampled strata need no random draw (including one-cell strata).
+  frame$selected[i] <- if (allocation$n[h] == length(i)) {
+    rep(TRUE, length(i))
+  } else {
+    sampling::UPrandompivotal(pik, eps = 1e-10) > 0.5
+  }
+  stopifnot(sum(frame$selected[i]) == allocation$n[h])
 }
 
 # Sampled cell centroids, with raster cell IDs and inclusion probabilities.
@@ -335,3 +389,22 @@ writeRaster(
   file.path(out_dir, 'sample_tent_counts.tif'),
   overwrite = TRUE
 )
+
+
+#---- summary stats for sample ----#
+hist(
+  sample_tent_counts[],
+  main = 'Frequency of tent counts',
+  ylab = paste0('Sample units (', grid_size_label, ' CRS units)'),
+  xlab = 'Tent count'
+)
+quantile(sample_tent_counts[], na.rm = T)
+
+sum(sample_tent_counts[] == 0, na.rm = T)
+sum(sample_tent_counts[] < 10, na.rm = T)
+sum(sample_tent_counts[] >= 10 & sample_tent_counts[] < 20, na.rm = T)
+sum(sample_tent_counts[] >= 20 & sample_tent_counts[] < 30, na.rm = T)
+sum(sample_tent_counts[] >= 30 & sample_tent_counts[] < 40, na.rm = T)
+sum(sample_tent_counts[] >= 40 & sample_tent_counts[] < 50, na.rm = T)
+
+mean(sample_tent_counts[] < 50, na.rm = T)
