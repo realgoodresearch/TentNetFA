@@ -132,5 +132,6 @@ predict:
     min_adj_peak: 0.0
     adjustment_factor: 1.0
     thresholds_config: null     # optional YAML with per-file adj_peak thresholds
-    exclusion_zones_gpkg: null  # drop points inside these geometries
+    # A single path or a YAML list of paths; drop points inside any geometry.
+    exclusion_zones_gpkg: null
     inclusion_zone: null        # drop points outside this geometry

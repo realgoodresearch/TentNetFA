@@ -145,7 +145,8 @@ manually.
 | `merge.min_adj_peak` | Global adjusted-peak threshold applied before merging. |
 | `merge.adjustment_factor` | Factor applied to (adjusted_peak − peak) when filtering. |
 | `merge.thresholds_config` | Optional YAML with per-file adjusted-peak thresholds. |
-| `merge.exclusion_zones_gpkg`, `inclusion_zone` | Drop points inside / outside these geometries. |
+| `merge.exclusion_zones_gpkg` | One path or a list of zone-file paths; drop points inside any supplied geometry. |
+| `merge.inclusion_zone` | One zone-file path; drop points outside its geometry. |
 | `merge.input_folder` | Prediction GeoJSONs to merge; defaults to `prediction.output_folder`. |
 | `merge.output` | Final GeoPackage. **Runner-managed** → `merged/merged.gpkg`. |
 

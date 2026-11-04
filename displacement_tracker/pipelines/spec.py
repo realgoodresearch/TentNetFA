@@ -75,22 +75,35 @@ PREDICT = Pipeline(
     base_config="config.yaml",
     stages=(
         Stage(
-            "download", "Download GeoTIFFs from Drive", "displacement_tracker.a_tif_loader",
+            "download",
+            "Download GeoTIFFs from Drive",
+            "displacement_tracker.a_tif_loader",
             default_enabled=False,
         ),
-        Stage("scan", "Scan imagery & build manifests", "displacement_tracker.b2_image_scanner"),
+        Stage(
+            "scan",
+            "Scan imagery & build manifests",
+            "displacement_tracker.b2_image_scanner",
+        ),
         Stage("predict", "Run model inference", "displacement_tracker.e_predict_json"),
-        Stage("merge", "Merge & deduplicate predictions", "displacement_tracker.h_merge_geojsons"),
+        Stage(
+            "merge",
+            "Merge & deduplicate predictions",
+            "displacement_tracker.h_merge_geojsons",
+        ),
     ),
     params=(
         Param("geotiff_dir", "GeoTIFF directory", "path", "Inputs"),
         Param(
-            "loading.files", "GeoTIFF files / search strings", "list", "Inputs",
+            "loading.files",
+            "GeoTIFF files / search strings",
+            "list",
+            "Inputs",
             optional=True,
             help="One entry per line. Download stage: entries are Drive search "
-                 "strings — if empty, the stage downloads nothing. Scan stage: "
-                 "entries are filename filters — if empty, ALL .tif files in "
-                 "the GeoTIFF directory are scanned.",
+            "strings — if empty, the stage downloads nothing. Scan stage: "
+            "entries are filename filters — if empty, ALL .tif files in "
+            "the GeoTIFF directory are scanned.",
         ),
         Param("boundaries", "Municipal boundaries (.shp)", "path", "Inputs"),
         Param("prewar_gaza", "Pre-war reference raster", "path", "Inputs"),
@@ -99,32 +112,62 @@ PREDICT = Pipeline(
         Param("processing.margin_metres", "Tile margin (m)", "int", "Processing"),
         Param(
             "processing.quality_thresholds.min_valid_fraction",
-            "Min valid fraction", "float", "Processing",
+            "Min valid fraction",
+            "float",
+            "Processing",
             help="Minimum non-black/NaN fraction for a tile to be kept.",
         ),
         Param("prediction.batch_size", "Batch size", "int", "Prediction"),
         Param("prediction.num_workers", "Data-loader workers", "int", "Prediction"),
-        Param("prediction.per_tile_standardisation", "Per-tile standardisation", "bool", "Prediction"),
+        Param(
+            "prediction.per_tile_standardisation",
+            "Per-tile standardisation",
+            "bool",
+            "Prediction",
+        ),
         Param("prediction.sample.enable", "Sample tiles only", "bool", "Prediction"),
         Param("prediction.sample.size", "Sample size", "int", "Prediction"),
         Param("prediction.sample.seed", "Sample seed", "int", "Prediction"),
-        Param("prediction.selection.threshold", "Selection threshold", "float", "Selection"),
+        Param(
+            "prediction.selection.threshold",
+            "Selection threshold",
+            "float",
+            "Selection",
+        ),
         Param("prediction.selection.factor", "Selection factor", "float", "Selection"),
         Param(
-            "prediction.selection.nms_kernel_size", "NMS kernel size (px)", "int", "Selection",
+            "prediction.selection.nms_kernel_size",
+            "NMS kernel size (px)",
+            "int",
+            "Selection",
             help="Max-pool kernel for NMS peak picking. For the 'centroid' "
-                 "method set selection.min_area via the YAML overrides instead.",
+            "method set selection.min_area via the YAML overrides instead.",
         ),
-        Param("prediction.selection.min_distance_m", "Min peak distance (m)", "float", "Selection"),
+        Param(
+            "prediction.selection.min_distance_m",
+            "Min peak distance (m)",
+            "float",
+            "Selection",
+        ),
         Param("merge.min_distance_m", "Merge distance (m)", "float", "Merge"),
         Param("merge.agreement", "Min cluster size", "int", "Merge"),
         Param("merge.min_adj_peak", "Min adjusted peak", "float", "Merge"),
         Param("merge.adjustment_factor", "Adjustment factor", "float", "Merge"),
         Param(
-            "merge.thresholds_config", "Per-file thresholds YAML", "path", "Merge",
+            "merge.thresholds_config",
+            "Per-file thresholds YAML",
+            "path",
+            "Merge",
             optional=True,
         ),
-        Param("merge.exclusion_zones_gpkg", "Exclusion zones", "path", "Merge", optional=True),
+        Param(
+            "merge.exclusion_zones_gpkg",
+            "Exclusion zones",
+            "list",
+            "Merge",
+            optional=True,
+            help="One zone file per line. Points inside any supplied zone are dropped.",
+        ),
         Param("merge.inclusion_zone", "Inclusion zone", "path", "Merge", optional=True),
     ),
     artifact_paths={
@@ -153,22 +196,35 @@ TRAIN = Pipeline(
     base_config="config.yaml",
     stages=(
         Stage(
-            "download", "Download GeoTIFFs from Drive", "displacement_tracker.a_tif_loader",
+            "download",
+            "Download GeoTIFFs from Drive",
+            "displacement_tracker.a_tif_loader",
             default_enabled=False,
         ),
-        Stage("scan", "Scan annotated imagery", "displacement_tracker.b1_annotated_scanner"),
-        Stage("rebalance", "Rebalance manifest", "displacement_tracker.c_resample_manifest"),
+        Stage(
+            "scan",
+            "Scan annotated imagery",
+            "displacement_tracker.b1_annotated_scanner",
+        ),
+        Stage(
+            "rebalance",
+            "Rebalance manifest",
+            "displacement_tracker.c_resample_manifest",
+        ),
         Stage("train", "Train CNN", "displacement_tracker.d_train_cnn"),
     ),
     params=(
         Param("geotiff_dir", "GeoTIFF directory", "path", "Inputs"),
         Param(
-            "loading.files", "GeoTIFF files / search strings", "list", "Inputs",
+            "loading.files",
+            "GeoTIFF files / search strings",
+            "list",
+            "Inputs",
             optional=True,
             help="One entry per line. Download stage: entries are Drive search "
-                 "strings — if empty, the stage downloads nothing. Scan stage: "
-                 "entries are filename filters — if empty, ALL .tif files in "
-                 "the GeoTIFF directory are scanned.",
+            "strings — if empty, the stage downloads nothing. Scan stage: "
+            "entries are filename filters — if empty, ALL .tif files in "
+            "the GeoTIFF directory are scanned.",
         ),
         Param("geojson", "Tent annotations (.geojson)", "path", "Inputs"),
         Param("boundaries", "Municipal boundaries (.shp)", "path", "Inputs"),
@@ -178,13 +234,24 @@ TRAIN = Pipeline(
         Param("processing.max_workers", "Scan workers", "int", "Processing"),
         Param(
             "processing.quality_thresholds.min_valid_fraction",
-            "Min valid fraction", "float", "Processing",
+            "Min valid fraction",
+            "float",
+            "Processing",
         ),
         Param("rebalancing.rng_seed", "Rebalancing seed", "int", "Rebalancing"),
-        Param("rebalancing.null_keep_fraction", "Null keep fraction", "float", "Rebalancing"),
         Param(
-            "training.checkpoint", "Resume checkpoint (.pth)", "path", "Training",
-            optional=True, help="Leave empty to train from scratch.",
+            "rebalancing.null_keep_fraction",
+            "Null keep fraction",
+            "float",
+            "Rebalancing",
+        ),
+        Param(
+            "training.checkpoint",
+            "Resume checkpoint (.pth)",
+            "path",
+            "Training",
+            optional=True,
+            help="Leave empty to train from scratch.",
         ),
         Param("training.device", "Device", "str", "Training"),
         Param("training.epochs", "Epochs", "int", "Training"),

@@ -91,36 +91,51 @@ def load_points_from_geojson(path: Path) -> list[tuple]:
     return points
 
 
-def load_zone_geometry(zones_path: str | None, label: str):
-    """Load and unify polygon geometries from a shapefile or GeoPackage file."""
+def load_zone_geometry(zones_path: str | list[str] | None, label: str):
+    """Load and unify polygon geometries from one or more zone files."""
     if not zones_path:
         return None
 
-    path = Path(zones_path)
-    if not path.exists():
-        raise click.ClickException(f"{label} zones file not found: {path}")
+    if isinstance(zones_path, str):
+        zone_paths = [zones_path]
+    elif isinstance(zones_path, list) and all(
+        isinstance(path, str) for path in zones_path
+    ):
+        zone_paths = zones_path
+    else:
+        raise click.ClickException(f"{label} zones must be a path or a list of paths")
 
-    try:
-        zones_gdf = gpd.read_file(path)
-    except Exception as exc:
-        raise click.ClickException(
-            f"Failed to read {label} zones file {path}: {exc}"
-        ) from exc
+    geometries = []
+    for zone_path in zone_paths:
+        path = Path(zone_path)
+        if not path.exists():
+            raise click.ClickException(f"{label} zones file not found: {path}")
 
-    if zones_gdf.empty:
-        LOGGER.warning("%s zones file is empty: %s", label, path)
+        try:
+            zones_gdf = gpd.read_file(path)
+        except Exception as exc:
+            raise click.ClickException(
+                f"Failed to read {label} zones file {path}: {exc}"
+            ) from exc
+
+        if zones_gdf.empty:
+            LOGGER.warning("%s zones file is empty: %s", label, path)
+            continue
+
+        if zones_gdf.crs is None:
+            LOGGER.warning("%s zones CRS missing, assuming EPSG:4326: %s", label, path)
+            zones_gdf = zones_gdf.set_crs("EPSG:4326")
+        else:
+            zones_gdf = zones_gdf.to_crs("EPSG:4326")
+
+        geometries.extend(zones_gdf.geometry)
+        LOGGER.info("Loaded %s zones from %s", label, path)
+
+    if not geometries:
         return None
 
-    if zones_gdf.crs is None:
-        LOGGER.warning(
-            "%s zones CRS missing, assuming EPSG:4326: %s", label, path
-        )
-        zones_gdf = zones_gdf.set_crs("EPSG:4326")
-    else:
-        zones_gdf = zones_gdf.to_crs("EPSG:4326")
-
-    geom = zones_gdf.geometry.union_all()
-    LOGGER.info("Loaded %s zones from %s", label, path)
+    geom = gpd.GeoSeries(geometries, crs="EPSG:4326").union_all()
+    LOGGER.info("Unified %d %s zone file(s)", len(zone_paths), label)
     return geom
 
 
@@ -223,13 +238,15 @@ def merge_geojsons(
     min_adj_peak: float = 0.0,
     adjustment_factor: float = 1.0,
     thresholds_config: str | None = None,
-    exclusion_zones_gpkg: str | None = None,
+    exclusion_zones_gpkg: str | list[str] | None = None,
     inclusion_zone: str | None = None,
 ) -> None:
     input_dir = Path(input_folder)
     if not input_dir.is_dir():
         raise click.ClickException(f"Input folder not found: {input_dir}")
-    geojson_files = sorted(input_dir.glob("*.geojson")) + sorted(input_dir.glob("*.json"))
+    geojson_files = sorted(input_dir.glob("*.geojson")) + sorted(
+        input_dir.glob("*.json")
+    )
 
     if not geojson_files:
         raise click.ClickException(f"No GeoJSON files found in {input_dir}")
@@ -248,7 +265,10 @@ def merge_geojsons(
         pts = filter_points_by_adjusted_peak(pts, threshold, adjustment_factor)
         LOGGER.info(
             "  %s: %d points loaded, %d kept (adj_peak >= %.4f)",
-            path.name, loaded, len(pts), threshold,
+            path.name,
+            loaded,
+            len(pts),
+            threshold,
         )
 
         if exclusion_geom is not None:
