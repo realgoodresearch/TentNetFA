@@ -135,10 +135,10 @@ predict:
     thresholds_config: null     # optional YAML with per-file adj_peak thresholds
     # A single path or a YAML list of paths; drop points inside any geometry.
     exclusion_zones_gpkg: null
-    inclusion_zone: null        # drop points outside this geometry
+    inclusion_zone: null        # a path or YAML list; drop points outside their union
   postprocess:
     # input: null               # defaults to merge.output
-    output: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/merged/merged_dbscan.gpkg  # runner derives from merge.output_filename
+    output: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/postprocessing/merged_dbscan.gpkg  # runner derives from merge.output_filename
     dbscan:
       eps_m: 40.0
       min_samples: 3

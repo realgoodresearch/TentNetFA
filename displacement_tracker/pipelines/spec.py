@@ -174,7 +174,14 @@ PREDICT = Pipeline(
             optional=True,
             help="One zone file per line. Points inside any supplied zone are dropped.",
         ),
-        Param("merge.inclusion_zone", "Inclusion zone", "path", "Merge", optional=True),
+        Param(
+            "merge.inclusion_zone",
+            "Inclusion zones",
+            "list",
+            "Merge",
+            optional=True,
+            help="One zone file per line. Points outside the union of all supplied zones are dropped.",
+        ),
         Param(
             "merge.output_filename",
             "Output filename",
@@ -188,7 +195,8 @@ PREDICT = Pipeline(
             "float",
             "Post-processing",
             help="Points without a DBSCAN cluster inside this radius are removed. "
-            "Applied to the merged, single reference-date layer.",
+            "Applied to the merged, single reference-date layer. Output is "
+            "postprocessing/<merge filename stem>_dbscan.gpkg.",
         ),
         Param(
             "postprocess.dbscan.min_samples",
@@ -203,7 +211,7 @@ PREDICT = Pipeline(
         "prediction.input_folder": "manifests",
         "prediction.output_folder": "preds",
         "merge.output": "merged/merged.gpkg",
-        "postprocess.output": "merged/postprocessed.gpkg",
+        "postprocess.output": "postprocessing/postprocessed.gpkg",
     },
     extra_defaults={
         "merge": {

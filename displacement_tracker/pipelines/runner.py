@@ -10,7 +10,7 @@ Run directory layout (fixed names, see ``Pipeline.artifact_paths``)::
     <run_root>/<pipeline>/<run_name>/
         config.yaml     resolved config used by every stage
         logs/           one log file per stage
-        manifests/ preds/ merged/          (predict)
+        manifests/ preds/ merged/ postprocessing/ (predict)
         manifests/ dataset/ model/         (train)
 """
 
@@ -164,7 +164,7 @@ def prepare_run(
         deep_set(
             config,
             "postprocess.output",
-            str(merge_output.with_name(f"{merge_output.stem}_dbscan.gpkg")),
+            str(run_dir / "postprocessing" / f"{merge_output.stem}_dbscan.gpkg"),
         )
 
     config_path = run_dir / "config.yaml"

@@ -239,7 +239,7 @@ def merge_geojsons(
     adjustment_factor: float = 1.0,
     thresholds_config: str | None = None,
     exclusion_zones_gpkg: str | list[str] | None = None,
-    inclusion_zone: str | None = None,
+    inclusion_zone: str | list[str] | None = None,
 ) -> None:
     input_dir = Path(input_folder)
     if not input_dir.is_dir():

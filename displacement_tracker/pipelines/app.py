@@ -446,6 +446,11 @@ def main() -> None:
         overrides: dict[str, object] = {}
         for group, params in groups.items():
             with st.expander(group, expanded=(group == "Inputs")):
+                if group == "Post-processing":
+                    st.caption(
+                        "DBSCAN writes `postprocessing/<merge filename stem>_dbscan.gpkg` "
+                        "inside this run; the merged source GeoPackage is unchanged."
+                    )
                 cols = st.columns(2)
                 for i, param in enumerate(params):
                     with cols[i % 2]:

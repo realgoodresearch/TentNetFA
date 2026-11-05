@@ -13,7 +13,7 @@ selected stages against it.
 <run root>/<pipeline>/<run name>/
     config.yaml     fully resolved config used by every stage
     logs/           one log file per stage
-    manifests/ preds/ merged/     (prediction)
+    manifests/ preds/ merged/ postprocessing/ (prediction)
     manifests/ dataset/ model/    (training)
 ```
 
@@ -54,7 +54,7 @@ flowchart TB
     merge["<b>merge</b> — h_merge_geojsons<br/>filters by adjusted peak, drops excluded zones,<br/>merges points within merge.min_distance_m"]
     out(["merged/&lt;output filename&gt;.gpkg"])
     dbscan["<b>postprocess</b> — j_dbscan_postprocess<br/>(optional) removes isolated points using DBSCAN"]
-    cleaned(["merged/&lt;output filename&gt;_dbscan.gpkg"])
+    cleaned(["postprocessing/&lt;output filename&gt;_dbscan.gpkg"])
 
     drive -. "download (optional)<br/>a_tif_loader" .-> tifs
     tifs --> scan
@@ -149,12 +149,12 @@ manually.
 | `merge.adjustment_factor` | Factor applied to (adjusted_peak − peak) when filtering. |
 | `merge.thresholds_config` | Optional YAML with per-file adjusted-peak thresholds. |
 | `merge.exclusion_zones_gpkg` | One path or a list of zone-file paths; drop points inside any supplied geometry. |
-| `merge.inclusion_zone` | One zone-file path; drop points outside its geometry. |
+| `merge.inclusion_zone` | One path or a list of zone-file paths; drop points outside the union of supplied geometries. |
 | `merge.input_folder` | Prediction GeoJSONs to merge; defaults to `prediction.output_folder`. |
 | `merge.output_filename` | Filename only (default `merged.gpkg`). The runner writes it inside the run's `merged/` directory. |
 | `merge.output` | Final GeoPackage path, derived by the runner from `merge.output_filename`; set it only for direct stage CLI use. |
 | `postprocess.input` | Optional source GeoPackage; defaults to `merge.output`. |
-| `postprocess.output` | DBSCAN-cleaned GeoPackage. The runner derives this as `<merge output stem>_dbscan.gpkg` in `merged/`. |
+| `postprocess.output` | DBSCAN-cleaned GeoPackage. The runner writes this as `postprocessing/<merge output stem>_dbscan.gpkg`. |
 | `postprocess.dbscan.eps_m` | DBSCAN neighbourhood radius in metres (default: 40). Points outside all clusters are removed. |
 | `postprocess.dbscan.min_samples` | Minimum points, including the point itself, required for a DBSCAN cluster (default: 3). |
 

@@ -73,7 +73,7 @@ The individual stages below can also be run end-to-end through the pipeline runn
 <run root>/<pipeline>/<run name>/
     config.yaml     # fully resolved config used by all stages
     logs/           # one log file per stage
-    manifests/ preds/ merged/    # prediction pipeline
+    manifests/ preds/ merged/ postprocessing/    # prediction pipeline
     manifests/ dataset/ model/   # training pipeline
 ```
 
@@ -118,7 +118,7 @@ flowchart TB
     merge["<b>merge</b> — h_merge_geojsons<br/>filters by adjusted peak, drops excluded zones,<br/>merges points within merge.min_distance_m"]
     out(["merged/&lt;output filename&gt;.gpkg"])
     dbscan["<b>postprocess</b> — j_dbscan_postprocess<br/>(optional) removes isolated points using DBSCAN"]
-    cleaned(["merged/&lt;output filename&gt;_dbscan.gpkg"])
+    cleaned(["postprocessing/&lt;output filename&gt;_dbscan.gpkg"])
 
     drive -. "download (optional)<br/>a_tif_loader" .-> tifs
     tifs --> scan
@@ -141,7 +141,7 @@ poetry run pipeline-ui
 
 This starts a local web server and opens a browser session where you pick the pipeline (training or prediction), override any parameter from the matching section of `config.yaml` in a form (plus a free-form YAML box for anything not exposed), toggle individual stages, and watch live logs while the run executes.
 
-The prediction pipeline also has an optional **DBSCAN post-process merged predictions** stage. The **Merge** section's filename-only output control defaults to `merged.gpkg`; the runner writes it inside the run's `merged/` folder. DBSCAN then writes `<stem>_dbscan.gpkg` beside it, leaving the merged file unchanged.
+The prediction pipeline also has an optional **DBSCAN post-process merged predictions** stage. The **Merge** section's filename-only output control defaults to `merged.gpkg`; the runner writes it inside the run's `merged/` folder. DBSCAN then writes `postprocessing/<stem>_dbscan.gpkg`, leaving the merged file unchanged.
 
 A run is tied to its browser session: switching pipeline, refreshing or closing the page cancels the running stage and terminates all of its child processes. Completed artifacts and per-stage logs remain in the run directory, so you can resume by re-running with only the remaining stages enabled. For long unattended runs prefer the headless CLI below inside tmux/screen.
 
