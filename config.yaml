@@ -126,7 +126,8 @@ predict:
     per_tile_standardisation: true
   merge:
     # input_folder: null  # defaults to prediction.output_folder
-    output: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/merged/merged.gpkg
+    output_filename: merged.gpkg  # filename only; runner writes it inside merged/
+    output: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/merged/merged.gpkg  # manual CLI only
     min_distance_m: 3.0
     agreement: 1
     min_adj_peak: 0.0
@@ -135,3 +136,9 @@ predict:
     # A single path or a YAML list of paths; drop points inside any geometry.
     exclusion_zones_gpkg: null
     inclusion_zone: null        # drop points outside this geometry
+  postprocess:
+    # input: null               # defaults to merge.output
+    output: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/merged/merged_dbscan.gpkg  # runner derives from merge.output_filename
+    dbscan:
+      eps_m: 40.0
+      min_samples: 3

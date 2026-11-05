@@ -91,6 +91,12 @@ PREDICT = Pipeline(
             "Merge & deduplicate predictions",
             "displacement_tracker.h_merge_geojsons",
         ),
+        Stage(
+            "postprocess",
+            "DBSCAN post-process merged predictions",
+            "displacement_tracker.j_dbscan_postprocess",
+            default_enabled=False,
+        ),
     ),
     params=(
         Param("geotiff_dir", "GeoTIFF directory", "path", "Inputs"),
@@ -169,12 +175,35 @@ PREDICT = Pipeline(
             help="One zone file per line. Points inside any supplied zone are dropped.",
         ),
         Param("merge.inclusion_zone", "Inclusion zone", "path", "Merge", optional=True),
+        Param(
+            "merge.output_filename",
+            "Output filename",
+            "str",
+            "Merge",
+            help="GeoPackage filename written inside this run's merged/ folder.",
+        ),
+        Param(
+            "postprocess.dbscan.eps_m",
+            "Cluster radius (m)",
+            "float",
+            "Post-processing",
+            help="Points without a DBSCAN cluster inside this radius are removed. "
+            "Applied to the merged, single reference-date layer.",
+        ),
+        Param(
+            "postprocess.dbscan.min_samples",
+            "Minimum samples",
+            "int",
+            "Post-processing",
+            help="Minimum points (including the point itself) required for a DBSCAN cluster.",
+        ),
     ),
     artifact_paths={
         "manifest_folder": "manifests",
         "prediction.input_folder": "manifests",
         "prediction.output_folder": "preds",
         "merge.output": "merged/merged.gpkg",
+        "postprocess.output": "merged/postprocessed.gpkg",
     },
     extra_defaults={
         "merge": {
@@ -185,6 +214,12 @@ PREDICT = Pipeline(
             "thresholds_config": None,
             "exclusion_zones_gpkg": None,
             "inclusion_zone": None,
+            "output_filename": "merged.gpkg",
+        },
+        "postprocess": {
+            "input": None,
+            "output": None,
+            "dbscan": {"eps_m": 40.0, "min_samples": 3},
         },
     },
 )

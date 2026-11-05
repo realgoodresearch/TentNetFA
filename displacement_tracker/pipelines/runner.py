@@ -147,6 +147,26 @@ def prepare_run(
     for dotted, rel in pipeline.artifact_paths.items():
         deep_set(config, dotted, str(run_dir / rel))
 
+    if pipeline.key == "predict":
+        merge_cfg = config.setdefault("merge", {})
+        filename = str(merge_cfg.get("output_filename", "merged.gpkg"))
+        filename_path = Path(filename)
+        if (
+            filename_path.name != filename
+            or filename in {"", ".", ".."}
+            or filename_path.suffix.lower() != ".gpkg"
+        ):
+            raise ValueError(
+                "merge.output_filename must be a filename ending in .gpkg"
+            )
+        merge_output = run_dir / "merged" / filename
+        deep_set(config, "merge.output", str(merge_output))
+        deep_set(
+            config,
+            "postprocess.output",
+            str(merge_output.with_name(f"{merge_output.stem}_dbscan.gpkg")),
+        )
+
     config_path = run_dir / "config.yaml"
     with open(config_path, "w") as f:
         yaml.safe_dump(config, f, sort_keys=False)

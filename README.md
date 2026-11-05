@@ -116,7 +116,9 @@ flowchart TB
     scan["<b>scan</b> — b2_image_scanner<br/>tiles new imagery inside boundaries,<br/>pairs it with pre-war tiles (no labels needed)"]
     predict["<b>predict</b> — e_predict_json<br/>runs inference per tile, extracts tent points<br/>(NMS / centroids) above selection thresholds"]
     merge["<b>merge</b> — h_merge_geojsons<br/>filters by adjusted peak, drops excluded zones,<br/>merges points within merge.min_distance_m"]
-    out(["merged/merged.gpkg"])
+    out(["merged/&lt;output filename&gt;.gpkg"])
+    dbscan["<b>postprocess</b> — j_dbscan_postprocess<br/>(optional) removes isolated points using DBSCAN"]
+    cleaned(["merged/&lt;output filename&gt;_dbscan.gpkg"])
 
     drive -. "download (optional)<br/>a_tif_loader" .-> tifs
     tifs --> scan
@@ -125,6 +127,7 @@ flowchart TB
     ckpt --> predict
     predict -- "preds/*.geojson<br/>(overlapping tiles!)" --> merge
     merge --> out
+    out -. "optional" .-> dbscan --> cleaned
 ```
 
 The same diagrams, together with a full reference of every config key, are available in the UI's **Help** tab (sourced from [`displacement_tracker/pipelines/help.md`](displacement_tracker/pipelines/help.md)).
@@ -137,6 +140,8 @@ poetry run pipeline-ui
 ```
 
 This starts a local web server and opens a browser session where you pick the pipeline (training or prediction), override any parameter from the matching section of `config.yaml` in a form (plus a free-form YAML box for anything not exposed), toggle individual stages, and watch live logs while the run executes.
+
+The prediction pipeline also has an optional **DBSCAN post-process merged predictions** stage. The **Merge** section's filename-only output control defaults to `merged.gpkg`; the runner writes it inside the run's `merged/` folder. DBSCAN then writes `<stem>_dbscan.gpkg` beside it, leaving the merged file unchanged.
 
 A run is tied to its browser session: switching pipeline, refreshing or closing the page cancels the running stage and terminates all of its child processes. Completed artifacts and per-stage logs remain in the run directory, so you can resume by re-running with only the remaining stages enabled. For long unattended runs prefer the headless CLI below inside tmux/screen.
 
@@ -341,7 +346,8 @@ Predictions are generated as overlapping tiles and must be merged before analysi
 predict:
   merge:
     # input_folder: null  # defaults to prediction.output_folder
-    output: ${DATA_DIR}/results/TentNetFA/2026-02/merged/merged.gpkg
+    output_filename: merged.gpkg  # filename only; runner writes it inside merged/
+    output: ${DATA_DIR}/results/TentNetFA/2026-02/merged/merged.gpkg  # manual CLI only
     min_distance_m: 3.0
     min_adj_peak: 0.003
     adjustment_factor: 10

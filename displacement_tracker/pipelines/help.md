@@ -52,7 +52,9 @@ flowchart TB
     scan["<b>scan</b> — b2_image_scanner<br/>tiles new imagery inside boundaries,<br/>pairs it with pre-war tiles (no labels needed)"]
     predict["<b>predict</b> — e_predict_json<br/>runs inference per tile, extracts tent points<br/>(NMS / centroids) above selection thresholds"]
     merge["<b>merge</b> — h_merge_geojsons<br/>filters by adjusted peak, drops excluded zones,<br/>merges points within merge.min_distance_m"]
-    out(["merged/merged.gpkg"])
+    out(["merged/&lt;output filename&gt;.gpkg"])
+    dbscan["<b>postprocess</b> — j_dbscan_postprocess<br/>(optional) removes isolated points using DBSCAN"]
+    cleaned(["merged/&lt;output filename&gt;_dbscan.gpkg"])
 
     drive -. "download (optional)<br/>a_tif_loader" .-> tifs
     tifs --> scan
@@ -61,6 +63,7 @@ flowchart TB
     ckpt --> predict
     predict -- "preds/*.geojson<br/>(overlapping tiles!)" --> merge
     merge --> out
+    out -. "optional" .-> dbscan --> cleaned
 ```
 
 Stages can be toggled individually in the sidebar — e.g. re-run only
@@ -148,7 +151,12 @@ manually.
 | `merge.exclusion_zones_gpkg` | One path or a list of zone-file paths; drop points inside any supplied geometry. |
 | `merge.inclusion_zone` | One zone-file path; drop points outside its geometry. |
 | `merge.input_folder` | Prediction GeoJSONs to merge; defaults to `prediction.output_folder`. |
-| `merge.output` | Final GeoPackage. **Runner-managed** → `merged/merged.gpkg`. |
+| `merge.output_filename` | Filename only (default `merged.gpkg`). The runner writes it inside the run's `merged/` directory. |
+| `merge.output` | Final GeoPackage path, derived by the runner from `merge.output_filename`; set it only for direct stage CLI use. |
+| `postprocess.input` | Optional source GeoPackage; defaults to `merge.output`. |
+| `postprocess.output` | DBSCAN-cleaned GeoPackage. The runner derives this as `<merge output stem>_dbscan.gpkg` in `merged/`. |
+| `postprocess.dbscan.eps_m` | DBSCAN neighbourhood radius in metres (default: 40). Points outside all clusters are removed. |
+| `postprocess.dbscan.min_samples` | Minimum points, including the point itself, required for a DBSCAN cluster (default: 3). |
 
 ### Anything else
 

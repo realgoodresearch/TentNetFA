@@ -12,6 +12,7 @@ tab; a fixed bottom bar shows the system load of the running stage.
 from __future__ import annotations
 
 import html
+import hashlib
 import re
 import time
 from collections import deque
@@ -336,6 +337,13 @@ def _widget(param: Param, default, key: str):
     return value
 
 
+def _reset_config_widgets(pipeline_key: str, params: tuple[Param, ...]) -> None:
+    """Discard form values cached by Streamlit after the base config changes."""
+    for param in params:
+        st.session_state.pop(f"{pipeline_key}:{param.path}", None)
+    st.session_state.pop(f"{pipeline_key}:extra_yaml", None)
+
+
 def main() -> None:
     st.set_page_config(
         page_title="TentNetFA",
@@ -350,7 +358,18 @@ def main() -> None:
         )
         pipeline = PIPELINES[pipeline_key]
 
-        base_config_path = st.text_input("Base config", value=pipeline.base_config)
+        base_config_path = st.text_input(
+            "Base config",
+            value=pipeline.base_config,
+            key=f"{pipeline.key}:base_config_path",
+        )
+        loaded_config_key = f"{pipeline.key}:loaded_base_config_path"
+        if st.session_state.get(loaded_config_key) != base_config_path:
+            # This runs before the generated configuration widgets are
+            # constructed, so their values are recreated from the new YAML
+            # rather than Streamlit's cached values.
+            _reset_config_widgets(pipeline.key, pipeline.params)
+            st.session_state[loaded_config_key] = base_config_path
         run_root = st.text_input("Run root", value=runner.default_run_root())
         run_name = st.text_input(
             "Run name",
@@ -405,6 +424,8 @@ def main() -> None:
             deep_merge(merged, base_config[section])
         base_config[section] = merged
 
+    config_widget_prefix = f"{pipeline.key}:config:{hashlib.sha256(base_config_path.encode()).hexdigest()[:12]}"
+
     config_tab, logs_tab, help_tab = st.tabs(["Configuration", "Run logs", "Help"])
 
     with help_tab:
@@ -417,6 +438,7 @@ def main() -> None:
             "Values below are prefilled from the base config; edit to override. "
             "Output locations are managed by the runner and land in the run directory."
         )
+        st.caption(f"Loaded base config: `{base_config_path}`")
         groups: dict[str, list[Param]] = {}
         for param in pipeline.params:
             groups.setdefault(param.group, []).append(param)
@@ -429,16 +451,18 @@ def main() -> None:
                     with cols[i % 2]:
                         default = deep_get(base_config, param.path)
                         overrides[param.path] = _widget(
-                            param, default, key=f"{pipeline.key}:{param.path}"
+                            param, default, key=f"{config_widget_prefix}:{param.path}"
                         )
 
         with st.expander("Advanced: extra YAML overrides"):
             st.caption(
                 "Deep-merged on top of everything above. Use the same structure "
-                "as the base config, e.g. `prediction: {selection: {method: nms}}`."
+                "as the base config, e.g. `prediction: {selection: {method: nms}}`. "
+                "This field starts blank; advanced overrides are not imported "
+                "from a loaded base config."
             )
             raw_yaml = st.text_area(
-                "YAML", value="", height=160, label_visibility="collapsed"
+                "YAML", value="", height=160, label_visibility="collapsed", key=f"{config_widget_prefix}:extra_yaml"
             )
 
     # Fixed bottom bar (the iframe script escapes the tab flow entirely).
