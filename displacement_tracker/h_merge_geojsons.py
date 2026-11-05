@@ -24,6 +24,7 @@ import yaml
 from displacement_tracker.util.config import flow_option, load_flow_config
 from displacement_tracker.util.deduplication import merge_close_points_global
 from displacement_tracker.util.logging_config import setup_logging
+from displacement_tracker.util.raster_zones import matches_any, open_raster_zone_matchers
 from displacement_tracker.util.thresholding import filter_points_by_adjusted_peak
 
 LOGGER = setup_logging("merge_geojsons")
@@ -167,6 +168,29 @@ def filter_points_by_inclusion(points: list[tuple], inclusion_geom) -> list[tupl
     return kept
 
 
+def filter_points_by_spatial_zones(
+    points: list[tuple], exclusion_geom, inclusion_geom, raster_matchers
+) -> list[tuple]:
+    """Apply vector/raster zone rules before points participate in merging."""
+    has_inclusion = inclusion_geom is not None or any(
+        matcher.rule.mode == "include" for matcher in raster_matchers
+    )
+    kept = []
+    for lat, lon, peak, adj_peak in points:
+        point = Point(lon, lat)
+        excluded = (
+            exclusion_geom is not None and exclusion_geom.contains(point)
+        ) or matches_any(raster_matchers, "exclude", lon, lat)
+        if excluded:
+            continue
+        included = not has_inclusion or (
+            inclusion_geom is not None and inclusion_geom.contains(point)
+        ) or matches_any(raster_matchers, "include", lon, lat)
+        if included:
+            kept.append((lat, lon, peak, adj_peak))
+    return kept
+
+
 def save_merged_gpkg(points: list[tuple], out_path: Path) -> None:
     """Save merged (lat, lon, peak, adj_peak) tuples to a GeoPackage file."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -223,6 +247,7 @@ def cli(config: str, flow: str) -> None:
             "thresholds_config",
             "exclusion_zones_gpkg",
             "inclusion_zone",
+            "raster_zones",
         )
         if merge_cfg.get(key) is not None
     }
@@ -240,6 +265,7 @@ def merge_geojsons(
     thresholds_config: str | None = None,
     exclusion_zones_gpkg: str | list[str] | None = None,
     inclusion_zone: str | list[str] | None = None,
+    raster_zones: list[dict] | None = None,
 ) -> None:
     input_dir = Path(input_folder)
     if not input_dir.is_dir():
@@ -271,35 +297,18 @@ def merge_geojsons(
             threshold,
         )
 
-        if exclusion_geom is not None:
-            before_exclusion = len(pts)
-            pts = filter_points_by_exclusion(pts, exclusion_geom)
-            LOGGER.info(
-                "  %s: %d kept after exclusion filtering",
-                path.name,
-                len(pts),
+        with open_raster_zone_matchers(raster_zones) as raster_matchers:
+            before_zones = len(pts)
+            pts = filter_points_by_spatial_zones(
+                pts, exclusion_geom, inclusion_geom, raster_matchers
             )
-            if before_exclusion != len(pts):
-                LOGGER.info(
-                    "  %s: %d points removed by exclusion zones",
-                    path.name,
-                    before_exclusion - len(pts),
-                )
-
-        if inclusion_geom is not None:
-            before_inclusion = len(pts)
-            pts = filter_points_by_inclusion(pts, inclusion_geom)
+        LOGGER.info("  %s: %d kept after spatial zone filtering", path.name, len(pts))
+        if before_zones != len(pts):
             LOGGER.info(
-                "  %s: %d kept after inclusion filtering",
+                "  %s: %d points removed by spatial zone filtering",
                 path.name,
-                len(pts),
+                before_zones - len(pts),
             )
-            if before_inclusion != len(pts):
-                LOGGER.info(
-                    "  %s: %d points removed outside inclusion zone",
-                    path.name,
-                    before_inclusion - len(pts),
-                )
 
         flat.extend(pts)
 

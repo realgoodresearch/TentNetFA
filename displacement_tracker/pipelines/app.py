@@ -337,6 +337,64 @@ def _widget(param: Param, default, key: str):
     return value
 
 
+def _raster_zone_widget(param: Param, default, key: str):
+    """Render a table of categorical raster inclusion/exclusion rules."""
+    rows = []
+    for rule in default or []:
+        if not isinstance(rule, dict):
+            continue
+        for value in rule.get("values") or []:
+            rows.append(
+                {
+                    "Raster file": str(rule.get("path") or ""),
+                    "Mode": str(rule.get("mode") or "exclude").title(),
+                    "Band": rule.get("band", 1),
+                    "Pixel value": value,
+                }
+            )
+    # A blank initial row makes the editor's add/remove controls available even
+    # when no raster rules were loaded from the base configuration.
+    if not rows:
+        rows = [{"Raster file": "", "Mode": "Exclude", "Band": 1, "Pixel value": 0}]
+    st.markdown(f"**{param.label}**")
+    st.caption(
+        "Add one row for each raster pixel value to include or exclude. "
+        "Rows without a raster file are ignored."
+    )
+    edited = st.data_editor(
+        rows,
+        column_config={
+            "Raster file": st.column_config.TextColumn("Raster file", required=True),
+            "Mode": st.column_config.SelectboxColumn(
+                "Mode", options=["Exclude", "Include"], required=True
+            ),
+            "Band": st.column_config.NumberColumn(
+                "Band", min_value=1, step=1, required=True
+            ),
+            "Pixel value": st.column_config.NumberColumn("Pixel value", required=True),
+        },
+        num_rows="dynamic",
+        hide_index=True,
+        width="stretch",
+        key=key,
+    )
+    records = edited.to_dict("records") if hasattr(edited, "to_dict") else edited
+    rules = []
+    for row in records:
+        path = str(row.get("Raster file") or "").strip()
+        if not path:
+            continue
+        rules.append(
+            {
+                "path": path,
+                "mode": str(row.get("Mode") or "Exclude").lower(),
+                "band": int(row.get("Band", 1)),
+                "values": [float(row.get("Pixel value"))],
+            }
+        )
+    return rules or None
+
+
 def _reset_config_widgets(pipeline_key: str, params: tuple[Param, ...]) -> None:
     """Discard form values cached by Streamlit after the base config changes."""
     for param in params:
@@ -399,7 +457,7 @@ def main() -> None:
             "Run pipeline",
             type="primary",
             disabled=not enabled_stages,
-            use_container_width=True,
+            width="stretch",
         )
         st.caption(
             ":warning: Keep this tab open while a run is in progress — "
@@ -453,6 +511,12 @@ def main() -> None:
                     )
                 cols = st.columns(2)
                 for i, param in enumerate(params):
+                    if param.type == "raster_zones":
+                        overrides[param.path] = _raster_zone_widget(
+                            param, deep_get(base_config, param.path),
+                            key=f"{config_widget_prefix}:{param.path}",
+                        )
+                        continue
                     with cols[i % 2]:
                         default = deep_get(base_config, param.path)
                         overrides[param.path] = _widget(

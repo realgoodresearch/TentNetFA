@@ -23,7 +23,7 @@ class Param:
 
     path: str  # dotted path into the config, e.g. "training.batch_size"
     label: str
-    type: str  # one of: str, path, int, float, bool
+    type: str  # one of: str, path, int, float, bool, list, raster_zones
     group: str  # section header used by frontends
     help: str = ""
     optional: bool = False  # empty input maps to None instead of ""
@@ -155,6 +155,13 @@ PREDICT = Pipeline(
             "float",
             "Selection",
         ),
+        Param(
+            "merge.output_filename",
+            "Output filename",
+            "str",
+            "Merge",
+            help="GeoPackage filename written inside this run's merged/ folder.",
+        ),
         Param("merge.min_distance_m", "Merge distance (m)", "float", "Merge"),
         Param("merge.agreement", "Min cluster size", "int", "Merge"),
         Param("merge.min_adj_peak", "Min adjusted peak", "float", "Merge"),
@@ -168,7 +175,7 @@ PREDICT = Pipeline(
         ),
         Param(
             "merge.exclusion_zones_gpkg",
-            "Exclusion zones",
+            "Exclusion zones (.gpkg, .geojson, .shp)",
             "list",
             "Merge",
             optional=True,
@@ -176,18 +183,20 @@ PREDICT = Pipeline(
         ),
         Param(
             "merge.inclusion_zone",
-            "Inclusion zones",
+            "Inclusion zones (.gpkg, .geojson, .shp)",
             "list",
             "Merge",
             optional=True,
             help="One zone file per line. Points outside the union of all supplied zones are dropped.",
         ),
         Param(
-            "merge.output_filename",
-            "Output filename",
-            "str",
+            "merge.raster_zones",
+            "Inclusion/exclusion rasters (.tif)",
+            "raster_zones",
             "Merge",
-            help="GeoPackage filename written inside this run's merged/ folder.",
+            help="One row per categorical raster value. Exclude drops matching points; "
+            "include keeps points matching any inclusion source.",
+            optional=True,
         ),
         Param(
             "postprocess.dbscan.eps_m",
@@ -222,6 +231,7 @@ PREDICT = Pipeline(
             "thresholds_config": None,
             "exclusion_zones_gpkg": None,
             "inclusion_zone": None,
+            "raster_zones": [],
             "output_filename": "merged.gpkg",
         },
         "postprocess": {

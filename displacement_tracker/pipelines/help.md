@@ -150,6 +150,7 @@ manually.
 | `merge.thresholds_config` | Optional YAML with per-file adjusted-peak thresholds. |
 | `merge.exclusion_zones_gpkg` | One path or a list of zone-file paths; drop points inside any supplied geometry. |
 | `merge.inclusion_zone` | One path or a list of zone-file paths; drop points outside the union of supplied geometries. |
+| `merge.raster_zones` | List of categorical GeoTIFF rules (`path`, `mode`, `band`, `values`). Exclude drops points matching any rule; include keeps points matching any inclusion source. The UI provides an **Inclusion/exclusion rasters (.tif)** table. |
 | `merge.input_folder` | Prediction GeoJSONs to merge; defaults to `prediction.output_folder`. |
 | `merge.output_filename` | Filename only (default `merged.gpkg`). The runner writes it inside the run's `merged/` directory. |
 | `merge.output` | Final GeoPackage path, derived by the runner from `merge.output_filename`; set it only for direct stage CLI use. |

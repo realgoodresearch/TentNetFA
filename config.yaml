@@ -136,6 +136,13 @@ predict:
     # A single path or a YAML list of paths; drop points inside any geometry.
     exclusion_zones_gpkg: null
     inclusion_zone: null        # a path or YAML list; drop points outside their union
+    # Categorical GeoTIFF rules: each matching exclusion drops a point; any
+    # inclusion rule keeps a point. The UI renders these as a Raster zones table.
+    raster_zones: []
+    # - path: /path/to/mask.tif
+    #   mode: exclude             # exclude or include
+    #   band: 1
+    #   values: [1]
   postprocess:
     # input: null               # defaults to merge.output
     output: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/postprocessing/merged_dbscan.gpkg  # runner derives from merge.output_filename
