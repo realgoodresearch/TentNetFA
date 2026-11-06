@@ -560,7 +560,10 @@ def main() -> None:
             deep_merge(merged, base_config[section])
         base_config[section] = merged
 
-    config_widget_prefix = f"{pipeline.key}:config:{hashlib.sha256(base_config_path.encode()).hexdigest()[:12]}"
+    config_fingerprint = hashlib.sha256(
+        yaml.safe_dump(base_config, sort_keys=True).encode()
+    ).hexdigest()[:12]
+    config_widget_prefix = f"{pipeline.key}:config:{config_fingerprint}"
 
     config_tab, logs_tab, help_tab = st.tabs(["Configuration", "Run logs", "Help"])
 
