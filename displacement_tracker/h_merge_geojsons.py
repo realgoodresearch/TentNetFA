@@ -252,6 +252,8 @@ def cli(config: str, flow: str) -> None:
             "exclusion_zones_gpkg",
             "inclusion_zone",
             "raster_zones",
+            "logic",
+            "source_image_priorities",
         )
         if merge_cfg.get(key) is not None
     }
@@ -270,6 +272,8 @@ def merge_geojsons(
     exclusion_zones_gpkg: str | list[str] | None = None,
     inclusion_zone: str | list[str] | None = None,
     raster_zones: list[dict] | None = None,
+    logic: str = "average_location",
+    source_image_priorities: list[str] | None = None,
 ) -> None:
     input_dir = Path(input_folder)
     if not input_dir.is_dir():
@@ -319,7 +323,11 @@ def merge_geojsons(
     LOGGER.info("Total points before merge: %d", len(flat))
 
     merged = merge_close_points_global(
-        flat, min_distance_m=min_distance_m, agreement=agreement
+        flat,
+        min_distance_m=min_distance_m,
+        agreement=agreement,
+        logic=logic,
+        source_image_priorities=source_image_priorities,
     )
 
     LOGGER.info("Total points after merge: %d", len(merged))

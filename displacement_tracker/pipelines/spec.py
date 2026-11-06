@@ -27,6 +27,7 @@ class Param:
     group: str  # section header used by frontends
     help: str = ""
     optional: bool = False  # empty input maps to None instead of ""
+    options: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -162,6 +163,14 @@ PREDICT = Pipeline(
             "Merge",
             help="GeoPackage filename written inside this run's merged/ folder.",
         ),
+        Param(
+            "merge.logic",
+            "Merge logic",
+            "choice",
+            "Merge",
+            help="How a representative is selected from each spatial cluster.",
+            options=("average_location", "max_adjusted_peak", "priority_image"),
+        ),
         Param("merge.min_distance_m", "Merge distance (m)", "float", "Merge"),
         Param("merge.agreement", "Min cluster size", "int", "Merge"),
         Param("merge.min_adj_peak", "Min adjusted peak", "float", "Merge"),
@@ -199,6 +208,14 @@ PREDICT = Pipeline(
             optional=True,
         ),
         Param(
+            "merge.source_image_priorities",
+            "Priority source images",
+            "priority_images",
+            "Merge",
+            help="Highest priority first. Used only by Priority image logic.",
+            optional=True,
+        ),
+        Param(
             "postprocess.dbscan.eps_m",
             "Cluster radius (m)",
             "float",
@@ -228,6 +245,8 @@ PREDICT = Pipeline(
             "agreement": 1,
             "min_adj_peak": 0.0,
             "adjustment_factor": 1.0,
+            "logic": "average_location",
+            "source_image_priorities": [],
             "thresholds_config": None,
             "exclusion_zones_gpkg": None,
             "inclusion_zone": None,

@@ -20,11 +20,31 @@ from pathlib import Path
 
 import click
 import streamlit as st
+from streamlit_sortables import sort_items
 import yaml
 
 from displacement_tracker.pipelines import runner
 from displacement_tracker.pipelines.spec import PIPELINES, Param
 from displacement_tracker.util.config import deep_get, deep_merge, load_flow_config
+
+_SORTABLE_PRIORITY_STYLE = """
+.sortable-component {
+  background-color: var(--background-color);
+  border: 0;
+  padding: 0;
+}
+.sortable-container, .sortable-container-body {
+  background-color: var(--background-color);
+  padding: 0;
+}
+.sortable-item, .sortable-item:hover, .sortable-item.dragging {
+  background-color: var(--secondary-background-color);
+  color: var(--text-color);
+  border: 1px solid color-mix(in srgb, var(--text-color) 15%, transparent);
+  border-radius: 0.25rem;
+  font-weight: 400;
+}
+"""
 
 # The load bar is an st.iframe (srcdoc) rather than st.markdown: the
 # same-origin script pins the frame to the viewport bottom, aligns its left
@@ -289,6 +309,17 @@ def _update_load_bar(box, monitor, stage_label: str) -> None:
 
 
 def _widget(param: Param, default, key: str):
+    if param.type == "choice":
+        options = list(param.options)
+        selected = default if default in options else options[0]
+        return st.selectbox(
+            param.label,
+            options,
+            index=options.index(selected),
+            format_func=lambda option: option.replace("_", " ").title(),
+            key=key,
+            help=param.help or None,
+        )
     if param.type == "bool":
         return st.checkbox(
             param.label, value=bool(default), key=key, help=param.help or None
@@ -335,6 +366,53 @@ def _widget(param: Param, default, key: str):
     if value == "":
         return None if param.optional else ""
     return value
+
+
+def _discover_priority_images(geotiff_dir: str | None, filters) -> list[str]:
+    """Resolve input filters to ordered, locally available source-image stems."""
+    if not geotiff_dir:
+        return []
+    directory = Path(geotiff_dir)
+    if not directory.is_dir():
+        return []
+    files = sorted(directory.glob("*.tif"))
+    if not filters:
+        return [path.stem for path in files]
+    discovered = []
+    seen = set()
+    for search in filters:
+        for path in files:
+            if str(search) in path.name and path.stem not in seen:
+                discovered.append(path.stem)
+                seen.add(path.stem)
+    return discovered
+
+
+def _priority_images_widget(default, key: str, geotiff_dir: str | None, filters):
+    discovered = _discover_priority_images(geotiff_dir, filters)
+    if key not in st.session_state:
+        st.session_state[key] = "\n".join(default or discovered)
+    st.markdown("**Priority source images**")
+    st.caption("Highest priority first. The first listed image represented in a cluster is selected.")
+    component_version_key = f"{key}:sortable_version"
+    if st.button("Refresh from Inputs", key=f"{key}:refresh"):
+        st.session_state[key] = "\n".join(discovered)
+        st.session_state[component_version_key] = (
+            st.session_state.get(component_version_key, 0) + 1
+        )
+        st.rerun()
+    entries = [line.strip() for line in st.session_state[key].splitlines() if line.strip()]
+    if not entries:
+        st.caption("No matching local TIFFs found from the current Inputs.")
+        return None
+    sorted_entries = sort_items(
+        entries,
+        direction="vertical",
+        custom_style=_SORTABLE_PRIORITY_STYLE,
+        key=f"{key}:sortable:{st.session_state.get(component_version_key, 0)}",
+    )
+    st.session_state[key] = "\n".join(sorted_entries)
+    return sorted_entries
 
 
 def _raster_zone_widget(param: Param, default, key: str):
@@ -511,6 +589,17 @@ def main() -> None:
                     )
                 cols = st.columns(2)
                 for i, param in enumerate(params):
+                    if param.type == "priority_images":
+                        if overrides.get("merge.logic") == "priority_image":
+                            overrides[param.path] = _priority_images_widget(
+                                deep_get(base_config, param.path),
+                                key=f"{config_widget_prefix}:{param.path}",
+                                geotiff_dir=overrides.get("geotiff_dir") or deep_get(base_config, "geotiff_dir"),
+                                filters=overrides.get("loading.files") or deep_get(base_config, "loading.files"),
+                            )
+                        else:
+                            overrides[param.path] = deep_get(base_config, param.path)
+                        continue
                     if param.type == "raster_zones":
                         overrides[param.path] = _raster_zone_widget(
                             param, deep_get(base_config, param.path),

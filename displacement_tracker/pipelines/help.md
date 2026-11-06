@@ -143,7 +143,9 @@ manually.
 | `prediction.selection.nms_kernel_size` | Max-pool kernel size in pixels for NMS peak picking (`nms` method only). |
 | `prediction.selection.min_distance_m` | Minimum distance between extracted points. |
 | `prediction.input_folder`, `output_folder` | Manifest input (defaults to `manifest_folder`) / GeoJSON output. **Runner-managed** → `manifests/`, `preds/`. |
-| `merge.min_distance_m` | Points within this distance (m) form one cluster; the original point with the highest `adjusted_peak` is retained. |
+| `merge.logic` | `average_location` (default), `max_adjusted_peak`, or `priority_image`. Every output feature has `source_image`. |
+| `merge.source_image_priorities` | Ordered source-image stems for `priority_image`; first listed has highest priority. The UI can populate this from locally discovered Input TIFFs. |
+| `merge.min_distance_m` | Points within this distance (m) form one cluster. The logic setting selects its output location. |
 | `merge.agreement` | Minimum cluster size to keep after merging (overlapping tiles vote). |
 | `merge.min_adj_peak` | Global adjusted-peak threshold applied before merging. |
 | `merge.adjustment_factor` | Factor applied to (adjusted_peak − peak) when filtering. |

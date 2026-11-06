@@ -27,16 +27,21 @@ class UnionFind:
             self.parent[rb] = ra
 
 
-def merge_close_points_global(flat, min_distance_m=2.0, agreement: int = 1):
-    """
-    Deduplicate points across all spatial clusters.
+MERGE_LOGICS = {"average_location", "max_adjusted_peak", "priority_image"}
 
-    Points have the form ``(lat, lon, peak, adjusted_peak, *provenance)``.
-    Each retained cluster is represented by the original member with the
-    highest adjusted peak, preserving its exact location and any provenance.
-    Exact adjusted-peak ties use provenance and coordinates for a stable
-    deterministic choice.
-    """
+
+def merge_close_points_global(
+    flat,
+    min_distance_m=2.0,
+    agreement: int = 1,
+    logic: str = "average_location",
+    source_image_priorities: list[str] | None = None,
+):
+    """Deduplicate spatial clusters using the configured representative logic."""
+    if logic not in MERGE_LOGICS:
+        raise ValueError(f"Unknown merge logic: {logic}")
+    priorities = list(source_image_priorities or [])
+    priority_rank = {name: rank for rank, name in reversed(list(enumerate(priorities)))}
     n = len(flat)
     if n == 0:
         LOGGER.info("No points provided for global deduplication.")
@@ -45,93 +50,59 @@ def merge_close_points_global(flat, min_distance_m=2.0, agreement: int = 1):
     start_t = time.perf_counter()
     LOGGER.info(
         "Starting global deduplication: points=%d, min_distance_m=%.3f, agreement=%d",
-        n,
-        float(min_distance_m),
-        int(agreement),
+        n, float(min_distance_m), int(agreement),
     )
-
     uf = UnionFind(n)
-
-    # Build a local metric projection so spatial indexing can cheaply find
-    # candidate neighbors within min_distance_m.
     lats = np.array([pt[0] for pt in flat], dtype=np.float64)
     lons = np.array([pt[1] for pt in flat], dtype=np.float64)
-
     lat0_rad = math.radians(float(lats.mean()))
     meters_per_deg = (math.pi / 180.0) * 6371000.0
     x = lons * meters_per_deg * max(math.cos(lat0_rad), 1e-12)
     y = lats * meters_per_deg
-
     tree = cKDTree(np.column_stack((x, y)))
-    LOGGER.info("Spatial index built for %d points.", n)
-
-    # Candidate pairs from the index; verify with haversine for exactness.
     candidate_pairs = tree.query_pairs(r=max(0.0, float(min_distance_m)))
-    candidate_count = len(candidate_pairs)
-    LOGGER.info("Candidate neighbor pairs from KD-tree: %d", candidate_count)
-
-    unions = 0
-    if candidate_count > 0:
-        pair_log_every = max(10_000, candidate_count // 10)
-    else:
-        pair_log_every = 10_000
-
-    for idx, (i, j) in enumerate(candidate_pairs, start=1):
-        lat_i, lon_i = flat[i][:2]
-        lat_j, lon_j = flat[j][:2]
-        if haversine_m(lat_i, lon_i, lat_j, lon_j) <= min_distance_m:
+    for i, j in candidate_pairs:
+        if haversine_m(*flat[i][:2], *flat[j][:2]) <= min_distance_m:
             uf.union(i, j)
-            unions += 1
 
-        if idx % pair_log_every == 0 or idx == candidate_count:
-            LOGGER.info(
-                "Pair check progress: %d/%d (%.1f%%), unions=%d",
-                idx,
-                candidate_count,
-                (100.0 * idx / candidate_count) if candidate_count else 100.0,
-                unions,
-            )
-
-    # collect clusters
     clusters = {}
-    cluster_log_every = max(10_000, n // 10)
     for idx in range(n):
-        root = uf.find(idx)
-        clusters.setdefault(root, []).append(idx)
+        clusters.setdefault(uf.find(idx), []).append(idx)
 
-        checked = idx + 1
-        if checked % cluster_log_every == 0 or checked == n:
-            LOGGER.info(
-                "Cluster assignment progress: %d/%d (%.1f%%)",
-                checked,
-                n,
-                100.0 * checked / n,
-            )
+    def stable_key(member):
+        point = flat[member]
+        return (*(str(value) for value in point[4:]), float(point[0]), float(point[1]), float(point[2]))
 
-    LOGGER.info("Clusters formed: %d", len(clusters))
+    def max_adjusted_member(members):
+        return min(members, key=lambda member: (-float(flat[member][3]), *stable_key(member)))
 
-    # Retain a real detection rather than averaging locations across a cluster.
+    def max_peak_member(members):
+        return min(members, key=lambda member: (-float(flat[member][2]), *stable_key(member)))
+
     merged = []
     for members in clusters.values():
         if len(members) < agreement:
             continue
-        representative = min(
-            members,
-            key=lambda member: (
-                -float(flat[member][3]),
-                *(str(value) for value in flat[member][4:]),
-                float(flat[member][0]),
-                float(flat[member][1]),
-                float(flat[member][2]),
-            ),
-        )
-        merged.append(flat[representative])
+        if logic == "average_location":
+            representative = max_peak_member(members)
+            count = len(members)
+            merged.append((
+                sum(flat[member][0] for member in members) / count,
+                sum(flat[member][1] for member in members) / count,
+                flat[representative][2], flat[representative][3],
+                flat[representative][4] if len(flat[representative]) > 4 else None,
+            ))
+        elif logic == "priority_image":
+            representative = min(
+                members,
+                key=lambda member: (
+                    priority_rank.get(str(flat[member][4]), len(priorities)),
+                    -float(flat[member][3]), *stable_key(member),
+                ),
+            )
+            merged.append(flat[representative])
+        else:
+            merged.append(flat[max_adjusted_member(members)])
 
-    elapsed_s = time.perf_counter() - start_t
-    LOGGER.info(
-        "Deduplication complete: input=%d, output=%d, elapsed=%.2fs",
-        n,
-        len(merged),
-        elapsed_s,
-    )
+    LOGGER.info("Deduplication complete: input=%d, output=%d, elapsed=%.2fs", n, len(merged), time.perf_counter() - start_t)
     return merged
