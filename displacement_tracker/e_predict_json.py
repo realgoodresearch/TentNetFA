@@ -268,7 +268,9 @@ def predict(
                             )
 
                             for pt in coords:
-                                tmp_f.write(json.dumps(pt) + "\n")
+                                tmp_f.write(
+                                    json.dumps((*pt, bounds["origin_image"])) + "\n"
+                                )
 
                             del coords
 
@@ -338,7 +340,9 @@ def save_geojson(points, out_path, boundaries_path=None):
 
     features = []
 
-    for lat, lon, peak, peak_adj in points:
+    for point in points:
+        lat, lon, peak, peak_adj, *provenance = point
+        source_image = provenance[0] if provenance else None
         pt = Point(lon, lat)
 
         # Keep only points inside boundary
@@ -353,6 +357,7 @@ def save_geojson(points, out_path, boundaries_path=None):
                     "name": "tents",
                     "peak_value": peak,
                     "adjusted_peak": peak_adj,
+                    "source_image": source_image,
                 },
             }
         )

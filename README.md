@@ -141,6 +141,8 @@ poetry run pipeline-ui
 
 This starts a local web server and opens a browser session where you pick the pipeline (training or prediction), override any parameter from the matching section of `config.yaml` in a form (plus a free-form YAML box for anything not exposed), toggle individual stages, and watch live logs while the run executes.
 
+Merged points retain the original detection with the highest `adjusted_peak` in each merge cluster, including its coordinates and `source_image` attribute.
+
 The Merge section also supports categorical GeoTIFF inclusion/exclusion rules through its **Inclusion/exclusion rasters (.tif)** table. Each row defines a raster path, `include` or `exclude` mode, band, and matching pixel value; rules are applied before deduplication.
 
 > **Validation note:** The raster-mask feature has focused automated coverage, but still needs an end-to-end verification with a corrected real mask before relying on it for production filtering.

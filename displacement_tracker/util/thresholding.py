@@ -26,12 +26,13 @@ def passes_threshold(value, threshold):
 def filter_points_by_adjusted_peak(points, threshold, adjustment_factor=1.0):
     """Rescale and threshold (lat, lon, peak_value, adjusted_peak) points.
 
-    Returns the kept points with adjusted_peak replaced by its rescaled value,
-    so downstream consumers see the same value that was thresholded.
+    Keeps any trailing provenance fields and replaces adjusted_peak with its
+    rescaled value, so downstream consumers see the value that was thresholded.
     """
     kept = []
-    for lat, lon, peak, adj_peak in points:
+    for point in points:
+        lat, lon, peak, adj_peak, *provenance = point
         rescaled = rescale_adjusted_peak(peak, adj_peak, adjustment_factor)
         if passes_threshold(rescaled, threshold):
-            kept.append((lat, lon, peak, rescaled))
+            kept.append((lat, lon, peak, rescaled, *provenance))
     return kept

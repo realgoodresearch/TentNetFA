@@ -29,9 +29,13 @@ class UnionFind:
 
 def merge_close_points_global(flat, min_distance_m=2.0, agreement: int = 1):
     """
-    Merge points across all flat (lat, lon, peak, adjusted_peak) centroids.
-    Returns a flat list of merged (lat, lon, peak, adjusted_peak) centroids.
-    Peak is the max peak within each cluster.
+    Deduplicate points across all spatial clusters.
+
+    Points have the form ``(lat, lon, peak, adjusted_peak, *provenance)``.
+    Each retained cluster is represented by the original member with the
+    highest adjusted peak, preserving its exact location and any provenance.
+    Exact adjusted-peak ties use provenance and coordinates for a stable
+    deterministic choice.
     """
     n = len(flat)
     if n == 0:
@@ -73,8 +77,8 @@ def merge_close_points_global(flat, min_distance_m=2.0, agreement: int = 1):
         pair_log_every = 10_000
 
     for idx, (i, j) in enumerate(candidate_pairs, start=1):
-        lat_i, lon_i, _, _ = flat[i]
-        lat_j, lon_j, _, _ = flat[j]
+        lat_i, lon_i = flat[i][:2]
+        lat_j, lon_j = flat[j][:2]
         if haversine_m(lat_i, lon_i, lat_j, lon_j) <= min_distance_m:
             uf.union(i, j)
             unions += 1
@@ -106,27 +110,22 @@ def merge_close_points_global(flat, min_distance_m=2.0, agreement: int = 1):
 
     LOGGER.info("Clusters formed: %d", len(clusters))
 
-    # compute centroid for each cluster (simple average of lat/lon)
+    # Retain a real detection rather than averaging locations across a cluster.
     merged = []
     for members in clusters.values():
-        sum_lat = 0.0
-        sum_lon = 0.0
-        max_peak = 0.0
-        max_adj_peak = 0.0
-
         if len(members) < agreement:
             continue
-
-        for m in members:
-            lat, lon, peak, adj_peak = flat[m]
-            sum_lat += lat
-            sum_lon += lon
-            if peak > max_peak:
-                max_peak = peak
-                max_adj_peak = adj_peak
-
-        cnt = len(members)
-        merged.append((sum_lat / cnt, sum_lon / cnt, max_peak, max_adj_peak))
+        representative = min(
+            members,
+            key=lambda member: (
+                -float(flat[member][3]),
+                *(str(value) for value in flat[member][4:]),
+                float(flat[member][0]),
+                float(flat[member][1]),
+                float(flat[member][2]),
+            ),
+        )
+        merged.append(flat[representative])
 
     elapsed_s = time.perf_counter() - start_t
     LOGGER.info(

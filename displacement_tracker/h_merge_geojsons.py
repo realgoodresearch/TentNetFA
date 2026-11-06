@@ -68,8 +68,9 @@ def resolve_threshold(
 def load_points_from_geojson(path: Path) -> list[tuple]:
     """
     Load all Point features from a GeoJSON file.
-    Returns a list of (lat, lon, peak_value, adjusted_peak) tuples.
-    adjusted_peak defaults to 0.0 when the field is absent.
+    Returns tuples of (lat, lon, peak_value, adjusted_peak, source_image).
+    adjusted_peak defaults to 0.0 when the field is absent. Source image falls
+    back to the prediction-output filename for legacy GeoJSONs.
     """
     with path.open("r", encoding="utf-8") as f:
         gj = json.load(f)
@@ -87,7 +88,8 @@ def load_points_from_geojson(path: Path) -> list[tuple]:
         peak = float(props.get("peak_value", 0.0))
         adj_raw = props.get("adjusted_peak", 0.0)
         adj_peak = float(adj_raw) if adj_raw is not None else 0.0
-        points.append([lat, lon, peak, adj_peak])
+        source_image = str(props.get("source_image") or path.stem)
+        points.append((lat, lon, peak, adj_peak, source_image))
 
     return points
 
@@ -146,11 +148,11 @@ def filter_points_by_exclusion(points: list[tuple], exclusion_geom) -> list[tupl
         return points
 
     kept = []
-    for lat, lon, peak, adj_peak in points:
-        pt = Point(lon, lat)
-        if exclusion_geom.contains(pt):
+    for point in points:
+        lat, lon = point[:2]
+        if exclusion_geom.contains(Point(lon, lat)):
             continue
-        kept.append((lat, lon, peak, adj_peak))
+        kept.append(point)
     return kept
 
 
@@ -160,11 +162,11 @@ def filter_points_by_inclusion(points: list[tuple], inclusion_geom) -> list[tupl
         return points
 
     kept = []
-    for lat, lon, peak, adj_peak in points:
-        pt = Point(lon, lat)
-        if not inclusion_geom.contains(pt):
+    for point in points:
+        lat, lon = point[:2]
+        if not inclusion_geom.contains(Point(lon, lat)):
             continue
-        kept.append((lat, lon, peak, adj_peak))
+        kept.append(point)
     return kept
 
 
@@ -176,7 +178,8 @@ def filter_points_by_spatial_zones(
         matcher.rule.mode == "include" for matcher in raster_matchers
     )
     kept = []
-    for lat, lon, peak, adj_peak in points:
+    for candidate in points:
+        lat, lon = candidate[:2]
         point = Point(lon, lat)
         excluded = (
             exclusion_geom is not None and exclusion_geom.contains(point)
@@ -187,22 +190,23 @@ def filter_points_by_spatial_zones(
             inclusion_geom is not None and inclusion_geom.contains(point)
         ) or matches_any(raster_matchers, "include", lon, lat)
         if included:
-            kept.append((lat, lon, peak, adj_peak))
+            kept.append(candidate)
     return kept
 
 
 def save_merged_gpkg(points: list[tuple], out_path: Path) -> None:
-    """Save merged (lat, lon, peak, adj_peak) tuples to a GeoPackage file."""
+    """Save selected merged detections and their source-image provenance."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     rows = [
         {
-            "geometry": Point(lon, lat),
+            "geometry": Point(point[1], point[0]),
             "name": "tents",
-            "peak_value": peak,
-            "adjusted_peak": adj_peak,
+            "peak_value": point[2],
+            "adjusted_peak": point[3],
+            "source_image": point[4] if len(point) > 4 else None,
         }
-        for lat, lon, peak, adj_peak in points
+        for point in points
     ]
 
     gdf = gpd.GeoDataFrame(rows, crs="EPSG:4326")

@@ -143,7 +143,7 @@ manually.
 | `prediction.selection.nms_kernel_size` | Max-pool kernel size in pixels for NMS peak picking (`nms` method only). |
 | `prediction.selection.min_distance_m` | Minimum distance between extracted points. |
 | `prediction.input_folder`, `output_folder` | Manifest input (defaults to `manifest_folder`) / GeoJSON output. **Runner-managed** → `manifests/`, `preds/`. |
-| `merge.min_distance_m` | Points closer than this (m) are merged into one tent. |
+| `merge.min_distance_m` | Points within this distance (m) form one cluster; the original point with the highest `adjusted_peak` is retained. |
 | `merge.agreement` | Minimum cluster size to keep after merging (overlapping tiles vote). |
 | `merge.min_adj_peak` | Global adjusted-peak threshold applied before merging. |
 | `merge.adjustment_factor` | Factor applied to (adjusted_peak − peak) when filtering. |
