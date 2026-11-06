@@ -23,6 +23,7 @@ import streamlit as st
 import yaml
 
 from displacement_tracker.pipelines import runner
+from displacement_tracker.pipelines.priority_sorter import priority_sorter
 from displacement_tracker.pipelines.spec import PIPELINES, Param
 from displacement_tracker.util.config import deep_get, deep_merge, load_flow_config
 
@@ -388,7 +389,7 @@ def _discover_priority_images(geotiff_dir: str | None, filters) -> list[str]:
 
 
 def _priority_images_widget(default, key: str, geotiff_dir: str | None, filters):
-    """Edit ordered source-image priorities with native Streamlit controls."""
+    """Edit ordered source-image priorities with a config-synchronised sorter."""
     discovered = _discover_priority_images(geotiff_dir, filters)
     if isinstance(default, str):
         configured = [line.strip() for line in default.splitlines() if line.strip()]
@@ -398,47 +399,18 @@ def _priority_images_widget(default, key: str, geotiff_dir: str | None, filters)
         st.session_state[key] = "\n".join(configured or discovered)
 
     st.markdown("**Priority source images**")
-    st.caption(
-        "Highest priority first. Select an image, then use Move up or "
-        "Move down to change its priority."
-    )
+    st.caption("Highest priority first. Drag rows to change their priority.")
     if st.button("Refresh from Inputs", key=f"{key}:refresh"):
         st.session_state[key] = "\n".join(discovered)
-        st.session_state.pop(f"{key}:selected", None)
         st.rerun()
 
     entries = [line.strip() for line in st.session_state[key].splitlines() if line.strip()]
     if not entries:
         st.caption("No matching local TIFFs found from the current Inputs.")
         return None
-
-    selected_key = f"{key}:selected"
-    if st.session_state.get(selected_key) not in entries:
-        st.session_state[selected_key] = entries[0]
-    selected = st.selectbox("Selected image", entries, key=selected_key)
-    up_col, down_col, _ = st.columns([1, 1, 4])
-    position = entries.index(selected)
-    if up_col.button("Move up", key=f"{key}:move_up", disabled=position == 0):
-        entries[position - 1], entries[position] = entries[position], entries[position - 1]
-        st.session_state[key] = "\n".join(entries)
-        st.rerun()
-    if down_col.button(
-        "Move down", key=f"{key}:move_down", disabled=position == len(entries) - 1
-    ):
-        entries[position + 1], entries[position] = entries[position], entries[position + 1]
-        st.session_state[key] = "\n".join(entries)
-        st.rerun()
-
-    st.dataframe(
-        {"Priority": list(range(1, len(entries) + 1)), "Source image": entries},
-        hide_index=True,
-        width="stretch",
-        column_config={
-            "Priority": st.column_config.NumberColumn("Priority", width="small"),
-            "Source image": st.column_config.TextColumn("Source image", width="large"),
-        },
-    )
-    return entries
+    ordered = priority_sorter(entries, key=f"{key}:sorter")
+    st.session_state[key] = "\n".join(ordered)
+    return ordered
 
 def _raster_zone_widget(param: Param, default, key: str):
     """Render a table of categorical raster inclusion/exclusion rules."""
