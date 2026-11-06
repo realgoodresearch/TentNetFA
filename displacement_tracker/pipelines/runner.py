@@ -21,6 +21,7 @@ import datetime
 import io
 import os
 import signal
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -83,6 +84,7 @@ class StageLoadMonitor:
         self._procs: dict[int, "psutil.Process"] = {}
         self.cpu_count: int = psutil.cpu_count() or 1
         self.total_memory: int = psutil.virtual_memory().total
+        self._nvidia_smi = shutil.which("nvidia-smi")
         self.sample()  # prime the cpu_percent counters
 
     def sample(self) -> tuple[float, int]:
@@ -107,6 +109,40 @@ class StageLoadMonitor:
                 continue
         self._procs = procs
         return cpu, rss
+
+    def gpu_sample(self) -> tuple[float, int, int] | None:
+        """Return device-wide NVIDIA utilization and aggregate VRAM, if available."""
+        if not self._nvidia_smi:
+            return None
+        try:
+            result = subprocess.run(
+                [
+                    self._nvidia_smi,
+                    "--query-gpu=utilization.gpu,memory.used,memory.total",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=1,
+            )
+            if result.returncode:
+                return None
+            samples = []
+            for line in result.stdout.splitlines():
+                values = [value.strip() for value in line.split(",")]
+                if len(values) != 3:
+                    continue
+                samples.append(tuple(float(value) for value in values))
+            if not samples:
+                return None
+            return (
+                max(sample[0] for sample in samples),
+                int(sum(sample[1] for sample in samples) * 2**20),
+                int(sum(sample[2] for sample in samples) * 2**20),
+            )
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return None
 
 
 def prepare_run(

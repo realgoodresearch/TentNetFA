@@ -117,6 +117,7 @@ _LOADBAR_TEMPLATE = """
       <div class="lbl"><span>Memory (of total)</span><b>__MEM_TEXT__</b></div>
       <div class="track"><div class="fill" style="width:__MEM_W__%"></div></div>
     </div>
+    __GPU_METER__
     <button class="chev" id="tn-hide" title="Hide system load">&#x2304;</button>
   </div>
   <button class="chev" id="tn-show" title="Show system load">&#x2303;</button>
@@ -266,10 +267,20 @@ def _render_load_bar(
     cpu_text: str = "—",
     mem_pct: float | None = None,
     mem_text: str = "—",
+    gpu_pct: float | None = None,
+    gpu_text: str = "—",
 ) -> None:
     def width(pct: float | None) -> str:
         return f"{max(0.0, min(100.0, pct or 0.0)):.1f}"
 
+    gpu_meter = ""
+    if gpu_pct is not None:
+        gpu_meter = (
+            f'<div class="meter {_severity(gpu_pct)}">'
+            f'<div class="lbl"><span>GPU (device)</span><b>{gpu_text}</b></div>'
+            f'<div class="track"><div class="fill" style="width:{width(gpu_pct)}%"></div></div>'
+            "</div>"
+        )
     html = (
         _LOADBAR_TEMPLATE.replace("__TITLE__", title)
         .replace("__CPU_CLS__", _severity(cpu_pct))
@@ -278,6 +289,7 @@ def _render_load_bar(
         .replace("__MEM_CLS__", _severity(mem_pct))
         .replace("__MEM_TEXT__", mem_text)
         .replace("__MEM_W__", width(mem_pct))
+        .replace("__GPU_METER__", gpu_meter)
     )
     with box:
         st.iframe(html, height=70)
@@ -296,6 +308,11 @@ def _update_load_bar(box, monitor, stage_label: str) -> None:
             if total
             else f"{rss / 2**30:.1f} GiB"
         )
+        gpu = monitor.gpu_sample()
+        gpu_pct, gpu_text = None, "—"
+        if gpu is not None:
+            gpu_pct, gpu_used, gpu_total = gpu
+            gpu_text = f"{gpu_pct:.0f} % · {gpu_used / 2**30:.1f} / {gpu_total / 2**30:.1f} GiB"
         _render_load_bar(
             box,
             f"System load — {stage_label}",
@@ -303,6 +320,8 @@ def _update_load_bar(box, monitor, stage_label: str) -> None:
             f"{cpu_pct:.0f} %",
             mem_pct,
             mem_text,
+            gpu_pct,
+            gpu_text,
         )
     except Exception:
         pass
