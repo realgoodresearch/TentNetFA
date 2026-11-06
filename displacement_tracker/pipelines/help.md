@@ -145,6 +145,7 @@ manually.
 | `prediction.input_folder`, `output_folder` | Manifest input (defaults to `manifest_folder`) / GeoJSON output. **Runner-managed** → `manifests/`, `preds/`. |
 | `merge.logic` | `average_location` (default), `max_adjusted_peak`, or `priority_image`. Every output feature has `source_image`. |
 | `merge.source_image_priorities` | Ordered source-image stems for `priority_image`; first listed has highest priority. The UI can populate this from locally discovered Input TIFFs. |
+| `merged/<merge-output-stem>_prediction_footprint.gpkg` | Automatic coverage artifact. `coverage_by_source` is dissolved by source/date; `preferred_coverage` is non-overlapping coverage using configured source priority (or deterministic source-name order). |
 | `merge.min_distance_m` | Points within this distance (m) form one cluster. The logic setting selects its output location. |
 | `merge.agreement` | Minimum cluster size to keep after merging (overlapping tiles vote). |
 | `merge.min_adj_peak` | Global adjusted-peak threshold applied before merging. |

@@ -17,6 +17,7 @@ from displacement_tracker.paired_image_dataset import PairedImageDataset
 from displacement_tracker.simple_cnn import SimpleCNN
 from displacement_tracker.util.config import flow_option, load_flow_config
 from displacement_tracker.util.logging_config import setup_logging
+from displacement_tracker.util.prediction_coverage import coverage_record, save_prediction_coverage
 from displacement_tracker.util.distance import interpolate_centroid
 from displacement_tracker.util.deduplication import merge_close_points_global
 from displacement_tracker.util.thresholding import passes_threshold
@@ -201,6 +202,7 @@ def predict(
     progress_desc = progress_label or str(dataset.manifest_path)
     total_predicted_tents = 0
     max_tile_tents = 0
+    coverage_records = []
 
     # Open temp file once and append per-tile points as they are computed
     with tmp_ndjson.open("a", encoding="utf-8") as tmp_f:
@@ -251,6 +253,7 @@ def predict(
                         for b in range(batch_size):
                             probs_np = probs[b, 0]
                             bounds = json.loads(entry["meta"][b])
+                            coverage_records.append(coverage_record(bounds))
 
                             if method == "nms":
                                 coords = extract_tile_nms(
@@ -319,7 +322,7 @@ def predict(
         flat_results, min_distance_m=min_distance_m, agreement=agreement
     )
     LOGGER.info(f"Total number of tents (post-merge): {len(merged_coords)}")
-    return merged_coords
+    return merged_coords, coverage_records
 
 
 def save_geojson(points, out_path, boundaries_path=None):
@@ -423,7 +426,7 @@ def run_prediction_job(
 ):
     dataset = PairedImageDataset(str(input_path), per_tile_standardisation=per_tile_standardisation)
     try:
-        results = predict(
+        results, coverage_records = predict(
             dataset,
             model,
             device,
@@ -436,6 +439,10 @@ def run_prediction_job(
         )
         output_path.parent.mkdir(parents=True, exist_ok=True)
         save_geojson(results, output_path, boundaries_path=boundaries_path)
+        save_prediction_coverage(
+            coverage_records,
+            output_path.with_name(f"{output_path.stem}_coverage.gpkg"),
+        )
         del results
         gc.collect()
     finally:

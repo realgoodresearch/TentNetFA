@@ -24,6 +24,7 @@ import yaml
 from displacement_tracker.util.config import flow_option, load_flow_config
 from displacement_tracker.util.deduplication import merge_close_points_global
 from displacement_tracker.util.logging_config import setup_logging
+from displacement_tracker.util.prediction_coverage import write_merged_footprint
 from displacement_tracker.util.raster_zones import matches_any, open_raster_zone_matchers
 from displacement_tracker.util.thresholding import filter_points_by_adjusted_peak
 
@@ -331,7 +332,18 @@ def merge_geojsons(
     )
 
     LOGGER.info("Total points after merge: %d", len(merged))
-    save_merged_gpkg(merged, Path(output_gpkg))
+    output_path = Path(output_gpkg)
+    save_merged_gpkg(merged, output_path)
+    coverage_paths = sorted(input_dir.glob("*_coverage.gpkg"))
+    footprint_path = output_path.parent / f"{output_path.stem}_prediction_footprint.gpkg"
+    if write_merged_footprint(
+        coverage_paths,
+        footprint_path,
+        priorities=source_image_priorities,
+    ):
+        LOGGER.info("Prediction footprint saved to %s", footprint_path)
+    else:
+        LOGGER.warning("No inference coverage artifacts found; prediction footprint not written.")
 
 
 if __name__ == "__main__":
