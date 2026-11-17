@@ -17,6 +17,123 @@ from dataclasses import dataclass, field
 from displacement_tracker.util.config import FLOWS
 
 
+DEFAULT_PARAM_HELP = {
+    "geotiff_dir": (
+        "Directory containing input GeoTIFF satellite images. The optional "
+        "download stage writes here and scan stages read from here."
+    ),
+    "geojson": (
+        "Tent-annotation GeoJSON used by the training scanner to create label masks."
+    ),
+    "boundaries": (
+        "Municipal-boundary shapefile used to restrict scanning; tiles outside "
+        "the supplied boundaries are skipped."
+    ),
+    "prewar_gaza": (
+        "Pre-war reference GeoTIFF paired with every current-image tile. The model "
+        "uses the current image, pre-war image, and their difference."
+    ),
+    "prediction.model": "Trained model checkpoint (.pth) used for inference.",
+    "processing.core_metres": (
+        "Side length in metres of each tile's core area, where predictions or "
+        "training labels count."
+    ),
+    "processing.margin_metres": (
+        "Extra image context in metres around each tile core. Margins create tile "
+        "overlap and affect prediction-edge cropping."
+    ),
+    "processing.max_workers": (
+        "Number of worker processes used while scanning training imagery into manifests."
+    ),
+    "processing.quality_thresholds.min_valid_fraction": (
+        "Minimum fraction of non-black, non-NaN image data required to keep a tile."
+    ),
+    "prediction.batch_size": (
+        "Number of tiles evaluated in each inference batch. Larger values can improve "
+        "throughput but require more GPU or system memory."
+    ),
+    "prediction.num_workers": (
+        "Number of data-loader worker processes that prepare inference tiles."
+    ),
+    "prediction.per_tile_standardisation": (
+        "Standardise each tile using its own statistics instead of the source "
+        "raster's overall statistics."
+    ),
+    "prediction.sample.enable": (
+        "Run inference on a random subset of manifest tiles for a quick test."
+    ),
+    "prediction.sample.size": (
+        "Number of tiles to evaluate when Sample tiles only is enabled."
+    ),
+    "prediction.sample.seed": (
+        "Random seed used to select a reproducible inference sample."
+    ),
+    "prediction.selection.threshold": (
+        "Minimum model score required for point extraction during inference."
+    ),
+    "prediction.selection.factor": (
+        "Weight applied to the blurred model response when calculating the adjusted "
+        "peak used by NMS."
+    ),
+    "prediction.selection.min_distance_m": (
+        "Minimum separation in metres used to deduplicate points extracted from "
+        "overlapping prediction tiles."
+    ),
+    "merge.min_distance_m": (
+        "Points within this distance in metres are treated as one spatial cluster."
+    ),
+    "merge.agreement": (
+        "Minimum number of candidate points required in a spatial cluster for it "
+        "to be retained."
+    ),
+    "merge.min_adj_peak": (
+        "Global minimum adjusted-peak score applied to predictions before spatial merging."
+    ),
+    "merge.adjustment_factor": (
+        "Scale applied to (adjusted_peak - peak) when recalculating the score used "
+        "by the merge threshold."
+    ),
+    "merge.thresholds_config": (
+        "Optional YAML file containing per-prediction-file adjusted-peak thresholds; "
+        "matching entries override the global minimum."
+    ),
+    "rebalancing.rng_seed": (
+        "Random seed used when reproducibly downsampling empty training tiles."
+    ),
+    "rebalancing.null_keep_fraction": (
+        "Fraction of empty (tent-free) tiles retained when balancing the training dataset."
+    ),
+    "training.device": (
+        "Compute device used for training, normally cuda for an NVIDIA GPU or cpu."
+    ),
+    "training.epochs": "Number of complete passes through the training dataset.",
+    "training.batch_size": (
+        "Number of training tiles processed per optimisation step. Larger values "
+        "require more GPU or system memory."
+    ),
+    "training.learning_rate": (
+        "Optimizer step size controlling how quickly model weights are updated."
+    ),
+    "training.training_frac": (
+        "Fraction of the balanced dataset assigned to training."
+    ),
+    "training.validation_frac": (
+        "Fraction of the balanced dataset assigned to validation; the remainder "
+        "is reserved for testing."
+    ),
+    "training.memory": (
+        "Cache the training dataset in RAM to speed up epochs at the cost of memory use."
+    ),
+    "training.num_workers": (
+        "Number of data-loader worker processes used to prepare training batches."
+    ),
+    "training.model_kwargs.kernel_size": (
+        "CNN convolution kernel size used when creating a new model; ignored when "
+        "resuming a checkpoint."
+    ),
+}
+
+
 @dataclass(frozen=True)
 class Param:
     """A single overridable config value, addressed by dotted path."""
@@ -28,6 +145,10 @@ class Param:
     help: str = ""
     optional: bool = False  # empty input maps to None instead of ""
     options: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.help:
+            object.__setattr__(self, "help", DEFAULT_PARAM_HELP.get(self.path, ""))
 
 
 @dataclass(frozen=True)
@@ -168,8 +289,26 @@ PREDICT = Pipeline(
             "Merge logic",
             "choice",
             "Merge",
-            help="How a representative is selected from each spatial cluster.",
-            options=("average_location", "max_adjusted_peak", "priority_image", "priority_coverage"),
+            help=(
+                "How each spatial cluster is resolved:\n\n"
+                "- **Average location**: average the candidate coordinates. "
+                "The recorded source is the candidate with the highest raw peak.\n"
+                "- **Max adjusted peak**: retain the original candidate with the "
+                "highest adjusted peak.\n"
+                "- **Priority image**: retain a candidate from the highest-ranked "
+                "source represented in that cluster; adjusted peak resolves candidates "
+                "from the same source rank.\n"
+                "- **Priority coverage**: wherever a higher-ranked source has valid "
+                "inferred-image coverage, discard lower-ranked candidates first; then "
+                "retain the highest adjusted-peak candidate in each remaining cluster.\n\n"
+                "Source rank follows the Priority source images order, highest first."
+            ),
+            options=(
+                "average_location",
+                "max_adjusted_peak",
+                "priority_image",
+                "priority_coverage",
+            ),
         ),
         Param("merge.min_distance_m", "Merge distance (m)", "float", "Merge"),
         Param("merge.agreement", "Min cluster size", "int", "Merge"),
@@ -348,3 +487,6 @@ PIPELINES: dict[str, Pipeline] = {p.key: p for p in (PREDICT, TRAIN)}
 
 # The runner and UI resolve each pipeline's config section by its key.
 assert set(PIPELINES) <= set(FLOWS), "pipeline keys must be config flow names"
+assert all(
+    param.help for pipeline in PIPELINES.values() for param in pipeline.params
+), "Every pipeline UI parameter must provide help text"

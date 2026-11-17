@@ -407,7 +407,19 @@ def _discover_priority_images(geotiff_dir: str | None, filters) -> list[str]:
     return discovered
 
 
-def _priority_images_widget(default, key: str, geotiff_dir: str | None, filters):
+def _custom_parameter_heading(param: Param, key: str) -> None:
+    """Render a heading and help popover for a non-standard parameter widget."""
+    label_col, help_col = st.columns([12, 1], vertical_alignment="center")
+    with label_col:
+        st.markdown(f"**{param.label}**")
+    with help_col:
+        with st.popover("?", type="tertiary", key=f"{key}:help"):
+            st.markdown(param.help)
+
+
+def _priority_images_widget(
+    param: Param, default, key: str, geotiff_dir: str | None, filters
+):
     """Edit ordered source-image priorities with a config-synchronised sorter."""
     discovered = _discover_priority_images(geotiff_dir, filters)
     if isinstance(default, str):
@@ -417,19 +429,22 @@ def _priority_images_widget(default, key: str, geotiff_dir: str | None, filters)
     if key not in st.session_state:
         st.session_state[key] = "\n".join(configured or discovered)
 
-    st.markdown("**Priority source images**")
+    _custom_parameter_heading(param, key)
     st.caption("Highest priority first. Drag rows to change their priority.")
     if st.button("Refresh from Inputs", key=f"{key}:refresh"):
         st.session_state[key] = "\n".join(discovered)
         st.rerun()
 
-    entries = [line.strip() for line in st.session_state[key].splitlines() if line.strip()]
+    entries = [
+        line.strip() for line in st.session_state[key].splitlines() if line.strip()
+    ]
     if not entries:
         st.caption("No matching local TIFFs found from the current Inputs.")
         return None
     ordered = priority_sorter(entries, key=f"{key}:sorter")
     st.session_state[key] = "\n".join(ordered)
     return ordered
+
 
 def _raster_zone_widget(param: Param, default, key: str):
     """Render a table of categorical raster inclusion/exclusion rules."""
@@ -450,7 +465,7 @@ def _raster_zone_widget(param: Param, default, key: str):
     # when no raster rules were loaded from the base configuration.
     if not rows:
         rows = [{"Raster file": "", "Mode": "Exclude", "Band": 1, "Pixel value": 0}]
-    st.markdown(f"**{param.label}**")
+    _custom_parameter_heading(param, key)
     st.caption(
         "Add one row for each raster pixel value to include or exclude. "
         "Rows without a raster file are ignored."
@@ -624,19 +639,26 @@ def main() -> None:
                 cols = st.columns(2)
                 for i, param in enumerate(params):
                     if param.type == "priority_images":
-                        if overrides.get("merge.logic") in {"priority_image", "priority_coverage"}:
+                        if overrides.get("merge.logic") in {
+                            "priority_image",
+                            "priority_coverage",
+                        }:
                             overrides[param.path] = _priority_images_widget(
+                                param,
                                 deep_get(base_config, param.path),
                                 key=f"{config_widget_prefix}:{param.path}",
-                                geotiff_dir=overrides.get("geotiff_dir") or deep_get(base_config, "geotiff_dir"),
-                                filters=overrides.get("loading.files") or deep_get(base_config, "loading.files"),
+                                geotiff_dir=overrides.get("geotiff_dir")
+                                or deep_get(base_config, "geotiff_dir"),
+                                filters=overrides.get("loading.files")
+                                or deep_get(base_config, "loading.files"),
                             )
                         else:
                             overrides[param.path] = deep_get(base_config, param.path)
                         continue
                     if param.type == "raster_zones":
                         overrides[param.path] = _raster_zone_widget(
-                            param, deep_get(base_config, param.path),
+                            param,
+                            deep_get(base_config, param.path),
                             key=f"{config_widget_prefix}:{param.path}",
                         )
                         continue
@@ -654,7 +676,11 @@ def main() -> None:
                 "from a loaded base config."
             )
             raw_yaml = st.text_area(
-                "YAML", value="", height=160, label_visibility="collapsed", key=f"{config_widget_prefix}:extra_yaml"
+                "YAML",
+                value="",
+                height=160,
+                label_visibility="collapsed",
+                key=f"{config_widget_prefix}:extra_yaml",
             )
 
     # Fixed bottom bar (the iframe script escapes the tab flow entirely).
