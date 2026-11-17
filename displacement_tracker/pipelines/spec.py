@@ -169,7 +169,7 @@ PREDICT = Pipeline(
             "choice",
             "Merge",
             help="How a representative is selected from each spatial cluster.",
-            options=("average_location", "max_adjusted_peak", "priority_image"),
+            options=("average_location", "max_adjusted_peak", "priority_image", "priority_coverage"),
         ),
         Param("merge.min_distance_m", "Merge distance (m)", "float", "Merge"),
         Param("merge.agreement", "Min cluster size", "int", "Merge"),
@@ -212,7 +212,7 @@ PREDICT = Pipeline(
             "Priority source images",
             "priority_images",
             "Merge",
-            help="Highest priority first. Used only by Priority image logic.",
+            help="Highest priority first. Used by Priority image and Priority coverage logic.",
             optional=True,
         ),
         Param(

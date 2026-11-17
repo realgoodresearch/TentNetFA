@@ -141,7 +141,7 @@ poetry run pipeline-ui
 
 This starts a local web server and opens a browser session where you pick the pipeline (training or prediction), override any parameter from the matching section of `config.yaml` in a form (plus a free-form YAML box for anything not exposed), toggle individual stages, and watch live logs while the run executes.
 
-Merge logic defaults to **average location** for compatibility. The UI also offers **max adjusted_peak** (retain that original point) and **priority image** (select the first listed source image represented in the cluster). Every merged output includes `source_image`; average-location mode uses the source of its highest-raw-peak candidate.
+Merge logic defaults to **average location** for compatibility. The UI also offers **max adjusted_peak** (retain that original point) and **priority image** (select the first listed source image represented in the cluster). **Priority coverage** removes lower-priority detections wherever a higher-priority source has actual inferred-tile coverage, then selects the highest adjusted-peak point from each remaining cluster. Every merged output includes `source_image`; average-location mode uses the source of its highest-raw-peak candidate.
 
 Merge also writes `merged/<merge-output-stem>_prediction_footprint.gpkg` from the tiles actually evaluated during prediction. It contains `coverage_by_source` (dissolved source/date coverage) and non-overlapping `preferred_coverage`, using the configured source-image priority (or deterministic source-name order when none is configured).
 

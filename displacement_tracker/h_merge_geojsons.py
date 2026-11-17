@@ -24,7 +24,10 @@ import yaml
 from displacement_tracker.util.config import flow_option, load_flow_config
 from displacement_tracker.util.deduplication import merge_close_points_global
 from displacement_tracker.util.logging_config import setup_logging
-from displacement_tracker.util.prediction_coverage import write_merged_footprint
+from displacement_tracker.util.prediction_coverage import (
+    filter_points_by_priority_coverage,
+    write_merged_footprint,
+)
 from displacement_tracker.util.raster_zones import matches_any, open_raster_zone_matchers
 from displacement_tracker.util.thresholding import filter_points_by_adjusted_peak
 
@@ -322,6 +325,22 @@ def merge_geojsons(
         flat.extend(pts)
 
     LOGGER.info("Total points before merge: %d", len(flat))
+    coverage_paths = sorted(input_dir.glob("*_coverage.gpkg"))
+    if logic == "priority_coverage":
+        if not coverage_paths:
+            raise click.ClickException(
+                "merge.logic=priority_coverage requires *_coverage.gpkg "
+                "artifacts from the prediction stage"
+            )
+        before_priority_coverage = len(flat)
+        flat = filter_points_by_priority_coverage(
+            flat, coverage_paths, source_image_priorities
+        )
+        LOGGER.info(
+            "Priority coverage filtering removed %d points covered by a "
+            "higher-priority source",
+            before_priority_coverage - len(flat),
+        )
 
     merged = merge_close_points_global(
         flat,
@@ -334,7 +353,6 @@ def merge_geojsons(
     LOGGER.info("Total points after merge: %d", len(merged))
     output_path = Path(output_gpkg)
     save_merged_gpkg(merged, output_path)
-    coverage_paths = sorted(input_dir.glob("*_coverage.gpkg"))
     footprint_path = output_path.parent / f"{output_path.stem}_prediction_footprint.gpkg"
     if write_merged_footprint(
         coverage_paths,

@@ -133,9 +133,9 @@ predict:
     min_adj_peak: 0.0
     adjustment_factor: 1.0
     # average_location preserves historical centroid placement; alternatives are
-    # max_adjusted_peak and priority_image.
+    # max_adjusted_peak, priority_image, and priority_coverage.
     logic: average_location
-    source_image_priorities: []  # highest priority first; used by priority_image
+    source_image_priorities: []  # highest priority first; used by priority merge logic
     thresholds_config: null     # optional YAML with per-file adj_peak thresholds
     # A single path or a YAML list of paths; drop points inside any geometry.
     exclusion_zones_gpkg: null

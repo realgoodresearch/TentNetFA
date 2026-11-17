@@ -6,6 +6,7 @@ from scipy.spatial import cKDTree
 
 from displacement_tracker.util.distance import haversine_m
 from displacement_tracker.util.logging_config import setup_logging
+from displacement_tracker.util.source_images import source_image_key
 
 LOGGER = setup_logging("deduplication")
 
@@ -27,7 +28,7 @@ class UnionFind:
             self.parent[rb] = ra
 
 
-MERGE_LOGICS = {"average_location", "max_adjusted_peak", "priority_image"}
+MERGE_LOGICS = {"average_location", "max_adjusted_peak", "priority_image", "priority_coverage"}
 
 
 def merge_close_points_global(
@@ -41,7 +42,7 @@ def merge_close_points_global(
     if logic not in MERGE_LOGICS:
         raise ValueError(f"Unknown merge logic: {logic}")
     priorities = list(source_image_priorities or [])
-    priority_rank = {name: rank for rank, name in reversed(list(enumerate(priorities)))}
+    priority_rank = {source_image_key(name): rank for rank, name in enumerate(priorities)}
     n = len(flat)
     if n == 0:
         LOGGER.info("No points provided for global deduplication.")
@@ -96,7 +97,7 @@ def merge_close_points_global(
             representative = min(
                 members,
                 key=lambda member: (
-                    priority_rank.get(str(flat[member][4]), len(priorities)),
+                    priority_rank.get(source_image_key(flat[member][4]), len(priorities)),
                     -float(flat[member][3]), *stable_key(member),
                 ),
             )

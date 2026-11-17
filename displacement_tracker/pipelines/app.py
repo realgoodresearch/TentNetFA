@@ -624,7 +624,7 @@ def main() -> None:
                 cols = st.columns(2)
                 for i, param in enumerate(params):
                     if param.type == "priority_images":
-                        if overrides.get("merge.logic") == "priority_image":
+                        if overrides.get("merge.logic") in {"priority_image", "priority_coverage"}:
                             overrides[param.path] = _priority_images_widget(
                                 deep_get(base_config, param.path),
                                 key=f"{config_widget_prefix}:{param.path}",

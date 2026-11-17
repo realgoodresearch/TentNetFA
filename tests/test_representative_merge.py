@@ -42,7 +42,17 @@ class RepresentativeMergeTests(unittest.TestCase):
         ]
         merged = merge_close_points_global(
             points, min_distance_m=3.0, logic="priority_image",
-            source_image_priorities=["target-image.tif", "older-image.tif"],
+            source_image_priorities=["target-image", "older-image"],
+        )
+        self.assertEqual(merged, [points[1]])
+
+    def test_priority_coverage_uses_max_adjusted_peak_after_filtering(self):
+        points = [
+            (31.5, 34.45, 0.8, 0.60, "target-image.tif"),
+            (31.50001, 34.45001, 0.7, 0.95, "older-image.tif"),
+        ]
+        merged = merge_close_points_global(
+            points, min_distance_m=3.0, logic="priority_coverage"
         )
         self.assertEqual(merged, [points[1]])
 
