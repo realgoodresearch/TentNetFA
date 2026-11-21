@@ -7,7 +7,7 @@ readme = "README.md"
 packages = [{ include = "displacement_tracker" }]
 
 [tool.poetry.dependencies]
-python = "^3.10,<3.15"
+python = ">=3.10,<3.13"
 
 # --- Core libraries ---
 selenium = "^4.33.0"
