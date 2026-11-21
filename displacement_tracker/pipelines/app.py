@@ -636,6 +636,12 @@ def main() -> None:
                         "DBSCAN writes `postprocessing/<merge filename stem>_dbscan.gpkg` "
                         "inside this run; the merged source GeoPackage is unchanged."
                     )
+                if group == "Zonal summaries":
+                    st.caption(
+                        "This optional stage reads the merged points and writes administrative "
+                        "CSV/GeoPackage summaries plus a grid-count GeoTIFF when a master grid "
+                        "is supplied. Outputs land in `zonal_summaries/`."
+                    )
                 cols = st.columns(2)
                 for i, param in enumerate(params):
                     if param.type == "priority_images":
@@ -718,6 +724,23 @@ def main() -> None:
         deep_merge(ctx.config, extra)
         with open(ctx.config_path, "w") as f:
             yaml.safe_dump(ctx.config, f, sort_keys=False)
+
+    enabled_stage_keys = {stage.key for stage in enabled_stages}
+    zonal_cfg = ctx.config.get("zonal") or {}
+    postprocess_output = (ctx.config.get("postprocess") or {}).get("output")
+    if (
+        "zonal" in enabled_stage_keys
+        and zonal_cfg.get("point_source", "merged") == "dbscan"
+        and not zonal_cfg.get("points_gpkg")
+        and "postprocess" not in enabled_stage_keys
+        and not (postprocess_output and Path(postprocess_output).is_file())
+    ):
+        with logs_tab:
+            st.error(
+                "Zonal summaries are configured to use DBSCAN points, but the DBSCAN "
+                "post-processing stage is not enabled and its output does not exist."
+            )
+        return
 
     with config_tab:
         with st.expander("Resolved config (as written to the run directory)"):

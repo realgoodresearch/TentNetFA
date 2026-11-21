@@ -15,9 +15,37 @@ import pandas as pd
 import rasterio
 from rasterio.transform import rowcol
 
+from displacement_tracker.util.config import flow_option, load_flow_config
 from displacement_tracker.util.logging_config import setup_logging
 
 LOGGER = setup_logging("zonal_point_sums")
+
+DEFAULTS = {
+    "points_gpkg": "results/TentNetFA/final/merged_points.gpkg",
+    "point_source": "merged",
+    "neighbourhood_zones": "boundaries/neighbourhoods.gpkg",
+    "municipality_zones": "boundaries/municipalities.gpkg",
+    "governorate_zones": "boundaries/governorates.gpkg",
+    "master_grid": None,
+    "neighbourhood_id_column": "name",
+    "municipality_id_column": "NAME",
+    "governorate_id_column": "name",
+    "output_dir": "results/TentNetFA/final/zonal_summaries",
+}
+
+
+def configured_points_path(params: dict, zonal_cfg: dict) -> str | None:
+    """Resolve the zonal point input, allowing an explicit path override."""
+    if zonal_cfg.get("points_gpkg"):
+        return zonal_cfg["points_gpkg"]
+    point_source = zonal_cfg.get("point_source", DEFAULTS["point_source"])
+    if point_source == "merged":
+        return (params.get("merge") or {}).get("output")
+    if point_source == "dbscan":
+        return (params.get("postprocess") or {}).get("output")
+    raise click.ClickException(
+        "zonal.point_source must be either 'merged' or 'dbscan'"
+    )
 
 
 def resolve_data_dir() -> Path:
@@ -170,21 +198,25 @@ def write_master_grid_tent_count_tiff(points_gdf: gpd.GeoDataFrame, master_grid_
 
 
 @click.command()
-@click.option("--points-gpkg", default="results/TentNetFA/final/merged_points.gpkg", show_default=True)
-@click.option("--neighbourhood-zones", default="boundaries/neighbourhoods.gpkg", show_default=True)
-@click.option("--municipality-zones", default="boundaries/municipalities.gpkg", show_default=True)
-@click.option("--governorate-zones", default="boundaries/governorates.gpkg", show_default=True)
+@click.argument("config", required=False, type=click.Path(exists=True, dir_okay=False))
+@flow_option(default="predict")
+@click.option("--points-gpkg", default=None, help="Merged point GeoPackage.")
+@click.option("--neighbourhood-zones", default=None, help="Neighbourhood polygons.")
+@click.option("--municipality-zones", default=None, help="Municipality polygons.")
+@click.option("--governorate-zones", default=None, help="Governorate polygons.")
 @click.option(
     "--master-grid",
     default=None,
     type=click.Path(dir_okay=False),
     help="Optional DATA_DIR-relative or absolute path to a master-grid raster for grid-cell tent-count GeoTIFF output.",
 )
-@click.option("--neighbourhood-id-column", default="name", show_default=True)
-@click.option("--municipality-id-column", default="NAME", show_default=True)
-@click.option("--governorate-id-column", default="name", show_default=True)
-@click.option("--output-dir", default="results/TentNetFA/final/zonal_summaries", show_default=True)
+@click.option("--neighbourhood-id-column", default=None)
+@click.option("--municipality-id-column", default=None)
+@click.option("--governorate-id-column", default=None)
+@click.option("--output-dir", default=None)
 def cli(
+    config: str | None,
+    flow: str,
     points_gpkg: str,
     neighbourhood_zones: str,
     municipality_zones: str,
@@ -195,6 +227,47 @@ def cli(
     governorate_id_column: str,
     output_dir: str,
 ) -> None:
+    """Write grid and administrative summaries.
+
+    With CONFIG, values come from its ``zonal`` section (the pipeline mode).
+    Explicit options override config values. Without CONFIG, the historical
+    DATA_DIR-relative defaults are retained for standalone use.
+    """
+    params = load_flow_config(config, flow) if config else {}
+    zonal_cfg = params.get("zonal") or {}
+
+    def resolved(option_value: str | None, key: str) -> str | None:
+        if option_value is not None:
+            return option_value
+        return zonal_cfg.get(key, DEFAULTS[key])
+
+    if points_gpkg is None and config:
+        points_gpkg = configured_points_path(params, zonal_cfg)
+    else:
+        points_gpkg = resolved(points_gpkg, "points_gpkg")
+    neighbourhood_zones = resolved(neighbourhood_zones, "neighbourhood_zones")
+    municipality_zones = resolved(municipality_zones, "municipality_zones")
+    governorate_zones = resolved(governorate_zones, "governorate_zones")
+    master_grid = resolved(master_grid, "master_grid")
+    neighbourhood_id_column = resolved(neighbourhood_id_column, "neighbourhood_id_column")
+    municipality_id_column = resolved(municipality_id_column, "municipality_id_column")
+    governorate_id_column = resolved(governorate_id_column, "governorate_id_column")
+    output_dir = resolved(output_dir, "output_dir")
+
+    required = {
+        "zonal.points_gpkg": points_gpkg,
+        "zonal.neighbourhood_zones": neighbourhood_zones,
+        "zonal.municipality_zones": municipality_zones,
+        "zonal.governorate_zones": governorate_zones,
+        "zonal.neighbourhood_id_column": neighbourhood_id_column,
+        "zonal.municipality_id_column": municipality_id_column,
+        "zonal.governorate_id_column": governorate_id_column,
+        "zonal.output_dir": output_dir,
+    }
+    missing = [key for key, value in required.items() if not value]
+    if missing:
+        raise click.ClickException(f"Missing required config key(s): {', '.join(missing)}")
+
     data_dir = resolve_data_dir()
 
     points_path = resolve_path(data_dir, points_gpkg)

@@ -13,7 +13,7 @@ selected stages against it.
 <run root>/<pipeline>/<run name>/
     config.yaml     fully resolved config used by every stage
     logs/           one log file per stage
-    manifests/ preds/ merged/ postprocessing/ (prediction)
+    manifests/ preds/ merged/ postprocessing/ zonal_summaries/ (prediction)
     manifests/ dataset/ model/    (training)
 ```
 
@@ -55,6 +55,8 @@ flowchart TB
     out(["merged/&lt;output filename&gt;.gpkg"])
     dbscan["<b>postprocess</b> — j_dbscan_postprocess<br/>(optional) removes isolated points using DBSCAN"]
     cleaned(["postprocessing/&lt;output filename&gt;_dbscan.gpkg"])
+    zonal["<b>zonal</b> — i_zonal_point_sums<br/>(optional) counts points on a 100-m grid<br/>and three administrative levels"]
+    summaries(["zonal_summaries/*.csv, *.gpkg, *.tif"])
 
     drive -. "download (optional)<br/>a_tif_loader" .-> tifs
     tifs --> scan
@@ -64,6 +66,7 @@ flowchart TB
     predict -- "preds/*.geojson<br/>(overlapping tiles!)" --> merge
     merge --> out
     out -. "optional" .-> dbscan --> cleaned
+    out -. "optional" .-> zonal --> summaries
 ```
 
 Stages can be toggled individually in the sidebar — e.g. re-run only
@@ -161,6 +164,12 @@ manually.
 | `postprocess.output` | DBSCAN-cleaned GeoPackage. The runner writes this as `postprocessing/<merge output stem>_dbscan.gpkg`. |
 | `postprocess.dbscan.eps_m` | DBSCAN neighbourhood radius in metres (default: 40). Points outside all clusters are removed. |
 | `postprocess.dbscan.min_samples` | Minimum points, including the point itself, required for a DBSCAN cluster (default: 3). |
+| `zonal.point_source` | Point layer to aggregate: `merged` uses `merge.output`; `dbscan` uses `postprocess.output`. Enable the DBSCAN stage when selecting `dbscan`. |
+| `zonal.points_gpkg` | Optional explicit point-layer override, mainly for reprocessing an earlier run. |
+| `zonal.neighbourhood_zones`, `municipality_zones`, `governorate_zones` | Polygon layers for the three administrative summaries. Relative paths are resolved against `DATA_DIR`. |
+| `zonal.neighbourhood_id_column`, `municipality_id_column`, `governorate_id_column` | Identifier field in each administrative layer. |
+| `zonal.master_grid` | Optional 100-m reference raster used to write a grid-cell tent-count GeoTIFF. |
+| `zonal.output_dir` | Summary destination. **Runner-managed** → `zonal_summaries/`. |
 
 ### Anything else
 

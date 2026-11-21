@@ -10,7 +10,7 @@ Run directory layout (fixed names, see ``Pipeline.artifact_paths``)::
     <run_root>/<pipeline>/<run_name>/
         config.yaml     resolved config used by every stage
         logs/           one log file per stage
-        manifests/ preds/ merged/ postprocessing/ (predict)
+        manifests/ preds/ merged/ postprocessing/ zonal_summaries/ (predict)
         manifests/ dataset/ model/         (train)
 """
 

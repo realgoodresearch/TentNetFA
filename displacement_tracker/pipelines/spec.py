@@ -97,6 +97,10 @@ DEFAULT_PARAM_HELP = {
         "Optional YAML file containing per-prediction-file adjusted-peak thresholds; "
         "matching entries override the global minimum."
     ),
+    "zonal.master_grid": (
+        "Optional 100-m master-grid raster. When supplied, the stage writes a "
+        "GeoTIFF containing the number of tent points in each grid cell."
+    ),
     "rebalancing.rng_seed": (
         "Random seed used when reproducibly downsampling empty training tiles."
     ),
@@ -217,6 +221,12 @@ PREDICT = Pipeline(
             "postprocess",
             "DBSCAN post-process merged predictions",
             "displacement_tracker.j_dbscan_postprocess",
+            default_enabled=False,
+        ),
+        Stage(
+            "zonal",
+            "Aggregate points by grid and administrative zones",
+            "displacement_tracker.i_zonal_point_sums",
             default_enabled=False,
         ),
     ),
@@ -370,6 +380,63 @@ PREDICT = Pipeline(
             "Post-processing",
             help="Minimum points (including the point itself) required for a DBSCAN cluster.",
         ),
+        Param(
+            "zonal.point_source",
+            "Point source",
+            "choice",
+            "Zonal summaries",
+            help="Aggregate either the direct merged output or the optional DBSCAN-cleaned output.",
+            options=("merged", "dbscan"),
+        ),
+        Param(
+            "zonal.neighbourhood_zones",
+            "Neighbourhood zones",
+            "path",
+            "Zonal summaries",
+            help="Polygon layer used to calculate counts by neighbourhood.",
+        ),
+        Param(
+            "zonal.neighbourhood_id_column",
+            "Neighbourhood ID column",
+            "str",
+            "Zonal summaries",
+            help="Unique neighbourhood identifier in the neighbourhood layer.",
+        ),
+        Param(
+            "zonal.municipality_zones",
+            "Municipality zones",
+            "path",
+            "Zonal summaries",
+            help="Polygon layer used to calculate counts by municipality.",
+        ),
+        Param(
+            "zonal.municipality_id_column",
+            "Municipality ID column",
+            "str",
+            "Zonal summaries",
+            help="Unique municipality identifier in the municipality layer.",
+        ),
+        Param(
+            "zonal.governorate_zones",
+            "Governorate zones",
+            "path",
+            "Zonal summaries",
+            help="Polygon layer used to calculate counts by governorate.",
+        ),
+        Param(
+            "zonal.governorate_id_column",
+            "Governorate ID column",
+            "str",
+            "Zonal summaries",
+            help="Unique governorate identifier in the governorate layer.",
+        ),
+        Param(
+            "zonal.master_grid",
+            "100-m master grid",
+            "path",
+            "Zonal summaries",
+            optional=True,
+        ),
     ),
     artifact_paths={
         "manifest_folder": "manifests",
@@ -377,6 +444,7 @@ PREDICT = Pipeline(
         "prediction.output_folder": "preds",
         "merge.output": "merged/merged.gpkg",
         "postprocess.output": "postprocessing/postprocessed.gpkg",
+        "zonal.output_dir": "zonal_summaries",
     },
     extra_defaults={
         "merge": {
@@ -396,6 +464,18 @@ PREDICT = Pipeline(
             "input": None,
             "output": None,
             "dbscan": {"eps_m": 40.0, "min_samples": 3},
+        },
+        "zonal": {
+            "points_gpkg": None,
+            "point_source": "merged",
+            "neighbourhood_zones": "boundaries/neighbourhoods.gpkg",
+            "municipality_zones": "boundaries/municipalities.gpkg",
+            "governorate_zones": "boundaries/governorates.gpkg",
+            "master_grid": None,
+            "neighbourhood_id_column": "name",
+            "municipality_id_column": "NAME",
+            "governorate_id_column": "name",
+            "output_dir": None,
         },
     },
 )

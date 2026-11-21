@@ -4,7 +4,8 @@
 #   train:    training flow    (a_tif_loader -> b1_annotated_scanner
 #                               -> c_resample_manifest -> d_train_cnn)
 #   predict:  prediction flow  (a_tif_loader -> b2_image_scanner
-#                               -> e_predict_json -> h_merge_geojsons)
+#                               -> e_predict_json -> h_merge_geojsons
+#                               -> optional post-processing / zonal summaries)
 #
 # Each stage resolves its config as deep_merge(shared, <flow section>); the
 # flow section wins on conflicts. Stage CLIs default to their natural flow
@@ -153,3 +154,15 @@ predict:
     dbscan:
       eps_m: 40.0
       min_samples: 3
+  zonal:
+    # Select merge.output or postprocess.output; points_gpkg can override either.
+    point_source: merged          # merged or dbscan
+    points_gpkg: null
+    neighbourhood_zones: boundaries/neighbourhoods.gpkg
+    municipality_zones: boundaries/municipalities.gpkg
+    governorate_zones: boundaries/governorates.gpkg
+    master_grid: null           # optional 100-m reference grid GeoTIFF
+    neighbourhood_id_column: name
+    municipality_id_column: NAME
+    governorate_id_column: name
+    output_dir: ${DATA_DIR}/results/TentNetFA/model_beta2.0/2026-02/zonal_summaries
